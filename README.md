@@ -87,10 +87,10 @@ LOG_LEVEL=info
 
 ## Documentação da API
 
-A documentação de rotas HTTP é gerada a partir do código e servida pela própria API:
+A documentação de rotas REST e de eventos Socket.IO é gerada a partir do código e servida na mesma página:
 
 ```text
-http://localhost:3001/docs (Swagger UI)
+http://localhost:3001/docs (Swagger UI + seção "Eventos Socket.IO")
 ```
 
 ## WebSocket
@@ -102,7 +102,6 @@ Configuração atual:
 - Origem permitida definida por `FRONTEND_URL`
 - Transportes habilitados: `websocket` e `polling`
 - Credenciais habilitadas para CORS
-- Eventos tipados e documentados em `src/sockets/events.ts`
 
 ## Testes
 

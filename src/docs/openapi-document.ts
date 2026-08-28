@@ -11,7 +11,7 @@ export function generateOpenApiDocument(): OpenAPIObject {
       title: 'SparkChat API',
       version: '0.1.0',
       description:
-        'API REST + Socket.IO do SparkChat. Este documento cobre apenas as rotas HTTP — os eventos de tempo real (Socket.IO) estão tipados e documentados em src/sockets/events.ts.',
+        'API REST + Socket.IO do SparkChat. As rotas HTTP estão documentadas acima; os eventos de tempo real (Socket.IO) estão na seção "Eventos Socket.IO" logo abaixo, nesta mesma página.',
     },
     servers: [{ url: '/', description: 'Servidor atual' }],
   });

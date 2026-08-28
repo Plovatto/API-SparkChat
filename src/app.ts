@@ -8,6 +8,8 @@ import { logger } from './config/logger.js';
 import { downloadButtonScript } from './docs/download-button.js';
 import { generateOpenApiDocument } from './docs/openapi-document.js';
 import { registry } from './docs/registry.js';
+import { listSocketEvents } from './docs/socket-registry.js';
+import { socketEventsPanelScript } from './docs/socket-events-panel.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { createApiRouter, type ApiRouterDeps } from './routes/index.js';
 
@@ -55,11 +57,17 @@ export function createApp(deps: ApiRouterDeps): Express {
   app.get('/docs/download-button.js', (_req, res) => {
     res.type('application/javascript').send(downloadButtonScript);
   });
+  app.get('/docs/socket-events.json', (_req, res) => {
+    res.json(listSocketEvents());
+  });
+  app.get('/docs/socket-events-panel.js', (_req, res) => {
+    res.type('application/javascript').send(socketEventsPanelScript);
+  });
   app.use(
     '/docs',
     swaggerUi.serve,
     swaggerUi.setup(openApiDocument, {
-      customJs: '/docs/download-button.js',
+      customJs: ['/docs/download-button.js', '/docs/socket-events-panel.js'],
       customSiteTitle: 'SparkChat API Docs',
     }),
   );
