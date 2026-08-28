@@ -4,6 +4,11 @@ import { generateRoomCode } from './room.codes.js';
 import type { RoomRepository } from './room.repository.js';
 import type { RoomParticipant, RoomRecord, RoomSummary } from './room.types.js';
 
+export interface JoinByCodeResult {
+  room: RoomRecord;
+  joined: boolean;
+}
+
 export class RoomService {
   constructor(
     private readonly repository: RoomRepository,
@@ -48,8 +53,81 @@ export class RoomService {
     return this.repository.insert(room);
   }
 
+  async joinByCode(roomCode: string, userId: string): Promise<JoinByCodeResult> {
+    const room = await this.repository.findByRoomCode(roomCode);
+    if (!room) {
+      throw new Error('Sala não encontrada.');
+    }
+
+    if (room.participants.includes(userId)) {
+      return { room, joined: false };
+    }
+
+    const now = new Date().toISOString();
+    const participants = [...room.participants, userId];
+    const visibleTo = room.visibleTo.includes(userId) ? room.visibleTo : [...room.visibleTo, userId];
+    const joinedAt = { ...room.joinedAt, [userId]: now };
+
+    const updated = await this.repository.update(room.id, { participants, visibleTo, joinedAt });
+    if (!updated) {
+      throw new Error('Sala não encontrada.');
+    }
+
+    return { room: updated, joined: true };
+  }
+
+  async deleteForUser(roomId: string, userId: string): Promise<RoomRecord | null> {
+    const room = await this.repository.findById(roomId);
+    if (!room) {
+      return null;
+    }
+
+    const visibleTo = room.visibleTo.filter((id) => id !== userId);
+    const deletedAt = { ...room.deletedAt, [userId]: new Date().toISOString() };
+
+    return this.repository.update(roomId, { visibleTo, deletedAt });
+  }
+
+  async leaveGroup(roomId: string, userId: string): Promise<RoomRecord | null> {
+    const room = await this.repository.findById(roomId);
+    if (!room) {
+      return null;
+    }
+
+    const participants = room.participants.filter((id) => id !== userId);
+    const visibleTo = room.visibleTo.filter((id) => id !== userId);
+
+    return this.repository.update(roomId, { participants, visibleTo });
+  }
+
+  async blockUser(roomId: string, userId: string, blockedUserId: string): Promise<RoomRecord | null> {
+    const room = await this.repository.findById(roomId);
+    if (!room) {
+      return null;
+    }
+
+    const blockedBy = { ...room.blockedBy, [blockedUserId]: userId };
+    return this.repository.update(roomId, { blockedBy });
+  }
+
+  async unblockUser(roomId: string, blockedUserId: string): Promise<RoomRecord | null> {
+    const room = await this.repository.findById(roomId);
+    if (!room) {
+      return null;
+    }
+
+    const blockedBy = { ...room.blockedBy };
+    delete blockedBy[blockedUserId];
+    return this.repository.update(roomId, { blockedBy });
+  }
+
   getVisibleRoomsForUser(userId: string): Promise<RoomRecord[]> {
     return this.repository.findVisibleForUser(userId);
+  }
+
+  async listSummariesForUser(userId: string): Promise<RoomSummary[]> {
+    const rooms = await this.getVisibleRoomsForUser(userId);
+    return Promise.all(rooms.map((room) => this.buildSummary(room, userId)));
   }
 
   async buildSummary(room: RoomRecord, viewerId: string): Promise<RoomSummary> {
@@ -75,6 +153,10 @@ export class RoomService {
       userBlocked,
       isMutuallyBlocked: isBlockedBy && userBlocked,
     };
+  }
+
+  toParticipantView(user: UserRecord): RoomParticipant {
+    return toParticipant(user);
   }
 
   private async makeVisible(room: RoomRecord, userId: string): Promise<RoomRecord> {

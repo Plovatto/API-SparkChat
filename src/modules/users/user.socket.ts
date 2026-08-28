@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import { registerSocketEvent } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import type { UserService } from './user.service.js';
 
@@ -7,6 +9,17 @@ const joinPayloadSchema = z.object({
   avatar: z.number().int().min(0).optional(),
   loginCode: z.string().trim().min(1).optional().nullable(),
 });
+
+registerSocketEvent({
+  event: 'user:join',
+  direction: 'client-to-server',
+  module: 'users',
+  payloadSchema: zodToJsonSchema(joinPayloadSchema),
+});
+registerSocketEvent({ event: 'user:registered', direction: 'server-to-client', module: 'users' });
+registerSocketEvent({ event: 'user:online', direction: 'server-to-client', module: 'users' });
+registerSocketEvent({ event: 'user:offline', direction: 'server-to-client', module: 'users' });
+registerSocketEvent({ event: 'error', direction: 'server-to-client', module: 'users' });
 
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {

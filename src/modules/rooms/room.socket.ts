@@ -1,9 +1,12 @@
 import { z } from 'zod';
-import type { UserService } from '../users/index.js';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import { registerSocketEvent } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
+import type { UserService } from '../users/index.js';
 import type { RoomService } from './room.service.js';
 
 const CHAT_CODE_PATTERN = /^[A-Z0-9]{6}$/;
+const ROOM_CODE_MIN_LENGTH = 4;
 
 const createPrivateRoomPayloadSchema = z.object({
   targetChatCode: z.string().trim().min(1),
@@ -12,6 +15,57 @@ const createPrivateRoomPayloadSchema = z.object({
 const createGroupRoomPayloadSchema = z.object({
   roomName: z.string().trim().min(1),
 });
+
+const joinByCodePayloadSchema = z.object({
+  roomCode: z.string().trim().min(1),
+});
+
+const roomIdPayloadSchema = z.object({
+  roomId: z.string().trim().min(1),
+});
+
+const blockPayloadSchema = z.object({
+  roomId: z.string().trim().min(1),
+  blockedUserId: z.string().trim().min(1),
+});
+
+const roomIdPayloadJsonSchema = zodToJsonSchema(roomIdPayloadSchema);
+const blockPayloadJsonSchema = zodToJsonSchema(blockPayloadSchema);
+
+registerSocketEvent({
+  event: 'room:create-private',
+  direction: 'client-to-server',
+  module: 'rooms',
+  payloadSchema: zodToJsonSchema(createPrivateRoomPayloadSchema),
+});
+registerSocketEvent({
+  event: 'room:create-group',
+  direction: 'client-to-server',
+  module: 'rooms',
+  payloadSchema: zodToJsonSchema(createGroupRoomPayloadSchema),
+});
+registerSocketEvent({
+  event: 'room:join-by-code',
+  direction: 'client-to-server',
+  module: 'rooms',
+  payloadSchema: zodToJsonSchema(joinByCodePayloadSchema),
+});
+registerSocketEvent({ event: 'room:join', direction: 'client-to-server', module: 'rooms', payloadSchema: roomIdPayloadJsonSchema });
+registerSocketEvent({ event: 'room:delete', direction: 'client-to-server', module: 'rooms', payloadSchema: roomIdPayloadJsonSchema });
+registerSocketEvent({ event: 'rooms:get', direction: 'client-to-server', module: 'rooms' });
+registerSocketEvent({ event: 'group:leave', direction: 'client-to-server', module: 'rooms', payloadSchema: roomIdPayloadJsonSchema });
+registerSocketEvent({ event: 'user:block', direction: 'client-to-server', module: 'rooms', payloadSchema: blockPayloadJsonSchema });
+registerSocketEvent({ event: 'user:unblock', direction: 'client-to-server', module: 'rooms', payloadSchema: blockPayloadJsonSchema });
+registerSocketEvent({ event: 'room:joined', direction: 'server-to-client', module: 'rooms' });
+registerSocketEvent({ event: 'room:new', direction: 'server-to-client', module: 'rooms' });
+registerSocketEvent({ event: 'room:created', direction: 'server-to-client', module: 'rooms' });
+registerSocketEvent({ event: 'room:deleted', direction: 'server-to-client', module: 'rooms' });
+registerSocketEvent({ event: 'rooms:list', direction: 'server-to-client', module: 'rooms' });
+registerSocketEvent({ event: 'group:user-joined', direction: 'server-to-client', module: 'rooms' });
+registerSocketEvent({ event: 'group:left', direction: 'server-to-client', module: 'rooms' });
+registerSocketEvent({ event: 'group:user-left', direction: 'server-to-client', module: 'rooms' });
+registerSocketEvent({ event: 'user:blocked', direction: 'server-to-client', module: 'rooms' });
+registerSocketEvent({ event: 'user:unblocked', direction: 'server-to-client', module: 'rooms' });
 
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -37,6 +91,30 @@ export function registerRoomSocketHandlers(
 
   socket.on('rooms:get', () => {
     void handleRoomsGet(socket, roomService);
+  });
+
+  socket.on('room:join-by-code', (payload) => {
+    void handleJoinByCode(io, socket, roomService, userService, payload);
+  });
+
+  socket.on('room:join', (payload) => {
+    void handleJoinRoom(socket, payload);
+  });
+
+  socket.on('room:delete', (payload) => {
+    void handleDeleteRoom(socket, roomService, payload);
+  });
+
+  socket.on('group:leave', (payload) => {
+    void handleLeaveGroup(socket, roomService, userService, payload);
+  });
+
+  socket.on('user:block', (payload) => {
+    void handleBlockUser(io, socket, roomService, userService, payload);
+  });
+
+  socket.on('user:unblock', (payload) => {
+    void handleUnblockUser(io, socket, roomService, userService, payload);
   });
 }
 
@@ -122,6 +200,194 @@ async function handleRoomsGet(socket: AppSocket, roomService: RoomService): Prom
     }
 
     socket.emit('rooms:list', { rooms: summaries });
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleJoinByCode(
+  io: AppServer,
+  socket: AppSocket,
+  roomService: RoomService,
+  userService: UserService,
+  payload: unknown,
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { roomCode } = joinByCodePayloadSchema.parse(payload);
+    const normalizedCode = roomCode.toUpperCase().trim();
+
+    if (normalizedCode.length < ROOM_CODE_MIN_LENGTH) {
+      socket.emit('error', { message: 'Formato de código inválido.' });
+      return;
+    }
+
+    const { room, joined } = await roomService.joinByCode(normalizedCode, userId);
+    await socket.join(room.id);
+
+    if (joined) {
+      const user = await userService.getUser(userId);
+      if (user) {
+        io.to(room.id).emit('group:user-joined', {
+          roomId: room.id,
+          user: roomService.toParticipantView(user),
+        });
+      }
+    }
+
+    const summary = await roomService.buildSummary(room, userId);
+    socket.emit('room:joined', { room: summary, messages: [] });
+
+    const summaries = await roomService.listSummariesForUser(userId);
+    socket.emit('rooms:list', { rooms: summaries });
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleJoinRoom(socket: AppSocket, payload: unknown): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { roomId } = roomIdPayloadSchema.parse(payload);
+    await socket.join(roomId);
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleDeleteRoom(socket: AppSocket, roomService: RoomService, payload: unknown): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { roomId } = roomIdPayloadSchema.parse(payload);
+    await roomService.deleteForUser(roomId, userId);
+    socket.emit('room:deleted', { roomId });
+    await socket.leave(roomId);
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleLeaveGroup(
+  socket: AppSocket,
+  roomService: RoomService,
+  userService: UserService,
+  payload: unknown,
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { roomId } = roomIdPayloadSchema.parse(payload);
+    const user = await userService.getUser(userId);
+    const updatedRoom = await roomService.leaveGroup(roomId, userId);
+
+    socket.emit('group:left', { roomId });
+
+    if (updatedRoom && user) {
+      const remainingRecords = await Promise.all(updatedRoom.participants.map((id) => userService.getUser(id)));
+      const remaining = remainingRecords
+        .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
+        .map((participant) => roomService.toParticipantView(participant));
+
+      socket.to(roomId).emit('group:user-left', {
+        roomId,
+        userId,
+        userName: user.nickname,
+        participants: remaining,
+      });
+    }
+
+    await socket.leave(roomId);
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleBlockUser(
+  io: AppServer,
+  socket: AppSocket,
+  roomService: RoomService,
+  userService: UserService,
+  payload: unknown,
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { roomId, blockedUserId } = blockPayloadSchema.parse(payload);
+    const room = await roomService.blockUser(roomId, userId, blockedUserId);
+    if (!room) {
+      return;
+    }
+
+    socket.emit('user:blocked', { roomId, blockedUserId, blockedBy: room.blockedBy, isBlocking: true });
+
+    const blockedUser = await userService.getUser(blockedUserId);
+    if (blockedUser?.socketId) {
+      io.to(blockedUser.socketId).emit('user:blocked', {
+        roomId,
+        blockedByUserId: userId,
+        blockedBy: room.blockedBy,
+        isBlocking: false,
+      });
+    }
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleUnblockUser(
+  io: AppServer,
+  socket: AppSocket,
+  roomService: RoomService,
+  userService: UserService,
+  payload: unknown,
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { roomId, blockedUserId } = blockPayloadSchema.parse(payload);
+    const room = await roomService.unblockUser(roomId, blockedUserId);
+    if (!room) {
+      return;
+    }
+
+    socket.emit('user:unblocked', { roomId, blockedUserId, blockedBy: room.blockedBy, isBlocking: true });
+
+    const blockedUser = await userService.getUser(blockedUserId);
+    if (blockedUser?.socketId) {
+      io.to(blockedUser.socketId).emit('user:unblocked', {
+        roomId,
+        blockedByUserId: userId,
+        blockedBy: room.blockedBy,
+        isBlocking: false,
+      });
+    }
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
