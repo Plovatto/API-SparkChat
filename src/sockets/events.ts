@@ -1,8 +1,19 @@
 import type { Server, Socket } from 'socket.io';
+import type { PublicUser, UserStatus } from '../models/user.model.js';
 
-export type ServerToClientEvents = Record<string, never>;
+export interface ServerToClientEvents {
+  'user:registered': (payload: { user: PublicUser }) => void;
+  'user:online': (payload: { userId: string; nickname: string; avatar: number }) => void;
+  'user:offline': (payload: {
+    userId: string;
+    user: { id: string; status: UserStatus; lastSeen: string };
+  }) => void;
+  error: (payload: { message: string }) => void;
+}
 
-export type ClientToServerEvents = Record<string, never>;
+export interface ClientToServerEvents {
+  'user:join': (payload: { nickname?: string; avatar?: number; loginCode?: string | null }) => void;
+}
 
 export type InterServerEvents = Record<string, never>;
 

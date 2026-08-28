@@ -6,6 +6,8 @@ coverage
 .env
 .env.local
 
+data/*.json
+
 *.log
 npm-debug.log*
 
