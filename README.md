@@ -11,6 +11,7 @@ API backend do SparkChat, desenvolvida com Node.js, TypeScript, Express e Socket
 - Tratamento de rotas não encontradas e erros da aplicação
 - Tipagem dos eventos emitidos entre cliente e servidor
 - Testes automatizados com Vitest
+- Documentação interativa (Swagger UI) gerada a partir dos schemas Zod
 
 ## Tecnologias
 
@@ -18,7 +19,8 @@ API backend do SparkChat, desenvolvida com Node.js, TypeScript, Express e Socket
 - [TypeScript](https://www.typescriptlang.org/)
 - [Express](https://expressjs.com/)
 - [Socket.IO](https://socket.io/)
-- [Zod](https://zod.dev/) - validação de variáveis de ambiente
+- [Zod](https://zod.dev/) - validação de requisições e variáveis de ambiente
+- [zod-to-openapi](https://github.com/asteasolutions/zod-to-openapi) + [Swagger UI](https://github.com/scottie1984/swagger-ui-express) - documentação da API
 - [Pino](https://getpino.io/) - logging estruturado
 - [Vitest](https://vitest.dev/) - testes automatizados
 - ESLint - análise e padronização do código
@@ -83,21 +85,12 @@ FRONTEND_URL=http://localhost:5173
 LOG_LEVEL=info
 ```
 
-## Endpoints
+## Documentação da API
 
-### Health Check
+A documentação de rotas HTTP é gerada a partir do código e servida pela própria API:
 
-```http
-GET /health
-```
-
-Resposta esperada:
-
-```json
-{
-  "status": "ok",
-  "uptime": 123.45
-}
+```text
+http://localhost:3001/docs (Swagger UI)
 ```
 
 ## WebSocket
@@ -109,7 +102,12 @@ Configuração atual:
 - Origem permitida definida por `FRONTEND_URL`
 - Transportes habilitados: `websocket` e `polling`
 - Credenciais habilitadas para CORS
-- Eventos tipados em `src/sockets/events.ts`
+- Eventos tipados e documentados em `src/sockets/events.ts`
+
+## Testes
+
+Os testes ficam em `test/`, usando **Vitest** + **Supertest** contra o app Express real (`src/app.ts`), sem subir servidor HTTP nem depender da pasta `data/` — cada teste usa um arquivo JSON temporário isolado (`test/support/build-test-app.ts`).
+
 
 ## Scripts
 
@@ -128,18 +126,22 @@ Configuração atual:
 
 ```text
 src/
-├── config/        # Variáveis de ambiente e logger
+├── app.ts         # Monta o Express app (usado em produção e nos testes)
+├── config/        # Variáveis de ambiente, logger e caminhos de dados
 ├── controllers/   # Orquestração entre entrada, regras de negócio e resposta
-├── database/      # Base para camada de persistência
+├── database/      # Storage genérico em JSON + repositórios
+├── docs/          # Registro OpenAPI e geração do documento servido em /docs
 ├── middleware/    # Tratamento de erros e middlewares HTTP
-├── models/        # Base para entidades e acesso a dados
+├── models/        # Tipos e schemas (Zod) de cada entidade
 ├── routes/        # Registro das rotas REST
-├── services/      # Base para regras de negócio
-├── sockets/       # Configuração e contratos do Socket.IO
+├── services/      # Regras de negócio por domínio
+├── sockets/       # Configuração, contratos e handlers do Socket.IO
 ├── utils/         # Funções auxiliares
-└── server.ts      # Ponto de entrada da aplicação
+└── server.ts      # Ponto de entrada: cria o app, o socket.io e sobe o servidor
 
 test/
-└── health.test.ts # Teste inicial da suíte
+├── support/                 # Helpers de teste (ex.: app com storage isolado)
+├── health.test.ts           # Teste do health check
+└── users.routes.test.ts     # Testes da rota /api/users
 ```
 
