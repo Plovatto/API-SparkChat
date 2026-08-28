@@ -1,6 +1,12 @@
-import { joinPayloadSchema } from '../models/user.model.js';
-import type { UserService } from '../services/user.service.js';
-import type { AppServer, AppSocket } from './events.js';
+import { z } from 'zod';
+import type { AppServer, AppSocket } from '../../sockets/events.js';
+import type { UserService } from './user.service.js';
+
+const joinPayloadSchema = z.object({
+  nickname: z.string().trim().min(1).optional(),
+  avatar: z.number().int().min(0).optional(),
+  loginCode: z.string().trim().min(1).optional().nullable(),
+});
 
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {

@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import { createUserController } from '../controllers/user.controller.js';
-import { registry } from '../docs/registry.js';
-import { errorResponseSchema, validateCodeBodySchema, validateCodeResponseSchema } from '../models/user.model.js';
-import type { UserService } from '../services/user.service.js';
+import { errorResponseSchema } from '../../docs/common-schemas.js';
+import { registry } from '../../docs/registry.js';
+import { createUserController, validateCodeBodySchema, validateCodeResponseSchema } from './user.controller.js';
+import type { UserService } from './user.service.js';
 
 registry.registerPath({
   method: 'post',

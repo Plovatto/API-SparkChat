@@ -1,6 +1,5 @@
 import { logger } from '../config/logger.js';
-import { registerUserSocketHandlers } from './user.socket.js';
-import type { UserService } from '../services/user.service.js';
+import { registerUserSocketHandlers, type UserService } from '../modules/users/index.js';
 import type { AppServer, AppSocket } from './events.js';
 
 export interface SocketDeps {

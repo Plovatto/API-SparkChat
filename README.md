@@ -126,18 +126,16 @@ Os testes ficam em `test/`, usando **Vitest** + **Supertest** contra o app Expre
 
 ```text
 src/
-├── app.ts         # Monta o Express app (usado em produção e nos testes)
-├── config/        # Variáveis de ambiente, logger e caminhos de dados
-├── controllers/   # Orquestração entre entrada, regras de negócio e resposta
-├── database/      # Storage genérico em JSON + repositórios
-├── docs/          # Registro OpenAPI e geração do documento servido em /docs
-├── middleware/    # Tratamento de erros e middlewares HTTP
-├── models/        # Tipos e schemas (Zod) de cada entidade
-├── routes/        # Registro das rotas REST
-├── services/      # Regras de negócio por domínio
-├── sockets/       # Configuração, contratos e handlers do Socket.IO
-├── utils/         # Funções auxiliares
-└── server.ts      # Ponto de entrada: cria o app, o socket.io e sobe o servidor
+├── app.ts             # Monta o Express app (usado em produção e nos testes)
+├── config/            # Variáveis de ambiente, logger e caminhos de dados
+├── database/          # Storage genérico em JSON + repositório base
+├── docs/              # Registro OpenAPI e geração do documento servido em /docs
+├── middleware/        # Tratamento de erros e middlewares HTTP
+├── modules/
+│   └── users/         # Model, types, repository, service, controller, routes e socket da entidade User
+├── routes/            # Monta as rotas de cada módulo sob /api
+├── sockets/           # Contratos e registro de conexões do Socket.IO
+└── server.ts          # Ponto de entrada: cria o app, o socket.io e sobe o servidor
 
 test/
 ├── support/                 # Helpers de teste (ex.: app com storage isolado)

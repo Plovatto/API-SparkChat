@@ -1,7 +1,23 @@
 import type { Request, Response } from 'express';
-import { logger } from '../config/logger.js';
-import { validateCodeBodySchema } from '../models/user.model.js';
-import type { UserService } from '../services/user.service.js';
+import { z } from 'zod';
+import { logger } from '../../config/logger.js';
+import { publicUserSchema } from './user.model.js';
+import type { UserService } from './user.service.js';
+
+export const validateCodeBodySchema = z
+  .object({
+    loginCode: z.string().trim().min(1).openapi({ example: '123456', description: 'Código de login de 6 dígitos' }),
+  })
+  .openapi('ValidateCodeBody');
+
+export type ValidateCodeBody = z.infer<typeof validateCodeBodySchema>;
+
+export const validateCodeResponseSchema = z
+  .object({
+    message: z.string().openapi({ example: 'Código validado com sucesso!' }),
+    user: publicUserSchema,
+  })
+  .openapi('ValidateCodeResponse');
 
 export function createUserController(userService: UserService) {
   return {
