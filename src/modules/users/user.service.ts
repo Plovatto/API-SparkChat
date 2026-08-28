@@ -66,6 +66,14 @@ export class UserService {
     return this.repository.findByLoginCode(loginCode);
   }
 
+  getUser(userId: string): Promise<UserRecord | null> {
+    return this.repository.findById(userId);
+  }
+
+  getUserByChatCode(chatCode: string): Promise<UserRecord | null> {
+    return this.repository.findByChatCode(chatCode);
+  }
+
   setStatus(userId: string, status: UserStatus): Promise<UserRecord | null> {
     return this.repository.update(userId, {
       status,
