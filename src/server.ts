@@ -5,9 +5,7 @@ import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { dataFilePath } from './config/paths.js';
 import { JsonFileStore } from './database/json-file-store.js';
-import { UserRepository } from './database/user.repository.js';
-import type { UserRecord } from './models/user.model.js';
-import { UserService } from './services/user.service.js';
+import { UserRepository, UserService, type UserRecord } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import type {
   ClientToServerEvents,

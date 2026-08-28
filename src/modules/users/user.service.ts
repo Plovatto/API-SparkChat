@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import type { UserRepository } from '../database/user.repository.js';
-import type { PublicUser, UserRecord, UserStatus } from '../models/user.model.js';
-import { generateChatCode, generateLoginCode, isValidLoginCode } from '../utils/user-codes.js';
+import type { PublicUser, UserStatus } from './user.model.js';
+import { generateChatCode, generateLoginCode, isValidLoginCode } from './user.codes.js';
+import type { UserRepository } from './user.repository.js';
+import type { UserRecord } from './user.types.js';
 
 export interface JoinInput {
   nickname?: string | undefined;

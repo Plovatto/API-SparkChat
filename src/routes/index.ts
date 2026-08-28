@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import { createUserRouter } from './user.routes.js';
-import type { UserService } from '../services/user.service.js';
+import { createUserRouter, type UserService } from '../modules/users/index.js';
 
 export interface ApiRouterDeps {
   userService: UserService;
