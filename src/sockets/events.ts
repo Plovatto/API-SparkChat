@@ -1,9 +1,10 @@
 import type { Server, Socket } from 'socket.io';
+import type { RoomClientToServerEvents, RoomServerToClientEvents } from '../modules/rooms/room.events.js';
 import type { UserClientToServerEvents, UserServerToClientEvents } from '../modules/users/user.events.js';
 
-export type ServerToClientEvents = UserServerToClientEvents;
+export interface ServerToClientEvents extends UserServerToClientEvents, RoomServerToClientEvents {}
 
-export type ClientToServerEvents = UserClientToServerEvents;
+export interface ClientToServerEvents extends UserClientToServerEvents, RoomClientToServerEvents {}
 
 export type InterServerEvents = Record<string, never>;
 
