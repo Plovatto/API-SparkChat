@@ -151,4 +151,16 @@ describe('RoomService', () => {
     expect(roomService.isParticipant(room, bob.id)).toBe(true);
     expect(roomService.isParticipant(room, carol.id)).toBe(false);
   });
+
+  it('reports the recipient as newly visible right after creating a private room, and no one once visible to all', async () => {
+    const { roomService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const room = await roomService.createPrivateRoom(alice.id, bob.id);
+
+    expect(roomService.getNewlyVisibleParticipants(room, alice.id)).toEqual([bob.id]);
+
+    const updated = await roomService.makeVisibleForAll(room);
+    expect(updated && roomService.getNewlyVisibleParticipants(updated, alice.id)).toEqual([]);
+  });
 });

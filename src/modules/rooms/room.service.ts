@@ -139,6 +139,10 @@ export class RoomService {
     return room.participants.includes(userId);
   }
 
+  getNewlyVisibleParticipants(room: RoomRecord, excludingUserId: string): string[] {
+    return room.participants.filter((id) => id !== excludingUserId && !room.visibleTo.includes(id));
+  }
+
   async makeVisibleForAll(room: RoomRecord): Promise<RoomRecord | null> {
     const missing = room.participants.filter((id) => !room.visibleTo.includes(id));
     if (missing.length === 0) {
