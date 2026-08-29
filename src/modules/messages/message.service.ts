@@ -53,6 +53,24 @@ export class MessageService {
     return this.repository.findByRoomId(roomId);
   }
 
+  async deleteMessage(messageId: string, requesterId: string): Promise<MessageRecord> {
+    const message = await this.repository.findById(messageId);
+    if (!message) {
+      throw new Error('Mensagem não encontrada.');
+    }
+
+    if (message.senderId !== requesterId) {
+      throw new Error('Você não tem permissão para deletar esta mensagem.');
+    }
+
+    const updated = await this.repository.update(messageId, { deletedForEveryone: true, content: '' });
+    if (!updated) {
+      throw new Error('Mensagem não encontrada.');
+    }
+
+    return updated;
+  }
+
   async getLastMessage(roomId: string): Promise<MessageRecord | null> {
     const messages = await this.repository.findByRoomId(roomId);
     return messages.length > 0 ? (messages[messages.length - 1] ?? null) : null;
