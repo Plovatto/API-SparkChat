@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { UserService } from '../users/index.js';
 import type { MessageRepository } from './message.repository.js';
-import type { MessageRecord, MessageReplySnapshot, MessageSender, MessageView } from './message.types.js';
+import type { MessageRecord, MessageReplySnapshot, MessageSender, MessageType, MessageView } from './message.types.js';
 
 export interface SendMessageInput {
   roomId: string;
   senderId: string;
   content: string;
+  type?: Extract<MessageType, 'text' | 'image'> | undefined;
   replyToMessageId?: string | undefined;
 }
 
@@ -22,7 +23,7 @@ export class MessageService {
       roomId: input.roomId,
       senderId: input.senderId,
       content: input.content,
-      type: 'text',
+      type: input.type ?? 'text',
       timestamp: new Date().toISOString(),
       deletedForEveryone: false,
       status: 'sent',

@@ -1,6 +1,6 @@
 export type MessageStatus = 'sent' | 'delivered' | 'read';
 
-export type MessageType = 'text' | 'system';
+export type MessageType = 'text' | 'system' | 'image';
 
 export interface MessageSender {
   id: string;

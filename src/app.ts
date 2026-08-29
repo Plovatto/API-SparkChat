@@ -5,6 +5,7 @@ import swaggerUi from 'swagger-ui-express';
 import { z } from 'zod';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
+import { uploadsDir, uploadsUrlPrefix } from './config/paths.js';
 import { downloadButtonScript } from './docs/download-button.js';
 import { generateOpenApiDocument } from './docs/openapi-document.js';
 import { registry } from './docs/registry.js';
@@ -44,6 +45,7 @@ export function createApp(deps: ApiRouterDeps): Express {
     res.status(200).json({ status: 'ok', uptime: process.uptime() });
   });
 
+  app.use(uploadsUrlPrefix, express.static(uploadsDir));
   app.use('/api', createApiRouter(deps));
 
   const openApiDocument = generateOpenApiDocument();
