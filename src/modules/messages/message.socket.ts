@@ -5,6 +5,7 @@ import type { AppServer, AppSocket } from '../../sockets/events.js';
 import type { RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
 import type { MessageService } from './message.service.js';
+import type { TypingService } from './typing.service.js';
 
 const sendMessagePayloadSchema = z.object({
   roomId: z.string().trim().min(1),
@@ -43,11 +44,24 @@ registerSocketEvent({
   module: 'messages',
   payloadSchema: zodToJsonSchema(deleteMessagePayloadSchema),
 });
+registerSocketEvent({
+  event: 'typing:start',
+  direction: 'client-to-server',
+  module: 'messages',
+  payloadSchema: zodToJsonSchema(roomIdPayloadSchema),
+});
+registerSocketEvent({
+  event: 'typing:stop',
+  direction: 'client-to-server',
+  module: 'messages',
+  payloadSchema: zodToJsonSchema(roomIdPayloadSchema),
+});
 registerSocketEvent({ event: 'message:new', direction: 'server-to-client', module: 'messages' });
 registerSocketEvent({ event: 'message:mark-read-done', direction: 'server-to-client', module: 'messages' });
 registerSocketEvent({ event: 'message:read-receipt', direction: 'server-to-client', module: 'messages' });
 registerSocketEvent({ event: 'messages:list', direction: 'server-to-client', module: 'messages' });
 registerSocketEvent({ event: 'message:deleted', direction: 'server-to-client', module: 'messages' });
+registerSocketEvent({ event: 'typing:update', direction: 'server-to-client', module: 'messages' });
 
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -63,6 +77,7 @@ export function registerMessageSocketHandlers(
   messageService: MessageService,
   roomService: RoomService,
   userService: UserService,
+  typingService: TypingService,
 ): void {
   socket.on('message:send', (payload) => {
     void handleSendMessage(io, socket, messageService, roomService, userService, payload);
@@ -78,6 +93,18 @@ export function registerMessageSocketHandlers(
 
   socket.on('message:delete', (payload) => {
     void handleDeleteMessage(io, socket, messageService, payload);
+  });
+
+  socket.on('typing:start', (payload) => {
+    handleTypingStart(socket, typingService, payload);
+  });
+
+  socket.on('typing:stop', (payload) => {
+    handleTypingStop(socket, typingService, payload);
+  });
+
+  socket.on('disconnect', () => {
+    handleTypingDisconnect(io, socket, typingService);
   });
 }
 
@@ -179,6 +206,47 @@ async function handleDeleteMessage(
     io.to(updated.roomId).emit('message:deleted', { messageId, roomId: updated.roomId });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+function handleTypingStart(socket: AppSocket, typingService: TypingService, payload: unknown): void {
+  const userId = socket.data.userId;
+  if (!userId) {
+    return;
+  }
+
+  try {
+    const { roomId } = roomIdPayloadSchema.parse(payload);
+    const users = typingService.startTyping(roomId, userId);
+    socket.to(roomId).emit('typing:update', { roomId, users });
+  } catch {
+    return;
+  }
+}
+
+function handleTypingStop(socket: AppSocket, typingService: TypingService, payload: unknown): void {
+  const userId = socket.data.userId;
+  if (!userId) {
+    return;
+  }
+
+  try {
+    const { roomId } = roomIdPayloadSchema.parse(payload);
+    const users = typingService.stopTyping(roomId, userId);
+    socket.to(roomId).emit('typing:update', { roomId, users });
+  } catch {
+    return;
+  }
+}
+
+function handleTypingDisconnect(io: AppServer, socket: AppSocket, typingService: TypingService): void {
+  const userId = socket.data.userId;
+  if (!userId) {
+    return;
+  }
+
+  for (const { roomId, users } of typingService.removeUserEverywhere(userId)) {
+    io.to(roomId).emit('typing:update', { roomId, users });
   }
 }
 
