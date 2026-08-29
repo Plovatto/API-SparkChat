@@ -81,6 +81,10 @@ export class UserService {
     });
   }
 
+  updateProfile(userId: string, input: { nickname: string; avatar: number }): Promise<UserRecord | null> {
+    return this.repository.update(userId, { nickname: input.nickname, avatar: input.avatar });
+  }
+
   async migrateLegacyCodes(): Promise<void> {
     const users = await this.repository.findAll();
     let migrated = false;
