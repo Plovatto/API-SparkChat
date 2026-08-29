@@ -1,8 +1,9 @@
-export { createMessageController, uploadImageResponseSchema } from './message.controller.js';
+export { createMessageController, mediaUploadResponseSchema } from './message.controller.js';
 export { createMessageRouter } from './message.routes.js';
 export { MessageRepository } from './message.repository.js';
 export { MessageService } from './message.service.js';
 export { registerMessageSocketHandlers } from './message.socket.js';
+export { RecordingService } from './recording.service.js';
 export { TypingService } from './typing.service.js';
 export type { TypingRoomUpdate } from './typing.service.js';
 export type { MessageClientToServerEvents, MessageServerToClientEvents } from './message.events.js';
