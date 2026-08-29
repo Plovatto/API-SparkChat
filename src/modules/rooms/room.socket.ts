@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { registerSocketEvent } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
+import type { MessageService } from '../messages/index.js';
 import type { UserService } from '../users/index.js';
 import type { RoomService } from './room.service.js';
 
@@ -80,13 +81,14 @@ export function registerRoomSocketHandlers(
   socket: AppSocket,
   roomService: RoomService,
   userService: UserService,
+  messageService: MessageService,
 ): void {
   socket.on('room:create-private', (payload) => {
-    void handleCreatePrivateRoom(io, socket, roomService, userService, payload);
+    void handleCreatePrivateRoom(io, socket, roomService, userService, messageService, payload);
   });
 
   socket.on('room:create-group', (payload) => {
-    void handleCreateGroupRoom(socket, roomService, payload);
+    void handleCreateGroupRoom(socket, roomService, userService, messageService, payload);
   });
 
   socket.on('rooms:get', () => {
@@ -94,7 +96,7 @@ export function registerRoomSocketHandlers(
   });
 
   socket.on('room:join-by-code', (payload) => {
-    void handleJoinByCode(io, socket, roomService, userService, payload);
+    void handleJoinByCode(io, socket, roomService, userService, messageService, payload);
   });
 
   socket.on('room:join', (payload) => {
@@ -123,6 +125,7 @@ async function handleCreatePrivateRoom(
   socket: AppSocket,
   roomService: RoomService,
   userService: UserService,
+  messageService: MessageService,
   payload: unknown,
 ): Promise<void> {
   const userId = socket.data.userId;
@@ -153,19 +156,27 @@ async function handleCreatePrivateRoom(
       await io.sockets.sockets.get(targetUser.socketId)?.join(room.id);
     }
 
+    const messageViews = await messageService.toViews(await messageService.getRoomMessages(room.id));
+
     const summaryForViewer = await roomService.buildSummary(room, userId);
-    socket.emit('room:joined', { room: summaryForViewer, messages: [] });
+    socket.emit('room:joined', { room: summaryForViewer, messages: messageViews });
 
     if (targetUser.socketId) {
       const summaryForTarget = await roomService.buildSummary(room, targetUser.id);
-      io.to(targetUser.socketId).emit('room:new', { room: summaryForTarget, messages: [] });
+      io.to(targetUser.socketId).emit('room:new', { room: summaryForTarget, messages: messageViews });
     }
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
 }
 
-async function handleCreateGroupRoom(socket: AppSocket, roomService: RoomService, payload: unknown): Promise<void> {
+async function handleCreateGroupRoom(
+  socket: AppSocket,
+  roomService: RoomService,
+  userService: UserService,
+  messageService: MessageService,
+  payload: unknown,
+): Promise<void> {
   const userId = socket.data.userId;
   if (!userId) {
     socket.emit('error', { message: 'Usuário não autenticado.' });
@@ -177,8 +188,14 @@ async function handleCreateGroupRoom(socket: AppSocket, roomService: RoomService
     const room = await roomService.createGroupRoom(roomName, userId);
     await socket.join(room.id);
 
+    const user = await userService.getUser(userId);
+    const systemMessage = await messageService.createSystemMessage(
+      room.id,
+      `${user?.nickname ?? 'Alguém'} criou o grupo`,
+    );
+
     const summary = await roomService.buildSummary(room, userId);
-    socket.emit('room:created', { room: summary, messages: [] });
+    socket.emit('room:created', { room: summary, messages: [await messageService.toView(systemMessage)] });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
@@ -210,6 +227,7 @@ async function handleJoinByCode(
   socket: AppSocket,
   roomService: RoomService,
   userService: UserService,
+  messageService: MessageService,
   payload: unknown,
 ): Promise<void> {
   const userId = socket.data.userId;
@@ -233,6 +251,8 @@ async function handleJoinByCode(
     if (joined) {
       const user = await userService.getUser(userId);
       if (user) {
+        await messageService.createSystemMessage(room.id, `${user.nickname} entrou no grupo`);
+
         io.to(room.id).emit('group:user-joined', {
           roomId: room.id,
           user: roomService.toParticipantView(user),
@@ -240,8 +260,9 @@ async function handleJoinByCode(
       }
     }
 
+    const messageViews = await messageService.toViews(await messageService.getRoomMessages(room.id));
     const summary = await roomService.buildSummary(room, userId);
-    socket.emit('room:joined', { room: summary, messages: [] });
+    socket.emit('room:joined', { room: summary, messages: messageViews });
 
     const summaries = await roomService.listSummariesForUser(userId);
     socket.emit('rooms:list', { rooms: summaries });
