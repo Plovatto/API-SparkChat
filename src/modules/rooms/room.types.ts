@@ -1,3 +1,4 @@
+import type { MessageView } from '../messages/index.js';
 import type { UserStatus } from '../users/index.js';
 
 export type RoomType = 'private' | 'group';
@@ -34,7 +35,7 @@ export interface RoomSummary {
   createdBy?: string | undefined;
   creatorId?: string | undefined;
   participants: RoomParticipant[];
-  lastMessage: null;
+  lastMessage: MessageView | null;
   unreadCount: number;
   blockedBy: Record<string, string>;
   isBlockedBy: boolean;
