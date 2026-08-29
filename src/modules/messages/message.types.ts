@@ -2,6 +2,19 @@ export type MessageStatus = 'sent' | 'delivered' | 'read';
 
 export type MessageType = 'text' | 'system';
 
+export interface MessageSender {
+  id: string;
+  nickname: string;
+  avatar: number | null;
+}
+
+export interface MessageReplySnapshot {
+  id: string;
+  content: string;
+  type: MessageType;
+  sender: MessageSender;
+}
+
 export interface MessageRecord {
   id: string;
   roomId: string;
@@ -13,12 +26,7 @@ export interface MessageRecord {
   status: MessageStatus;
   deliveredTo: string[];
   readBy: string[];
-}
-
-export interface MessageSender {
-  id: string;
-  nickname: string;
-  avatar: number | null;
+  replyTo: MessageReplySnapshot | null;
 }
 
 export interface MessageView {
@@ -32,4 +40,5 @@ export interface MessageView {
   status: MessageStatus;
   deliveredTo: string[];
   readBy: string[];
+  replyTo: MessageReplySnapshot | null;
 }

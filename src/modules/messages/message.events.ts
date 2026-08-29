@@ -10,7 +10,7 @@ export interface MessageServerToClientEvents {
 }
 
 export interface MessageClientToServerEvents {
-  'message:send': (payload: { roomId: string; content: string }) => void;
+  'message:send': (payload: { roomId: string; content: string; replyToMessageId?: string }) => void;
   'message:mark-read': (payload: { roomId: string }) => void;
   'messages:get': (payload: { roomId: string }) => void;
   'message:delete': (payload: { messageId: string }) => void;
