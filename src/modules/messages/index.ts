@@ -4,4 +4,11 @@ export { registerMessageSocketHandlers } from './message.socket.js';
 export { TypingService } from './typing.service.js';
 export type { TypingRoomUpdate } from './typing.service.js';
 export type { MessageClientToServerEvents, MessageServerToClientEvents } from './message.events.js';
-export type { MessageRecord, MessageSender, MessageStatus, MessageType, MessageView } from './message.types.js';
+export type {
+  MessageRecord,
+  MessageReplySnapshot,
+  MessageSender,
+  MessageStatus,
+  MessageType,
+  MessageView,
+} from './message.types.js';
