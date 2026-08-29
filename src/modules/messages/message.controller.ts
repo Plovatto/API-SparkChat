@@ -1,13 +1,13 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import '../../docs/zod-extend.js';
-import { imageUrlPath } from '../../config/paths.js';
+import { audioUrlPath, imageUrlPath } from '../../config/paths.js';
 
-export const uploadImageResponseSchema = z
+export const mediaUploadResponseSchema = z
   .object({
-    url: z.string().openapi({ example: '/uploads/images/3f1b2c.png', description: 'Caminho relativo da imagem enviada' }),
+    url: z.string().openapi({ example: '/uploads/images/3f1b2c.png', description: 'Caminho relativo do arquivo enviado' }),
   })
-  .openapi('UploadImageResponse');
+  .openapi('MediaUploadResponse');
 
 export function createMessageController() {
   return {
@@ -18,6 +18,15 @@ export function createMessageController() {
       }
 
       res.status(201).json({ url: imageUrlPath(req.file.filename) });
+    },
+
+    uploadAudio(req: Request, res: Response): void {
+      if (!req.file) {
+        res.status(400).json({ message: 'Nenhum áudio enviado.' });
+        return;
+      }
+
+      res.status(201).json({ url: audioUrlPath(req.file.filename) });
     },
   };
 }
