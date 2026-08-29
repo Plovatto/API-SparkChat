@@ -15,6 +15,10 @@ const roomIdPayloadSchema = z.object({
   roomId: z.string().trim().min(1),
 });
 
+const deleteMessagePayloadSchema = z.object({
+  messageId: z.string().trim().min(1),
+});
+
 registerSocketEvent({
   event: 'message:send',
   direction: 'client-to-server',
@@ -33,10 +37,17 @@ registerSocketEvent({
   module: 'messages',
   payloadSchema: zodToJsonSchema(roomIdPayloadSchema),
 });
+registerSocketEvent({
+  event: 'message:delete',
+  direction: 'client-to-server',
+  module: 'messages',
+  payloadSchema: zodToJsonSchema(deleteMessagePayloadSchema),
+});
 registerSocketEvent({ event: 'message:new', direction: 'server-to-client', module: 'messages' });
 registerSocketEvent({ event: 'message:mark-read-done', direction: 'server-to-client', module: 'messages' });
 registerSocketEvent({ event: 'message:read-receipt', direction: 'server-to-client', module: 'messages' });
 registerSocketEvent({ event: 'messages:list', direction: 'server-to-client', module: 'messages' });
+registerSocketEvent({ event: 'message:deleted', direction: 'server-to-client', module: 'messages' });
 
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -63,6 +74,10 @@ export function registerMessageSocketHandlers(
 
   socket.on('messages:get', (payload) => {
     void handleGetMessages(socket, messageService, roomService, payload);
+  });
+
+  socket.on('message:delete', (payload) => {
+    void handleDeleteMessage(io, socket, messageService, payload);
   });
 }
 
@@ -141,6 +156,27 @@ async function handleGetMessages(
     const messages = await messageService.getRoomMessages(roomId);
     const views = await messageService.toViews(messages);
     socket.emit('messages:list', { roomId, messages: views });
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleDeleteMessage(
+  io: AppServer,
+  socket: AppSocket,
+  messageService: MessageService,
+  payload: unknown,
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { messageId } = deleteMessagePayloadSchema.parse(payload);
+    const updated = await messageService.deleteMessage(messageId, userId);
+    io.to(updated.roomId).emit('message:deleted', { messageId, roomId: updated.roomId });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }

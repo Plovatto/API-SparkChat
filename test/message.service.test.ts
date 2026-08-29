@@ -60,6 +60,36 @@ describe('MessageService', () => {
     expect(view.content).toBe('');
     expect(view.deletedForEveryone).toBe(true);
   });
+
+  it('lets the sender delete their own message, clearing content and flagging it', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+
+    const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'apagar isso' });
+    const deleted = await messageService.deleteMessage(message.id, alice.id);
+
+    expect(deleted.deletedForEveryone).toBe(true);
+    expect(deleted.content).toBe('');
+  });
+
+  it('rejects deleting a message that belongs to someone else', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'não apague' });
+
+    await expect(messageService.deleteMessage(message.id, bob.id)).rejects.toThrow(
+      'Você não tem permissão para deletar esta mensagem.',
+    );
+  });
+
+  it('rejects deleting a message that does not exist', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+
+    await expect(messageService.deleteMessage('unknown-id', alice.id)).rejects.toThrow('Mensagem não encontrada.');
+  });
 });
 
 describe('RoomService + MessageService integration', () => {
