@@ -10,6 +10,7 @@ import type { TypingService } from './typing.service.js';
 const sendMessagePayloadSchema = z.object({
   roomId: z.string().trim().min(1),
   content: z.string().trim().min(1).max(5000),
+  replyToMessageId: z.string().trim().min(1).optional(),
 });
 
 const roomIdPayloadSchema = z.object({
@@ -123,7 +124,7 @@ async function handleSendMessage(
   }
 
   try {
-    const { roomId, content } = sendMessagePayloadSchema.parse(payload);
+    const { roomId, content, replyToMessageId } = sendMessagePayloadSchema.parse(payload);
     const room = await roomService.getRoomById(roomId);
 
     if (!room) {
@@ -138,7 +139,7 @@ async function handleSendMessage(
 
     const newlyVisibleUserIds = roomService.getNewlyVisibleParticipants(room, userId);
 
-    const message = await messageService.sendMessage({ roomId, senderId: userId, content });
+    const message = await messageService.sendMessage({ roomId, senderId: userId, content, replyToMessageId });
     const updatedRoom = (await roomService.makeVisibleForAll(room)) ?? room;
 
     const view = await messageService.toView(message);

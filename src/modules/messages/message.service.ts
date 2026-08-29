@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { UserService } from '../users/index.js';
 import type { MessageRepository } from './message.repository.js';
-import type { MessageRecord, MessageSender, MessageView } from './message.types.js';
+import type { MessageRecord, MessageReplySnapshot, MessageSender, MessageView } from './message.types.js';
 
 export interface SendMessageInput {
   roomId: string;
   senderId: string;
   content: string;
+  replyToMessageId?: string | undefined;
 }
 
 export class MessageService {
@@ -27,6 +28,7 @@ export class MessageService {
       status: 'sent',
       deliveredTo: [],
       readBy: [],
+      replyTo: input.replyToMessageId ? await this.buildReplySnapshot(input.replyToMessageId) : null,
     };
 
     return this.repository.insert(message);
@@ -44,6 +46,7 @@ export class MessageService {
       status: 'sent',
       deliveredTo: [],
       readBy: [],
+      replyTo: null,
     };
 
     return this.repository.insert(message);
@@ -119,11 +122,26 @@ export class MessageService {
       status: message.status,
       deliveredTo: message.deliveredTo,
       readBy: message.readBy,
+      replyTo: message.replyTo,
     };
   }
 
   toViews(messages: MessageRecord[]): Promise<MessageView[]> {
     return Promise.all(messages.map((message) => this.toView(message)));
+  }
+
+  private async buildReplySnapshot(messageId: string): Promise<MessageReplySnapshot | null> {
+    const original = await this.repository.findById(messageId);
+    if (!original) {
+      return null;
+    }
+
+    return {
+      id: original.id,
+      content: original.content,
+      type: original.type,
+      sender: await this.resolveSender(original.senderId),
+    };
   }
 
   private async resolveSender(senderId: string): Promise<MessageSender> {

@@ -90,6 +90,41 @@ describe('MessageService', () => {
 
     await expect(messageService.deleteMessage('unknown-id', alice.id)).rejects.toThrow('Mensagem não encontrada.');
   });
+
+  it('attaches a resolved snapshot of the original message when replying', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    const original = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'Oi Bob!' });
+    const reply = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: bob.id,
+      content: 'Oi Alice!',
+      replyToMessageId: original.id,
+    });
+
+    expect(reply.replyTo).toEqual({
+      id: original.id,
+      content: 'Oi Bob!',
+      type: 'text',
+      sender: { id: alice.id, nickname: 'Alice', avatar: 0 },
+    });
+  });
+
+  it('leaves replyTo null when replying to a message id that does not exist', async () => {
+    const { messageService, userService } = buildRoomService();
+    const bob = await createUser(userService, 'Bob');
+
+    const message = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: bob.id,
+      content: 'Oi?',
+      replyToMessageId: 'unknown-id',
+    });
+
+    expect(message.replyTo).toBeNull();
+  });
 });
 
 describe('RoomService + MessageService integration', () => {
