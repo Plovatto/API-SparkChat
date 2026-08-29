@@ -7,7 +7,8 @@ export interface SendMessageInput {
   roomId: string;
   senderId: string;
   content: string;
-  type?: Extract<MessageType, 'text' | 'image'> | undefined;
+  type?: Extract<MessageType, 'text' | 'image' | 'audio'> | undefined;
+  duration?: number | undefined;
   replyToMessageId?: string | undefined;
 }
 
@@ -24,11 +25,13 @@ export class MessageService {
       senderId: input.senderId,
       content: input.content,
       type: input.type ?? 'text',
+      duration: input.type === 'audio' ? (input.duration ?? null) : null,
       timestamp: new Date().toISOString(),
       deletedForEveryone: false,
       status: 'sent',
       deliveredTo: [],
       readBy: [],
+      playedBy: [],
       replyTo: input.replyToMessageId ? await this.buildReplySnapshot(input.replyToMessageId) : null,
     };
 
@@ -42,11 +45,13 @@ export class MessageService {
       senderId: 'system',
       content,
       type: 'system',
+      duration: null,
       timestamp: new Date().toISOString(),
       deletedForEveryone: false,
       status: 'sent',
       deliveredTo: [],
       readBy: [],
+      playedBy: [],
       replyTo: null,
     };
 
@@ -118,17 +123,28 @@ export class MessageService {
       sender: await this.resolveSender(message.senderId),
       content: message.deletedForEveryone ? '' : message.content,
       type: message.type,
+      duration: message.duration,
       timestamp: message.timestamp,
       deletedForEveryone: message.deletedForEveryone,
       status: message.status,
       deliveredTo: message.deliveredTo,
       readBy: message.readBy,
+      playedBy: message.playedBy,
       replyTo: message.replyTo,
     };
   }
 
   toViews(messages: MessageRecord[]): Promise<MessageView[]> {
     return Promise.all(messages.map((message) => this.toView(message)));
+  }
+
+  async markAudioPlayed(messageId: string, userId: string): Promise<MessageRecord | null> {
+    const message = await this.repository.findById(messageId);
+    if (!message || message.type !== 'audio' || message.senderId === userId || message.playedBy.includes(userId)) {
+      return null;
+    }
+
+    return this.repository.update(messageId, { playedBy: [...message.playedBy, userId] });
   }
 
   private async buildReplySnapshot(messageId: string): Promise<MessageReplySnapshot | null> {
@@ -141,6 +157,7 @@ export class MessageService {
       id: original.id,
       content: original.content,
       type: original.type,
+      duration: original.duration,
       sender: await this.resolveSender(original.senderId),
     };
   }
