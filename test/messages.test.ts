@@ -42,3 +42,29 @@ describe('POST /api/messages/upload-image', () => {
     expect(response.status).toBe(400);
   });
 });
+
+describe('POST /api/messages/upload-audio', () => {
+  it('stores a valid audio file and returns its url', async () => {
+    const response = await request(app)
+      .post('/api/messages/upload-audio')
+      .attach('audio', Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), { filename: 'clip.webm', contentType: 'audio/webm' });
+
+    const body = response.body as { url: string };
+    expect(response.status).toBe(201);
+    expect(body.url).toMatch(/^\/uploads\/audio\/.+\.webm$/);
+  });
+
+  it('rejects a request with no file', async () => {
+    const response = await request(app).post('/api/messages/upload-audio');
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects a non-audio file', async () => {
+    const response = await request(app)
+      .post('/api/messages/upload-audio')
+      .attach('audio', Buffer.from('not audio'), { filename: 'notes.txt', contentType: 'text/plain' });
+
+    expect(response.status).toBe(400);
+  });
+});

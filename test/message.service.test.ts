@@ -108,6 +108,7 @@ describe('MessageService', () => {
       id: original.id,
       content: 'Oi Bob!',
       type: 'text',
+      duration: null,
       sender: { id: alice.id, nickname: 'Alice', avatar: 0 },
     });
   });
@@ -124,6 +125,74 @@ describe('MessageService', () => {
     });
 
     expect(message.replyTo).toBeNull();
+  });
+});
+
+describe('MessageService.markAudioPlayed', () => {
+  it('adds the listener to playedBy on first play', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    const message = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: '/uploads/audio/clip.webm',
+      type: 'audio',
+      duration: 5,
+    });
+
+    const updated = await messageService.markAudioPlayed(message.id, bob.id);
+
+    expect(updated?.playedBy).toEqual([bob.id]);
+  });
+
+  it('is a no-op when the sender tries to mark their own audio as played', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+
+    const message = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: '/uploads/audio/clip.webm',
+      type: 'audio',
+      duration: 5,
+    });
+
+    const updated = await messageService.markAudioPlayed(message.id, alice.id);
+
+    expect(updated).toBeNull();
+  });
+
+  it('is a no-op when the same listener plays it again', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    const message = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: '/uploads/audio/clip.webm',
+      type: 'audio',
+      duration: 5,
+    });
+
+    await messageService.markAudioPlayed(message.id, bob.id);
+    const secondAttempt = await messageService.markAudioPlayed(message.id, bob.id);
+
+    expect(secondAttempt).toBeNull();
+  });
+
+  it('is a no-op for non-audio messages', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'Oi!' });
+
+    const updated = await messageService.markAudioPlayed(message.id, bob.id);
+
+    expect(updated).toBeNull();
   });
 });
 

@@ -1,6 +1,6 @@
 export type MessageStatus = 'sent' | 'delivered' | 'read';
 
-export type MessageType = 'text' | 'system' | 'image';
+export type MessageType = 'text' | 'system' | 'image' | 'audio';
 
 export interface MessageSender {
   id: string;
@@ -12,6 +12,7 @@ export interface MessageReplySnapshot {
   id: string;
   content: string;
   type: MessageType;
+  duration: number | null;
   sender: MessageSender;
 }
 
@@ -21,11 +22,13 @@ export interface MessageRecord {
   senderId: string;
   content: string;
   type: MessageType;
+  duration: number | null;
   timestamp: string;
   deletedForEveryone: boolean;
   status: MessageStatus;
   deliveredTo: string[];
   readBy: string[];
+  playedBy: string[];
   replyTo: MessageReplySnapshot | null;
 }
 
@@ -35,10 +38,12 @@ export interface MessageView {
   sender: MessageSender;
   content: string;
   type: MessageType;
+  duration: number | null;
   timestamp: string;
   deletedForEveryone: boolean;
   status: MessageStatus;
   deliveredTo: string[];
   readBy: string[];
+  playedBy: string[];
   replyTo: MessageReplySnapshot | null;
 }

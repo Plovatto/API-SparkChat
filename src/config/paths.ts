@@ -12,8 +12,13 @@ export function dataFilePath(entity: string): string {
 
 export const uploadsDir = path.join(rootDir, 'uploads');
 export const imagesUploadDir = path.join(uploadsDir, 'images');
+export const audioUploadDir = path.join(uploadsDir, 'audio');
 export const uploadsUrlPrefix = '/uploads';
 
 export function imageUrlPath(filename: string): string {
   return `${uploadsUrlPrefix}/images/${filename}`;
+}
+
+export function audioUrlPath(filename: string): string {
+  return `${uploadsUrlPrefix}/audio/${filename}`;
 }

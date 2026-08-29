@@ -1,4 +1,4 @@
-import type { MessageView } from './message.types.js';
+import type { MessageType, MessageView } from './message.types.js';
 
 export interface MessageServerToClientEvents {
   'message:new': (payload: MessageView) => void;
@@ -6,14 +6,25 @@ export interface MessageServerToClientEvents {
   'message:read-receipt': (payload: { roomId: string; userId: string }) => void;
   'messages:list': (payload: { roomId: string; messages: MessageView[] }) => void;
   'message:deleted': (payload: { messageId: string; roomId: string }) => void;
+  'message:updated': (payload: MessageView) => void;
   'typing:update': (payload: { roomId: string; users: string[] }) => void;
+  'recording:update': (payload: { roomId: string; users: string[] }) => void;
 }
 
 export interface MessageClientToServerEvents {
-  'message:send': (payload: { roomId: string; content: string; replyToMessageId?: string }) => void;
+  'message:send': (payload: {
+    roomId: string;
+    content: string;
+    type?: Extract<MessageType, 'text' | 'image' | 'audio'>;
+    duration?: number;
+    replyToMessageId?: string;
+  }) => void;
   'message:mark-read': (payload: { roomId: string }) => void;
   'messages:get': (payload: { roomId: string }) => void;
   'message:delete': (payload: { messageId: string }) => void;
   'typing:start': (payload: { roomId: string }) => void;
   'typing:stop': (payload: { roomId: string }) => void;
+  'recording:start': (payload: { roomId: string }) => void;
+  'recording:stop': (payload: { roomId: string }) => void;
+  'audio:played': (payload: { messageId: string }) => void;
 }
