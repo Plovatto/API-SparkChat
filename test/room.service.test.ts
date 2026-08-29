@@ -139,4 +139,16 @@ describe('RoomService', () => {
     const unblocked = await roomService.unblockUser(room.id, bob.id);
     expect(unblocked?.blockedBy[bob.id]).toBeUndefined();
   });
+
+  it('only treats actual room participants as participants', async () => {
+    const { roomService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const carol = await createUser(userService, 'Carol');
+    const room = await roomService.createPrivateRoom(alice.id, bob.id);
+
+    expect(roomService.isParticipant(room, alice.id)).toBe(true);
+    expect(roomService.isParticipant(room, bob.id)).toBe(true);
+    expect(roomService.isParticipant(room, carol.id)).toBe(false);
+  });
 });

@@ -26,9 +26,16 @@ registerSocketEvent({
   module: 'messages',
   payloadSchema: zodToJsonSchema(roomIdPayloadSchema),
 });
+registerSocketEvent({
+  event: 'messages:get',
+  direction: 'client-to-server',
+  module: 'messages',
+  payloadSchema: zodToJsonSchema(roomIdPayloadSchema),
+});
 registerSocketEvent({ event: 'message:new', direction: 'server-to-client', module: 'messages' });
 registerSocketEvent({ event: 'message:mark-read-done', direction: 'server-to-client', module: 'messages' });
 registerSocketEvent({ event: 'message:read-receipt', direction: 'server-to-client', module: 'messages' });
+registerSocketEvent({ event: 'messages:list', direction: 'server-to-client', module: 'messages' });
 
 function extractErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -50,6 +57,10 @@ export function registerMessageSocketHandlers(
 
   socket.on('message:mark-read', (payload) => {
     void handleMarkRead(socket, messageService, payload);
+  });
+
+  socket.on('messages:get', (payload) => {
+    void handleGetMessages(socket, messageService, roomService, payload);
   });
 }
 
@@ -85,6 +96,35 @@ async function handleSendMessage(
 
     const view = await messageService.toView(message);
     io.to(roomId).emit('message:new', view);
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleGetMessages(
+  socket: AppSocket,
+  messageService: MessageService,
+  roomService: RoomService,
+  payload: unknown,
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { roomId } = roomIdPayloadSchema.parse(payload);
+    const room = await roomService.getRoomById(roomId);
+
+    if (!room || !roomService.isParticipant(room, userId)) {
+      socket.emit('error', { message: 'Sala não encontrada.' });
+      return;
+    }
+
+    const messages = await messageService.getRoomMessages(roomId);
+    const views = await messageService.toViews(messages);
+    socket.emit('messages:list', { roomId, messages: views });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
