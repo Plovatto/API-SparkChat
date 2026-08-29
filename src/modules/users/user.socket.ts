@@ -10,15 +10,28 @@ const joinPayloadSchema = z.object({
   loginCode: z.string().trim().min(1).optional().nullable(),
 });
 
+const updateProfilePayloadSchema = z.object({
+  nickname: z.string().trim().min(2).max(20),
+  avatar: z.number().int().min(0),
+});
+
 registerSocketEvent({
   event: 'user:join',
   direction: 'client-to-server',
   module: 'users',
   payloadSchema: zodToJsonSchema(joinPayloadSchema),
 });
+registerSocketEvent({
+  event: 'user:update-profile',
+  direction: 'client-to-server',
+  module: 'users',
+  payloadSchema: zodToJsonSchema(updateProfilePayloadSchema),
+});
 registerSocketEvent({ event: 'user:registered', direction: 'server-to-client', module: 'users' });
 registerSocketEvent({ event: 'user:online', direction: 'server-to-client', module: 'users' });
 registerSocketEvent({ event: 'user:offline', direction: 'server-to-client', module: 'users' });
+registerSocketEvent({ event: 'user:profile-updated', direction: 'server-to-client', module: 'users' });
+registerSocketEvent({ event: 'user:profile-updated-success', direction: 'server-to-client', module: 'users' });
 registerSocketEvent({ event: 'error', direction: 'server-to-client', module: 'users' });
 
 function extractErrorMessage(error: unknown): string {
@@ -36,6 +49,10 @@ export function registerUserSocketHandlers(
 ): void {
   socket.on('user:join', (payload) => {
     void handleJoin(socket, userService, payload);
+  });
+
+  socket.on('user:update-profile', (payload) => {
+    void handleUpdateProfile(io, socket, userService, payload);
   });
 
   socket.on('disconnect', () => {
@@ -60,6 +77,34 @@ async function handleJoin(
       nickname: user.nickname,
       avatar: user.avatar,
     });
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleUpdateProfile(
+  io: AppServer,
+  socket: AppSocket,
+  userService: UserService,
+  payload: unknown,
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { nickname, avatar } = updateProfilePayloadSchema.parse(payload);
+    const updated = await userService.updateProfile(userId, { nickname, avatar });
+
+    if (!updated) {
+      socket.emit('error', { message: 'Usuário não encontrado.' });
+      return;
+    }
+
+    io.emit('user:profile-updated', { userId: updated.id, nickname: updated.nickname, avatar: updated.avatar });
+    socket.emit('user:profile-updated-success', { user: userService.toPublicUser(updated) });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
