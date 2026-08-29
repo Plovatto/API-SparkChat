@@ -3,6 +3,7 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import { registerSocketEvent } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import type { RoomService } from '../rooms/index.js';
+import type { UserService } from '../users/index.js';
 import type { MessageService } from './message.service.js';
 
 const sendMessagePayloadSchema = z.object({
@@ -50,9 +51,10 @@ export function registerMessageSocketHandlers(
   socket: AppSocket,
   messageService: MessageService,
   roomService: RoomService,
+  userService: UserService,
 ): void {
   socket.on('message:send', (payload) => {
-    void handleSendMessage(io, socket, messageService, roomService, payload);
+    void handleSendMessage(io, socket, messageService, roomService, userService, payload);
   });
 
   socket.on('message:mark-read', (payload) => {
@@ -69,6 +71,7 @@ async function handleSendMessage(
   socket: AppSocket,
   messageService: MessageService,
   roomService: RoomService,
+  userService: UserService,
   payload: unknown,
 ): Promise<void> {
   const userId = socket.data.userId;
@@ -91,11 +94,24 @@ async function handleSendMessage(
       return;
     }
 
+    const newlyVisibleUserIds = roomService.getNewlyVisibleParticipants(room, userId);
+
     const message = await messageService.sendMessage({ roomId, senderId: userId, content });
-    await roomService.makeVisibleForAll(room);
+    const updatedRoom = (await roomService.makeVisibleForAll(room)) ?? room;
 
     const view = await messageService.toView(message);
     io.to(roomId).emit('message:new', view);
+
+    for (const newlyVisibleUserId of newlyVisibleUserIds) {
+      const recipient = await userService.getUser(newlyVisibleUserId);
+      if (!recipient?.socketId) {
+        continue;
+      }
+
+      const summary = await roomService.buildSummary(updatedRoom, newlyVisibleUserId);
+      const messages = await messageService.toViews(await messageService.getRoomMessages(roomId));
+      io.to(recipient.socketId).emit('room:new', { room: summary, messages });
+    }
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }

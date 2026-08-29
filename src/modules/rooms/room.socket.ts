@@ -160,11 +160,6 @@ async function handleCreatePrivateRoom(
 
     const summaryForViewer = await roomService.buildSummary(room, userId);
     socket.emit('room:joined', { room: summaryForViewer, messages: messageViews });
-
-    if (targetUser.socketId) {
-      const summaryForTarget = await roomService.buildSummary(room, targetUser.id);
-      io.to(targetUser.socketId).emit('room:new', { room: summaryForTarget, messages: messageViews });
-    }
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }

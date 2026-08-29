@@ -16,7 +16,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
 
     registerUserSocketHandlers(io, socket, deps.userService);
     registerRoomSocketHandlers(io, socket, deps.roomService, deps.userService, deps.messageService);
-    registerMessageSocketHandlers(io, socket, deps.messageService, deps.roomService);
+    registerMessageSocketHandlers(io, socket, deps.messageService, deps.roomService, deps.userService);
 
     socket.on('disconnect', (reason) => {
       logger.info({ socketId: socket.id, reason }, 'Client disconnected');
