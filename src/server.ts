@@ -5,7 +5,7 @@ import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { dataFilePath } from './config/paths.js';
 import { JsonFileStore } from './database/json-file-store.js';
-import { MessageRepository, MessageService, type MessageRecord } from './modules/messages/index.js';
+import { MessageRepository, MessageService, TypingService, type MessageRecord } from './modules/messages/index.js';
 import { RoomRepository, RoomService, type RoomRecord } from './modules/rooms/index.js';
 import { UserRepository, UserService, type UserRecord } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
@@ -32,6 +32,8 @@ await roomStore.ensureFile();
 const roomRepository = new RoomRepository(roomStore);
 const roomService = new RoomService(roomRepository, userService, messageService);
 
+const typingService = new TypingService();
+
 const app = createApp({ userService });
 const httpServer = createServer(app);
 
@@ -49,7 +51,7 @@ const io = new Server<
   transports: ['websocket', 'polling'],
 });
 
-registerSocketHandlers(io, { userService, roomService, messageService });
+registerSocketHandlers(io, { userService, roomService, messageService, typingService });
 
 httpServer.listen(env.PORT, () => {
   logger.info(`Server running on port ${env.PORT}`);

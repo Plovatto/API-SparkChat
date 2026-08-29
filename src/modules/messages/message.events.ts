@@ -6,6 +6,7 @@ export interface MessageServerToClientEvents {
   'message:read-receipt': (payload: { roomId: string; userId: string }) => void;
   'messages:list': (payload: { roomId: string; messages: MessageView[] }) => void;
   'message:deleted': (payload: { messageId: string; roomId: string }) => void;
+  'typing:update': (payload: { roomId: string; users: string[] }) => void;
 }
 
 export interface MessageClientToServerEvents {
@@ -13,4 +14,6 @@ export interface MessageClientToServerEvents {
   'message:mark-read': (payload: { roomId: string }) => void;
   'messages:get': (payload: { roomId: string }) => void;
   'message:delete': (payload: { messageId: string }) => void;
+  'typing:start': (payload: { roomId: string }) => void;
+  'typing:stop': (payload: { roomId: string }) => void;
 }
