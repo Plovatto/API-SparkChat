@@ -160,7 +160,103 @@ describe('RoomService', () => {
 
     expect(roomService.getNewlyVisibleParticipants(room, alice.id)).toEqual([bob.id]);
 
-    const updated = await roomService.makeVisibleForAll(room);
+    const updated = await roomService.makeVisibleForAll(room, new Date().toISOString());
     expect(updated && roomService.getNewlyVisibleParticipants(updated, alice.id)).toEqual([]);
+  });
+
+  it('stamps reactivatedAt with the given cutoff for participants newly made visible', async () => {
+    const { roomService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const room = await roomService.createPrivateRoom(alice.id, bob.id);
+
+    const cutoff = '2026-01-01T00:00:00.000Z';
+    const updated = await roomService.makeVisibleForAll(room, cutoff);
+
+    expect(updated?.reactivatedAt?.[bob.id]).toBe(cutoff);
+  });
+
+  it('does not reset reactivatedAt when reopening a private room still visible to the user', async () => {
+    const { roomService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const first = await roomService.createPrivateRoom(alice.id, bob.id);
+    const madeVisible = await roomService.makeVisibleForAll(first, '2026-01-01T00:00:00.000Z');
+
+    const reopened = await roomService.createPrivateRoom(bob.id, alice.id);
+
+    expect(reopened.id).toBe(first.id);
+    expect(reopened.reactivatedAt?.[bob.id]).toBe(madeVisible?.reactivatedAt?.[bob.id]);
+  });
+
+  it('reactivates a private room for a user who had deleted it, once they reopen it by chat code', async () => {
+    const { roomService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const room = await roomService.createPrivateRoom(alice.id, bob.id);
+    await roomService.makeVisibleForAll(room, new Date().toISOString());
+    await roomService.deleteForUser(room.id, bob.id);
+
+    const reopened = await roomService.createPrivateRoom(bob.id, alice.id);
+
+    expect(reopened.id).toBe(room.id);
+    expect(reopened.visibleTo).toContain(bob.id);
+    expect(reopened.reactivatedAt?.[bob.id]).toBeDefined();
+  });
+});
+
+describe('RoomService.filterMessagesForUser', () => {
+  it('returns every message when the user has no deletedAt or reactivatedAt entry', async () => {
+    const { roomService, messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const room = await roomService.createPrivateRoom(alice.id, bob.id);
+    const message = await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'oi' });
+
+    expect(roomService.filterMessagesForUser(room, [message], bob.id)).toEqual([message]);
+  });
+
+  it('hides messages sent before the user deleted the room, keeps ones sent after', async () => {
+    const { roomService, messageService, messageRepository, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const room = await roomService.createPrivateRoom(alice.id, bob.id);
+
+    const sent1 = await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'antes' });
+    const before = await messageRepository.update(sent1.id, { timestamp: '2026-01-01T00:00:00.000Z' });
+
+    const sent2 = await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'depois' });
+    const after = await messageRepository.update(sent2.id, { timestamp: '2026-01-03T00:00:00.000Z' });
+
+    if (!before || !after) {
+      throw new Error('message not found');
+    }
+
+    const roomWithDeletion = { ...room, deletedAt: { [bob.id]: '2026-01-02T00:00:00.000Z' } };
+
+    const filtered = roomService.filterMessagesForUser(roomWithDeletion, [before, after], bob.id);
+    expect(filtered.map((message) => message.content)).toEqual(['depois']);
+  });
+
+  it('prioritizes reactivatedAt over deletedAt when both are set', async () => {
+    const { roomService, messageService, messageRepository, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const room = await roomService.createPrivateRoom(alice.id, bob.id);
+
+    const sent = await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'meio' });
+    const midMessage = await messageRepository.update(sent.id, { timestamp: '2026-01-03T00:00:00.000Z' });
+    if (!midMessage) {
+      throw new Error('message not found');
+    }
+
+    const roomWithReactivation = {
+      ...room,
+      deletedAt: { [bob.id]: '2026-01-04T00:00:00.000Z' },
+      reactivatedAt: { [bob.id]: '2026-01-02T00:00:00.000Z' },
+    };
+
+    const filtered = roomService.filterMessagesForUser(roomWithReactivation, [midMessage], bob.id);
+    expect(filtered).toEqual([midMessage]);
   });
 });

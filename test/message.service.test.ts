@@ -304,7 +304,7 @@ describe('RoomService + MessageService integration', () => {
     expect(await roomService.getVisibleRoomsForUser(bob.id)).toHaveLength(0);
 
     await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'Oi Bob!' });
-    await roomService.makeVisibleForAll(room);
+    await roomService.makeVisibleForAll(room, new Date().toISOString());
 
     const bobRooms = await roomService.getVisibleRoomsForUser(bob.id);
     expect(bobRooms.map((r) => r.id)).toEqual([room.id]);
