@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { MessageService } from '../messages/index.js';
+import type { MessageRecord, MessageService } from '../messages/index.js';
 import type { UserRecord, UserService } from '../users/index.js';
 import { generateRoomCode } from './room.codes.js';
 import type { RoomRepository } from './room.repository.js';
@@ -20,7 +20,7 @@ export class RoomService {
   async createPrivateRoom(userId: string, targetUserId: string): Promise<RoomRecord> {
     const existing = await this.repository.findPrivateRoomBetween(userId, targetUserId);
     if (existing) {
-      return this.makeVisible(existing, userId);
+      return existing.visibleTo.includes(userId) ? existing : this.makeVisible(existing, userId);
     }
 
     const room: RoomRecord = {
@@ -143,13 +143,32 @@ export class RoomService {
     return room.participants.filter((id) => id !== excludingUserId && !room.visibleTo.includes(id));
   }
 
-  async makeVisibleForAll(room: RoomRecord): Promise<RoomRecord | null> {
+  async makeVisibleForAll(room: RoomRecord, reactivatedBefore: string): Promise<RoomRecord | null> {
     const missing = room.participants.filter((id) => !room.visibleTo.includes(id));
     if (missing.length === 0) {
       return room;
     }
 
-    return this.repository.update(room.id, { visibleTo: [...room.visibleTo, ...missing] });
+    const reactivatedAt = { ...room.reactivatedAt };
+    for (const id of missing) {
+      reactivatedAt[id] = reactivatedBefore;
+    }
+
+    return this.repository.update(room.id, { visibleTo: [...room.visibleTo, ...missing], reactivatedAt });
+  }
+
+  filterMessagesForUser(room: RoomRecord, messages: MessageRecord[], userId: string): MessageRecord[] {
+    const reactivatedAt = room.reactivatedAt?.[userId];
+    if (reactivatedAt) {
+      return messages.filter((message) => message.timestamp > reactivatedAt);
+    }
+
+    const deletedAt = room.deletedAt[userId];
+    if (deletedAt) {
+      return messages.filter((message) => message.timestamp > deletedAt);
+    }
+
+    return messages;
   }
 
   getVisibleRoomsForUser(userId: string): Promise<RoomRecord[]> {
@@ -169,7 +188,8 @@ export class RoomService {
     const isBlockedBy = Boolean(room.blockedBy[viewerId]);
     const userBlocked = Object.values(room.blockedBy).includes(viewerId);
 
-    const messages = await this.messageService.getRoomMessages(room.id);
+    const rawMessages = await this.messageService.getRoomMessages(room.id);
+    const messages = this.filterMessagesForUser(room, rawMessages, viewerId);
     const lastMessageRecord = messages.length > 0 ? (messages[messages.length - 1] ?? null) : null;
     const lastMessage = lastMessageRecord ? await this.messageService.toView(lastMessageRecord) : null;
     const unreadCount = this.messageService.countUnread(messages, viewerId);
