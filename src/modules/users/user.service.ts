@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { PublicUser, UserStatus } from './user.model.js';
+import type { PublicUser, UserStatus, UserTheme } from './user.model.js';
 import { generateChatCode, generateLoginCode, isValidLoginCode } from './user.codes.js';
 import type { UserRepository } from './user.repository.js';
 import type { UserRecord } from './user.types.js';
@@ -79,6 +79,10 @@ export class UserService {
       status,
       lastSeen: new Date().toISOString(),
     });
+  }
+
+  updateTheme(userId: string, theme: UserTheme): Promise<UserRecord | null> {
+    return this.repository.update(userId, { theme });
   }
 
   updateProfile(userId: string, input: { nickname: string; avatar: number }): Promise<UserRecord | null> {

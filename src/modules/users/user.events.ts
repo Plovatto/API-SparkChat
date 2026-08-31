@@ -1,4 +1,4 @@
-import type { PublicUser, UserStatus } from './user.model.js';
+import type { PublicUser, UserStatus, UserTheme } from './user.model.js';
 
 export interface UserServerToClientEvents {
   'user:registered': (payload: { user: PublicUser }) => void;
@@ -15,4 +15,5 @@ export interface UserServerToClientEvents {
 export interface UserClientToServerEvents {
   'user:join': (payload: { nickname?: string; avatar?: number; loginCode?: string | null }) => void;
   'user:update-profile': (payload: { nickname: string; avatar: number }) => void;
+  'user:update-theme': (payload: UserTheme) => void;
 }

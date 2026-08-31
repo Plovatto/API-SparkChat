@@ -4,6 +4,7 @@ import { registerSocketEvent } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import type { MessageService } from '../messages/index.js';
 import type { RoomService } from '../rooms/index.js';
+import { userThemeSchema } from './user.model.js';
 import type { UserService } from './user.service.js';
 
 const joinPayloadSchema = z.object({
@@ -28,6 +29,12 @@ registerSocketEvent({
   direction: 'client-to-server',
   module: 'users',
   payloadSchema: zodToJsonSchema(updateProfilePayloadSchema),
+});
+registerSocketEvent({
+  event: 'user:update-theme',
+  direction: 'client-to-server',
+  module: 'users',
+  payloadSchema: zodToJsonSchema(userThemeSchema),
 });
 registerSocketEvent({ event: 'user:registered', direction: 'server-to-client', module: 'users' });
 registerSocketEvent({ event: 'user:online', direction: 'server-to-client', module: 'users' });
@@ -57,6 +64,10 @@ export function registerUserSocketHandlers(
 
   socket.on('user:update-profile', (payload) => {
     void handleUpdateProfile(io, socket, userService, payload);
+  });
+
+  socket.on('user:update-theme', (payload) => {
+    void handleUpdateTheme(socket, userService, payload);
   });
 
   socket.on('disconnect', () => {
@@ -133,6 +144,20 @@ async function handleUpdateProfile(
     socket.emit('user:profile-updated-success', { user: userService.toPublicUser(updated) });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleUpdateTheme(socket: AppSocket, userService: UserService, payload: unknown): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    return;
+  }
+
+  try {
+    const theme = userThemeSchema.parse(payload);
+    await userService.updateTheme(userId, theme);
+  } catch {
+    return;
   }
 }
 
