@@ -194,20 +194,27 @@ async function handleSendMessage(
       replyToMessageId,
       participantIds: room.participants,
     });
-    const updatedRoom = (await roomService.makeVisibleForAll(room)) ?? room;
+    const reactivatedBefore = new Date(new Date(message.timestamp).getTime() - 1000).toISOString();
+    const updatedRoom = (await roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;
 
     const view = await messageService.toView(message);
     io.to(roomId).emit('message:new', view);
 
-    for (const newlyVisibleUserId of newlyVisibleUserIds) {
-      const recipient = await userService.getUser(newlyVisibleUserId);
-      if (!recipient?.socketId) {
-        continue;
-      }
+    if (newlyVisibleUserIds.length > 0) {
+      const rawMessages = await messageService.getRoomMessages(roomId);
 
-      const summary = await roomService.buildSummary(updatedRoom, newlyVisibleUserId);
-      const messages = await messageService.toViews(await messageService.getRoomMessages(roomId));
-      io.to(recipient.socketId).emit('room:new', { room: summary, messages });
+      for (const newlyVisibleUserId of newlyVisibleUserIds) {
+        const recipient = await userService.getUser(newlyVisibleUserId);
+        if (!recipient?.socketId) {
+          continue;
+        }
+
+        const summary = await roomService.buildSummary(updatedRoom, newlyVisibleUserId);
+        const messages = await messageService.toViews(
+          roomService.filterMessagesForUser(updatedRoom, rawMessages, newlyVisibleUserId),
+        );
+        io.to(recipient.socketId).emit('room:new', { room: summary, messages });
+      }
     }
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
@@ -235,7 +242,8 @@ async function handleGetMessages(
       return;
     }
 
-    const messages = await messageService.getRoomMessages(roomId);
+    const rawMessages = await messageService.getRoomMessages(roomId);
+    const messages = roomService.filterMessagesForUser(room, rawMessages, userId);
     const views = await messageService.toViews(messages);
     socket.emit('messages:list', { roomId, messages: views });
   } catch (error) {

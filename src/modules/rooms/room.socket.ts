@@ -156,7 +156,8 @@ async function handleCreatePrivateRoom(
       await io.sockets.sockets.get(targetUser.socketId)?.join(room.id);
     }
 
-    const messageViews = await messageService.toViews(await messageService.getRoomMessages(room.id));
+    const rawMessages = await messageService.getRoomMessages(room.id);
+    const messageViews = await messageService.toViews(roomService.filterMessagesForUser(room, rawMessages, userId));
 
     const summaryForViewer = await roomService.buildSummary(room, userId);
     socket.emit('room:joined', { room: summaryForViewer, messages: messageViews });
@@ -255,7 +256,8 @@ async function handleJoinByCode(
       }
     }
 
-    const messageViews = await messageService.toViews(await messageService.getRoomMessages(room.id));
+    const rawMessages = await messageService.getRoomMessages(room.id);
+    const messageViews = await messageService.toViews(roomService.filterMessagesForUser(room, rawMessages, userId));
     const summary = await roomService.buildSummary(room, userId);
     socket.emit('room:joined', { room: summary, messages: messageViews });
 
