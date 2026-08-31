@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { registerSocketEvent } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
+import type { MessageService } from '../messages/index.js';
+import type { RoomService } from '../rooms/index.js';
 import type { UserService } from './user.service.js';
 
 const joinPayloadSchema = z.object({
@@ -46,9 +48,11 @@ export function registerUserSocketHandlers(
   io: AppServer,
   socket: AppSocket,
   userService: UserService,
+  roomService: RoomService,
+  messageService: MessageService,
 ): void {
   socket.on('user:join', (payload) => {
-    void handleJoin(socket, userService, payload);
+    void handleJoin(io, socket, userService, roomService, messageService, payload);
   });
 
   socket.on('user:update-profile', (payload) => {
@@ -61,8 +65,11 @@ export function registerUserSocketHandlers(
 }
 
 async function handleJoin(
+  io: AppServer,
   socket: AppSocket,
   userService: UserService,
+  roomService: RoomService,
+  messageService: MessageService,
   payload: unknown,
 ): Promise<void> {
   try {
@@ -77,8 +84,27 @@ async function handleJoin(
       nickname: user.nickname,
       avatar: user.avatar,
     });
+
+    await deliverPendingMessages(io, roomService, messageService, user.id);
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function deliverPendingMessages(
+  io: AppServer,
+  roomService: RoomService,
+  messageService: MessageService,
+  userId: string,
+): Promise<void> {
+  const rooms = await roomService.getVisibleRoomsForUser(userId);
+
+  for (const room of rooms) {
+    const delivered = await messageService.markPendingMessagesDelivered(room.id, userId);
+    for (const message of delivered) {
+      const view = await messageService.toView(message);
+      io.to(room.id).emit('message:updated', view);
+    }
   }
 }
 

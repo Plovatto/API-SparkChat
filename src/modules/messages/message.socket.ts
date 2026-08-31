@@ -185,7 +185,15 @@ async function handleSendMessage(
 
     const newlyVisibleUserIds = roomService.getNewlyVisibleParticipants(room, userId);
 
-    const message = await messageService.sendMessage({ roomId, senderId: userId, content, type, duration, replyToMessageId });
+    const message = await messageService.sendMessage({
+      roomId,
+      senderId: userId,
+      content,
+      type,
+      duration,
+      replyToMessageId,
+      participantIds: room.participants,
+    });
     const updatedRoom = (await roomService.makeVisibleForAll(room)) ?? room;
 
     const view = await messageService.toView(message);

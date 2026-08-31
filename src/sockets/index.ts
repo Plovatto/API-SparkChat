@@ -21,7 +21,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
   io.on('connection', (socket: AppSocket) => {
     logger.info({ socketId: socket.id }, 'Client connected');
 
-    registerUserSocketHandlers(io, socket, deps.userService);
+    registerUserSocketHandlers(io, socket, deps.userService, deps.roomService, deps.messageService);
     registerRoomSocketHandlers(io, socket, deps.roomService, deps.userService, deps.messageService);
     registerMessageSocketHandlers(
       io,
