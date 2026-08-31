@@ -108,7 +108,7 @@ export function registerRoomSocketHandlers(
   });
 
   socket.on('group:leave', (payload) => {
-    void handleLeaveGroup(socket, roomService, userService, payload);
+    void handleLeaveGroup(socket, roomService, userService, messageService, payload);
   });
 
   socket.on('user:block', (payload) => {
@@ -247,12 +247,15 @@ async function handleJoinByCode(
     if (joined) {
       const user = await userService.getUser(userId);
       if (user) {
-        await messageService.createSystemMessage(room.id, `${user.nickname} entrou no grupo`);
+        const systemMessage = await messageService.createSystemMessage(room.id, `${user.nickname} entrou no grupo`);
+        io.to(room.id).emit('message:new', await messageService.toView(systemMessage));
 
-        io.to(room.id).emit('group:user-joined', {
-          roomId: room.id,
-          user: roomService.toParticipantView(user),
-        });
+        const participantRecords = await Promise.all(room.participants.map((id) => userService.getUser(id)));
+        const participants = participantRecords
+          .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
+          .map((participant) => roomService.toParticipantView(participant));
+
+        socket.to(room.id).emit('group:user-joined', { roomId: room.id, participants });
       }
     }
 
@@ -304,6 +307,7 @@ async function handleLeaveGroup(
   socket: AppSocket,
   roomService: RoomService,
   userService: UserService,
+  messageService: MessageService,
   payload: unknown,
 ): Promise<void> {
   const userId = socket.data.userId;
@@ -331,6 +335,9 @@ async function handleLeaveGroup(
         userName: user.nickname,
         participants: remaining,
       });
+
+      const systemMessage = await messageService.createSystemMessage(roomId, `${user.nickname} saiu do grupo`);
+      socket.to(roomId).emit('message:new', await messageService.toView(systemMessage));
     }
 
     await socket.leave(roomId);
