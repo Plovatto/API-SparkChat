@@ -196,6 +196,90 @@ describe('MessageService.markAudioPlayed', () => {
   });
 });
 
+describe('MessageService delivery tracking', () => {
+  it('marks a message delivered immediately when the recipient is already online', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    const message = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: 'Oi Bob',
+      participantIds: [alice.id, bob.id],
+    });
+
+    expect(message.deliveredTo).toEqual([bob.id]);
+    expect(message.status).toBe('delivered');
+  });
+
+  it('leaves a message as sent when the recipient is offline', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    await userService.setStatus(bob.id, 'offline');
+
+    const message = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: 'Oi Bob',
+      participantIds: [alice.id, bob.id],
+    });
+
+    expect(message.deliveredTo).toEqual([]);
+    expect(message.status).toBe('sent');
+  });
+
+  it('retroactively delivers pending messages once the recipient reconnects', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    await userService.setStatus(bob.id, 'offline');
+
+    const message = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: 'Oi Bob',
+      participantIds: [alice.id, bob.id],
+    });
+    expect(message.status).toBe('sent');
+
+    await userService.setStatus(bob.id, 'online');
+    const delivered = await messageService.markPendingMessagesDelivered('room-1', bob.id);
+
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.deliveredTo).toEqual([bob.id]);
+    expect(delivered[0]?.status).toBe('delivered');
+  });
+
+  it('does not redeliver messages the recipient already read or that they themselves sent', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'lida' });
+    await messageService.sendMessage({ roomId: 'room-1', senderId: bob.id, content: 'do proprio Bob' });
+    await messageService.markRoomAsRead('room-1', bob.id);
+
+    const delivered = await messageService.markPendingMessagesDelivered('room-1', bob.id);
+
+    expect(delivered).toHaveLength(0);
+  });
+
+  it('adds the reader to deliveredTo when marking a message as read', async () => {
+    const { messageService, userService } = buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'Oi Bob' });
+    const [message] = await messageService.markRoomAsRead('room-1', bob.id);
+
+    expect(message?.deliveredTo).toEqual([bob.id]);
+    expect(message?.readBy).toEqual([bob.id]);
+    expect(message?.status).toBe('read');
+  });
+});
+
 describe('RoomService + MessageService integration', () => {
   it('reflects a sent message as the room lastMessage and increases unreadCount for the recipient', async () => {
     const { roomService, messageService, userService } = buildRoomService();

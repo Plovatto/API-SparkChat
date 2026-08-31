@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { UserService } from '../users/index.js';
+import type { UserRecord, UserService } from '../users/index.js';
 import type { MessageRepository } from './message.repository.js';
 import type { MessageRecord, MessageReplySnapshot, MessageSender, MessageType, MessageView } from './message.types.js';
 
@@ -10,6 +10,7 @@ export interface SendMessageInput {
   type?: Extract<MessageType, 'text' | 'image' | 'audio'> | undefined;
   duration?: number | undefined;
   replyToMessageId?: string | undefined;
+  participantIds?: string[] | undefined;
 }
 
 export class MessageService {
@@ -19,6 +20,8 @@ export class MessageService {
   ) {}
 
   async sendMessage(input: SendMessageInput): Promise<MessageRecord> {
+    const deliveredTo = await this.resolveOnlineRecipients(input.participantIds ?? [], input.senderId);
+
     const message: MessageRecord = {
       id: randomUUID(),
       roomId: input.roomId,
@@ -28,8 +31,8 @@ export class MessageService {
       duration: input.type === 'audio' ? (input.duration ?? null) : null,
       timestamp: new Date().toISOString(),
       deletedForEveryone: false,
-      status: 'sent',
-      deliveredTo: [],
+      status: deliveredTo.length > 0 ? 'delivered' : 'sent',
+      deliveredTo,
       readBy: [],
       playedBy: [],
       replyTo: input.replyToMessageId ? await this.buildReplySnapshot(input.replyToMessageId) : null,
@@ -95,7 +98,8 @@ export class MessageService {
       }
 
       changed = true;
-      return { ...message, readBy: [...message.readBy, userId], status: 'read' as const };
+      const deliveredTo = message.deliveredTo.includes(userId) ? message.deliveredTo : [...message.deliveredTo, userId];
+      return { ...message, readBy: [...message.readBy, userId], deliveredTo, status: 'read' as const };
     });
 
     if (!changed) {
@@ -108,6 +112,37 @@ export class MessageService {
     await this.repository.replaceAll(merged);
 
     return updated;
+  }
+
+  async markPendingMessagesDelivered(roomId: string, userId: string): Promise<MessageRecord[]> {
+    const messages = await this.repository.findByRoomId(roomId);
+    const pending = messages.filter(
+      (message) =>
+        message.senderId !== userId &&
+        !message.deletedForEveryone &&
+        !message.deliveredTo.includes(userId) &&
+        !message.readBy.includes(userId),
+    );
+
+    if (pending.length === 0) {
+      return [];
+    }
+
+    const pendingIds = new Set(pending.map((message) => message.id));
+    const all = await this.repository.findAll();
+    const merged = all.map((message) => {
+      if (!pendingIds.has(message.id)) {
+        return message;
+      }
+      return {
+        ...message,
+        deliveredTo: [...message.deliveredTo, userId],
+        status: message.status === 'read' ? message.status : ('delivered' as const),
+      };
+    });
+    await this.repository.replaceAll(merged);
+
+    return merged.filter((message) => pendingIds.has(message.id));
   }
 
   countUnread(messages: MessageRecord[], userId: string): number {
@@ -145,6 +180,12 @@ export class MessageService {
     }
 
     return this.repository.update(messageId, { playedBy: [...message.playedBy, userId] });
+  }
+
+  private async resolveOnlineRecipients(participantIds: string[], senderId: string): Promise<string[]> {
+    const others = participantIds.filter((id) => id !== senderId);
+    const users = await Promise.all(others.map((id) => this.userService.getUser(id)));
+    return users.filter((user): user is UserRecord => user !== null && user.status === 'online').map((user) => user.id);
   }
 
   private async buildReplySnapshot(messageId: string): Promise<MessageReplySnapshot | null> {
