@@ -9,7 +9,7 @@ export interface UserServerToClientEvents {
   }) => void;
   'user:profile-updated': (payload: { userId: string; nickname: string; avatar: number }) => void;
   'user:profile-updated-success': (payload: { user: PublicUser }) => void;
-  error: (payload: { message: string }) => void;
+  error: (payload: { message: string; clientTempId?: string | undefined }) => void;
 }
 
 export interface UserClientToServerEvents {

@@ -15,6 +15,7 @@ const sendMessagePayloadSchema = z
     type: z.enum(['text', 'image', 'audio']).default('text'),
     duration: z.number().int().positive().optional(),
     replyToMessageId: z.string().trim().min(1).optional(),
+    clientTempId: z.string().trim().min(1).optional(),
   })
   .refine((data) => data.type !== 'audio' || typeof data.duration === 'number', {
     message: 'duration é obrigatório para mensagens de áudio.',
@@ -169,17 +170,25 @@ async function handleSendMessage(
     return;
   }
 
+  let clientTempId: string | undefined;
+
   try {
-    const { roomId, content, type, duration, replyToMessageId } = sendMessagePayloadSchema.parse(payload);
+    const parsed = sendMessagePayloadSchema.parse(payload);
+    const { roomId, content, type, duration, replyToMessageId } = parsed;
+    clientTempId = parsed.clientTempId;
+
     const room = await roomService.getRoomById(roomId);
 
     if (!room) {
-      socket.emit('error', { message: 'Sala não encontrada.' });
+      socket.emit('error', { message: 'Sala não encontrada.', clientTempId });
       return;
     }
 
     if (roomService.isBlocked(room, userId)) {
-      socket.emit('error', { message: 'Você não pode enviar mensagens nesta conversa devido a bloqueios.' });
+      socket.emit('error', {
+        message: 'Você não pode enviar mensagens nesta conversa devido a bloqueios.',
+        clientTempId,
+      });
       return;
     }
 
@@ -198,7 +207,7 @@ async function handleSendMessage(
     const updatedRoom = (await roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;
 
     const view = await messageService.toView(message);
-    io.to(roomId).emit('message:new', view);
+    io.to(roomId).emit('message:new', clientTempId ? { ...view, clientTempId } : view);
 
     if (newlyVisibleUserIds.length > 0) {
       const rawMessages = await messageService.getRoomMessages(roomId);
@@ -217,7 +226,7 @@ async function handleSendMessage(
       }
     }
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', { message: extractErrorMessage(error), clientTempId });
   }
 }
 

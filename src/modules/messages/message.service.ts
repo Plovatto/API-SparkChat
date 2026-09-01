@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { UserRecord, UserService } from '../users/index.js';
+import { nextTimestamp } from './message.clock.js';
 import type { MessageRepository } from './message.repository.js';
 import type { MessageRecord, MessageReplySnapshot, MessageSender, MessageType, MessageView } from './message.types.js';
 
@@ -29,7 +30,7 @@ export class MessageService {
       content: input.content,
       type: input.type ?? 'text',
       duration: input.type === 'audio' ? (input.duration ?? null) : null,
-      timestamp: new Date().toISOString(),
+      timestamp: nextTimestamp(input.roomId),
       deletedForEveryone: false,
       status: deliveredTo.length > 0 ? 'delivered' : 'sent',
       deliveredTo,
@@ -49,7 +50,7 @@ export class MessageService {
       content,
       type: 'system',
       duration: null,
-      timestamp: new Date().toISOString(),
+      timestamp: nextTimestamp(roomId),
       deletedForEveryone: false,
       status: 'sent',
       deliveredTo: [],
