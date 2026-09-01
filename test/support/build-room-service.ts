@@ -1,23 +1,18 @@
-import { randomUUID } from 'node:crypto';
-import os from 'node:os';
-import path from 'node:path';
-import { JsonFileStore } from '@/database/json-file-store.js';
-import { MessageRepository, MessageService, type MessageRecord } from '@/modules/messages/index.js';
-import { RoomRepository, RoomService, type RoomRecord } from '@/modules/rooms/index.js';
-import { UserRepository, UserService, type UserRecord } from '@/modules/users/index.js';
+import { MessageRepository, MessageService } from '@/modules/messages/index.js';
+import { RoomRepository, RoomService } from '@/modules/rooms/index.js';
+import { UserRepository, UserService } from '@/modules/users/index.js';
+import { createTestDb } from './create-test-db.js';
 
-export function buildRoomService() {
-  const usersFile = path.join(os.tmpdir(), `sparkchat-test-users-${randomUUID()}.json`);
-  const roomsFile = path.join(os.tmpdir(), `sparkchat-test-rooms-${randomUUID()}.json`);
-  const messagesFile = path.join(os.tmpdir(), `sparkchat-test-messages-${randomUUID()}.json`);
+export async function buildRoomService() {
+  const db = await createTestDb();
 
-  const userRepository = new UserRepository(new JsonFileStore<UserRecord>(usersFile));
+  const userRepository = new UserRepository(db);
   const userService = new UserService(userRepository);
 
-  const messageRepository = new MessageRepository(new JsonFileStore<MessageRecord>(messagesFile));
+  const messageRepository = new MessageRepository(db);
   const messageService = new MessageService(messageRepository, userService);
 
-  const roomRepository = new RoomRepository(new JsonFileStore<RoomRecord>(roomsFile));
+  const roomRepository = new RoomRepository(db);
   const roomService = new RoomService(roomRepository, userService, messageService);
 
   return { roomService, roomRepository, userService, userRepository, messageService, messageRepository };

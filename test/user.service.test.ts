@@ -3,7 +3,7 @@ import { buildRoomService } from './support/build-room-service.js';
 
 describe('UserService', () => {
   it('updates the nickname and avatar of an existing user', async () => {
-    const { userService } = buildRoomService();
+    const { userService } = await buildRoomService();
     const user = await userService.joinOrCreate({ nickname: 'Alice', avatar: 0, socketId: 'socket-alice' });
 
     const updated = await userService.updateProfile(user.id, { nickname: 'Alicia', avatar: 3 });
@@ -15,7 +15,7 @@ describe('UserService', () => {
   });
 
   it('returns null when updating the profile of an unknown user', async () => {
-    const { userService } = buildRoomService();
+    const { userService } = await buildRoomService();
 
     const updated = await userService.updateProfile('unknown-id', { nickname: 'Ghost', avatar: 0 });
 
@@ -23,7 +23,7 @@ describe('UserService', () => {
   });
 
   it('persists a user theme choice', async () => {
-    const { userService } = buildRoomService();
+    const { userService } = await buildRoomService();
     const user = await userService.joinOrCreate({ nickname: 'Alice', avatar: 0, socketId: 'socket-alice' });
 
     const updated = await userService.updateTheme(user.id, { baseTheme: 'light', colorTheme: 'ocean' });
@@ -33,7 +33,7 @@ describe('UserService', () => {
   });
 
   it('returns null when updating the theme of an unknown user', async () => {
-    const { userService } = buildRoomService();
+    const { userService } = await buildRoomService();
 
     const updated = await userService.updateTheme('unknown-id', { baseTheme: 'light', colorTheme: 'ocean' });
 

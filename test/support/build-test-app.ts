@@ -1,14 +1,10 @@
-import { randomUUID } from 'node:crypto';
-import os from 'node:os';
-import path from 'node:path';
 import { createApp } from '@/app.js';
-import { JsonFileStore } from '@/database/json-file-store.js';
-import { UserRepository, UserService, type UserRecord } from '@/modules/users/index.js';
+import { UserRepository, UserService } from '@/modules/users/index.js';
+import { createTestDb } from './create-test-db.js';
 
-export function buildTestApp() {
-  const dataFile = path.join(os.tmpdir(), `sparkchat-test-users-${randomUUID()}.json`);
-  const userStore = new JsonFileStore<UserRecord>(dataFile);
-  const userRepository = new UserRepository(userStore);
+export async function buildTestApp() {
+  const db = await createTestDb();
+  const userRepository = new UserRepository(db);
   const userService = new UserService(userRepository);
   const app = createApp({ userService });
 

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { buildRoomService } from './support/build-room-service.js';
 
-async function createUser(userService: ReturnType<typeof buildRoomService>['userService'], nickname: string) {
+async function createUser(userService: Awaited<ReturnType<typeof buildRoomService>>['userService'], nickname: string) {
   return userService.joinOrCreate({ nickname, avatar: 0, socketId: `socket-${nickname}` });
 }
 
 describe('MessageService', () => {
   it('sends a text message and enriches it with sender info', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
     const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'Oi!' });
@@ -20,7 +20,7 @@ describe('MessageService', () => {
   });
 
   it('creates a system message attributed to "Sistema"', async () => {
-    const { messageService } = buildRoomService();
+    const { messageService } = await buildRoomService();
 
     const message = await messageService.createSystemMessage('room-1', 'Alice criou o grupo');
     const view = await messageService.toView(message);
@@ -30,7 +30,7 @@ describe('MessageService', () => {
   });
 
   it('marks unread messages as read for a user and reports the correct unread count', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -46,7 +46,7 @@ describe('MessageService', () => {
   });
 
   it('hides the content of a deleted-for-everyone message in its view', async () => {
-    const { messageService, messageRepository, userService } = buildRoomService();
+    const { messageService, messageRepository, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
     const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'apagar isso' });
@@ -62,7 +62,7 @@ describe('MessageService', () => {
   });
 
   it('lets the sender delete their own message, clearing content and flagging it', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
     const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'apagar isso' });
@@ -73,7 +73,7 @@ describe('MessageService', () => {
   });
 
   it('rejects deleting a message that belongs to someone else', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -85,14 +85,14 @@ describe('MessageService', () => {
   });
 
   it('rejects deleting a message that does not exist', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
     await expect(messageService.deleteMessage('unknown-id', alice.id)).rejects.toThrow('Mensagem não encontrada.');
   });
 
   it('attaches a resolved snapshot of the original message when replying', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -114,7 +114,7 @@ describe('MessageService', () => {
   });
 
   it('leaves replyTo null when replying to a message id that does not exist', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const bob = await createUser(userService, 'Bob');
 
     const message = await messageService.sendMessage({
@@ -130,7 +130,7 @@ describe('MessageService', () => {
 
 describe('MessageService.markAudioPlayed', () => {
   it('adds the listener to playedBy on first play', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -148,7 +148,7 @@ describe('MessageService.markAudioPlayed', () => {
   });
 
   it('is a no-op when the sender tries to mark their own audio as played', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
     const message = await messageService.sendMessage({
@@ -165,7 +165,7 @@ describe('MessageService.markAudioPlayed', () => {
   });
 
   it('is a no-op when the same listener plays it again', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -184,7 +184,7 @@ describe('MessageService.markAudioPlayed', () => {
   });
 
   it('is a no-op for non-audio messages', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -198,7 +198,7 @@ describe('MessageService.markAudioPlayed', () => {
 
 describe('MessageService delivery tracking', () => {
   it('marks a message delivered immediately when the recipient is already online', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -214,7 +214,7 @@ describe('MessageService delivery tracking', () => {
   });
 
   it('leaves a message as sent when the recipient is offline', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     await userService.setStatus(bob.id, 'offline');
@@ -231,7 +231,7 @@ describe('MessageService delivery tracking', () => {
   });
 
   it('retroactively delivers pending messages once the recipient reconnects', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     await userService.setStatus(bob.id, 'offline');
@@ -253,7 +253,7 @@ describe('MessageService delivery tracking', () => {
   });
 
   it('does not redeliver messages the recipient already read or that they themselves sent', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -267,7 +267,7 @@ describe('MessageService delivery tracking', () => {
   });
 
   it('adds the reader to deliveredTo when marking a message as read', async () => {
-    const { messageService, userService } = buildRoomService();
+    const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -282,7 +282,7 @@ describe('MessageService delivery tracking', () => {
 
 describe('RoomService + MessageService integration', () => {
   it('reflects a sent message as the room lastMessage and increases unreadCount for the recipient', async () => {
-    const { roomService, messageService, userService } = buildRoomService();
+    const { roomService, messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -296,7 +296,7 @@ describe('RoomService + MessageService integration', () => {
   });
 
   it('makes a freshly created private room visible to the recipient once a message is sent', async () => {
-    const { roomService, messageService, userService } = buildRoomService();
+    const { roomService, messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -311,7 +311,7 @@ describe('RoomService + MessageService integration', () => {
   });
 
   it('rejects a message from a user blocked in the room', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
