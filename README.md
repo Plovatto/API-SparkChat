@@ -83,6 +83,8 @@ NODE_ENV=development
 PORT=3001
 FRONTEND_URL=http://localhost:5173
 LOG_LEVEL=info
+TURSO_DATABASE_URL=
+TURSO_AUTH_TOKEN=
 ```
 
 ## Documentação da API
@@ -105,7 +107,7 @@ Configuração atual:
 
 ## Testes
 
-Os testes ficam em `test/`, usando **Vitest** + **Supertest** contra o app Express real (`src/app.ts`), sem subir servidor HTTP nem depender da pasta `data/` — cada teste usa um arquivo JSON temporário isolado (`test/support/build-test-app.ts`).
+Os testes ficam em `test/`, usando **Vitest** + **Supertest** contra o app Express real (`src/app.ts`), sem subir servidor HTTP — cada teste usa um banco libSQL isolado em memória (`test/support/create-test-db.ts`), sem tocar no Turso real.
 
 
 ## Scripts
@@ -126,8 +128,8 @@ Os testes ficam em `test/`, usando **Vitest** + **Supertest** contra o app Expre
 ```text
 src/
 ├── app.ts             # Monta o Express app (usado em produção e nos testes)
-├── config/            # Variáveis de ambiente, logger e caminhos de dados
-├── database/          # Storage genérico em JSON + repositório base
+├── config/            # Variáveis de ambiente, logger e caminhos de upload
+├── database/          # Schema Drizzle, client Turso/libSQL e migrations
 ├── docs/              # Registro OpenAPI e geração do documento servido em /docs
 ├── middleware/        # Tratamento de erros e middlewares HTTP
 ├── modules/
