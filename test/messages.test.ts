@@ -1,15 +1,13 @@
 import { rm } from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
 import { afterAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { uploadsDir } from '../src/config/paths.js';
-import { JsonFileStore } from '../src/database/json-file-store.js';
-import { UserRepository, UserService, type UserRecord } from '../src/modules/users/index.js';
+import { UserRepository, UserService } from '../src/modules/users/index.js';
+import { createTestDb } from './support/create-test-db.js';
 
-const userStore = new JsonFileStore<UserRecord>(path.join(os.tmpdir(), 'sparkchat-messages-test-users.json'));
-const userRepository = new UserRepository(userStore);
+const db = await createTestDb();
+const userRepository = new UserRepository(db);
 const userService = new UserService(userRepository);
 const app = createApp({ userService });
 

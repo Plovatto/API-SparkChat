@@ -6,7 +6,6 @@ coverage
 .env
 .env.local
 
-data/*.json
 uploads/
 
 *.log

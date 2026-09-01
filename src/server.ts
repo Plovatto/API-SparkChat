@@ -3,17 +3,11 @@ import { Server } from 'socket.io';
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
-import { dataFilePath } from './config/paths.js';
-import { JsonFileStore } from './database/json-file-store.js';
-import {
-  MessageRepository,
-  MessageService,
-  RecordingService,
-  TypingService,
-  type MessageRecord,
-} from './modules/messages/index.js';
-import { RoomRepository, RoomService, type RoomRecord } from './modules/rooms/index.js';
-import { UserRepository, UserService, type UserRecord } from './modules/users/index.js';
+import { db } from './database/turso-client.js';
+import { runMigrations } from './database/migrate.js';
+import { MessageRepository, MessageService, RecordingService, TypingService } from './modules/messages/index.js';
+import { RoomRepository, RoomService } from './modules/rooms/index.js';
+import { UserRepository, UserService } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import type {
   ClientToServerEvents,
@@ -22,20 +16,16 @@ import type {
   SocketData,
 } from './sockets/events.js';
 
-const userStore = new JsonFileStore<UserRecord>(dataFilePath('users'));
-await userStore.ensureFile();
-const userRepository = new UserRepository(userStore);
+await runMigrations(db);
+
+const userRepository = new UserRepository(db);
 const userService = new UserService(userRepository);
 await userService.migrateLegacyCodes();
 
-const messageStore = new JsonFileStore<MessageRecord>(dataFilePath('messages'));
-await messageStore.ensureFile();
-const messageRepository = new MessageRepository(messageStore);
+const messageRepository = new MessageRepository(db);
 const messageService = new MessageService(messageRepository, userService);
 
-const roomStore = new JsonFileStore<RoomRecord>(dataFilePath('rooms'));
-await roomStore.ensureFile();
-const roomRepository = new RoomRepository(roomStore);
+const roomRepository = new RoomRepository(db);
 const roomService = new RoomService(roomRepository, userService, messageService);
 
 const typingService = new TypingService();

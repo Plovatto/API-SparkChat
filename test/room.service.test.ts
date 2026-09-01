@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { buildRoomService } from './support/build-room-service.js';
 
-async function createUser(userService: ReturnType<typeof buildRoomService>['userService'], nickname: string) {
+async function createUser(userService: Awaited<ReturnType<typeof buildRoomService>>['userService'], nickname: string) {
   return userService.joinOrCreate({ nickname, avatar: 0, socketId: `socket-${nickname}` });
 }
 
 describe('RoomService', () => {
   it('creates a private room between two users', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -19,7 +19,7 @@ describe('RoomService', () => {
   });
 
   it('reuses the existing private room instead of duplicating it', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -30,7 +30,7 @@ describe('RoomService', () => {
   });
 
   it('creates a group room with a generated room code and the creator as participant', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
     const room = await roomService.createGroupRoom('Amigos', alice.id);
@@ -43,7 +43,7 @@ describe('RoomService', () => {
   });
 
   it('only lists rooms visible to the given user', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const carol = await createUser(userService, 'Carol');
@@ -59,7 +59,7 @@ describe('RoomService', () => {
   });
 
   it('builds a room summary with resolved participant info and blocking status', async () => {
-    const { roomService, roomRepository, userService } = buildRoomService();
+    const { roomService, roomRepository, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
@@ -81,7 +81,7 @@ describe('RoomService', () => {
   });
 
   it('joins a group by its room code and notifies only on the first join', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const group = await roomService.createGroupRoom('Amigos', alice.id);
@@ -95,14 +95,14 @@ describe('RoomService', () => {
   });
 
   it('throws when joining by an unknown room code', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
     await expect(roomService.joinByCode('NOPE0000', alice.id)).rejects.toThrow('Sala não encontrada.');
   });
 
   it('removes a user from a room visibility without affecting other participants', async () => {
-    const { roomService, roomRepository, userService } = buildRoomService();
+    const { roomService, roomRepository, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const room = await roomService.createPrivateRoom(alice.id, bob.id);
@@ -115,7 +115,7 @@ describe('RoomService', () => {
   });
 
   it('removes a user from a group entirely on leave', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const group = await roomService.createGroupRoom('Amigos', alice.id);
@@ -128,7 +128,7 @@ describe('RoomService', () => {
   });
 
   it('blocks and unblocks a user within a room', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const room = await roomService.createPrivateRoom(alice.id, bob.id);
@@ -141,7 +141,7 @@ describe('RoomService', () => {
   });
 
   it('only treats actual room participants as participants', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const carol = await createUser(userService, 'Carol');
@@ -153,7 +153,7 @@ describe('RoomService', () => {
   });
 
   it('reports the recipient as newly visible right after creating a private room, and no one once visible to all', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const room = await roomService.createPrivateRoom(alice.id, bob.id);
@@ -165,7 +165,7 @@ describe('RoomService', () => {
   });
 
   it('stamps reactivatedAt with the given cutoff for participants newly made visible', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const room = await roomService.createPrivateRoom(alice.id, bob.id);
@@ -177,7 +177,7 @@ describe('RoomService', () => {
   });
 
   it('does not reset reactivatedAt when reopening a private room still visible to the user', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const first = await roomService.createPrivateRoom(alice.id, bob.id);
@@ -190,7 +190,7 @@ describe('RoomService', () => {
   });
 
   it('reactivates a private room for a user who had deleted it, once they reopen it by chat code', async () => {
-    const { roomService, userService } = buildRoomService();
+    const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const room = await roomService.createPrivateRoom(alice.id, bob.id);
@@ -207,7 +207,7 @@ describe('RoomService', () => {
 
 describe('RoomService.filterMessagesForUser', () => {
   it('returns every message when the user has no deletedAt or reactivatedAt entry', async () => {
-    const { roomService, messageService, userService } = buildRoomService();
+    const { roomService, messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const room = await roomService.createPrivateRoom(alice.id, bob.id);
@@ -217,7 +217,7 @@ describe('RoomService.filterMessagesForUser', () => {
   });
 
   it('hides messages sent before the user deleted the room, keeps ones sent after', async () => {
-    const { roomService, messageService, messageRepository, userService } = buildRoomService();
+    const { roomService, messageService, messageRepository, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const room = await roomService.createPrivateRoom(alice.id, bob.id);
@@ -239,7 +239,7 @@ describe('RoomService.filterMessagesForUser', () => {
   });
 
   it('prioritizes reactivatedAt over deletedAt when both are set', async () => {
-    const { roomService, messageService, messageRepository, userService } = buildRoomService();
+    const { roomService, messageService, messageRepository, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const room = await roomService.createPrivateRoom(alice.id, bob.id);
