@@ -158,7 +158,7 @@ export class RoomService {
   }
 
   getVisibilityCutoff(room: RoomRecord, userId: string): string | undefined {
-    return room.reactivatedAt?.[userId] ?? room.deletedAt[userId] ?? undefined;
+    return room.reactivatedAt?.[userId] ?? room.deletedAt[userId] ?? room.joinedAt?.[userId] ?? undefined;
   }
 
   filterMessagesForUser(room: RoomRecord, messages: MessageRecord[], userId: string): MessageRecord[] {

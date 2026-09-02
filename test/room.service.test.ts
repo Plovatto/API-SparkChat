@@ -259,4 +259,50 @@ describe('RoomService.filterMessagesForUser', () => {
     const filtered = roomService.filterMessagesForUser(roomWithReactivation, [midMessage], bob.id);
     expect(filtered).toEqual([midMessage]);
   });
+
+  it('hides messages sent before a group member joined, keeps ones sent after', async () => {
+    const { roomService, messageService, messageRepository, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const group = await roomService.createGroupRoom('Amigos', alice.id);
+
+    const sent1 = await messageService.sendMessage({ roomId: group.id, senderId: alice.id, content: 'antes de Bob entrar' });
+    const before = await messageRepository.update(sent1.id, { timestamp: '2026-01-01T00:00:00.000Z' });
+
+    const { room: groupWithBob } = await roomService.joinByCode(group.roomCode ?? '', bob.id);
+    const withStampedJoin = { ...groupWithBob, joinedAt: { ...groupWithBob.joinedAt, [bob.id]: '2026-01-02T00:00:00.000Z' } };
+
+    const sent2 = await messageService.sendMessage({ roomId: group.id, senderId: alice.id, content: 'depois de Bob entrar' });
+    const after = await messageRepository.update(sent2.id, { timestamp: '2026-01-03T00:00:00.000Z' });
+
+    if (!before || !after) {
+      throw new Error('message not found');
+    }
+
+    const filtered = roomService.filterMessagesForUser(withStampedJoin, [before, after], bob.id);
+    expect(filtered.map((message) => message.content)).toEqual(['depois de Bob entrar']);
+  });
+
+  it('prioritizes deletedAt over joinedAt when both are set', async () => {
+    const { roomService, messageService, messageRepository, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    await roomService.joinByCode(group.roomCode ?? '', bob.id);
+
+    const sent = await messageService.sendMessage({ roomId: group.id, senderId: alice.id, content: 'meio' });
+    const midMessage = await messageRepository.update(sent.id, { timestamp: '2026-01-03T00:00:00.000Z' });
+    if (!midMessage) {
+      throw new Error('message not found');
+    }
+
+    const roomWithDeletion = {
+      ...group,
+      joinedAt: { [bob.id]: '2026-01-01T00:00:00.000Z' },
+      deletedAt: { [bob.id]: '2026-01-04T00:00:00.000Z' },
+    };
+
+    const filtered = roomService.filterMessagesForUser(roomWithDeletion, [midMessage], bob.id);
+    expect(filtered).toEqual([]);
+  });
 });
