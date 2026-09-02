@@ -1,33 +1,21 @@
+import { RoomMembershipTracker } from './room-membership-tracker.js';
+
 export class RoomPresenceService {
-  private readonly viewersByRoom = new Map<string, Set<string>>();
+  private readonly tracker = new RoomMembershipTracker();
 
   view(roomId: string, userId: string): void {
-    const users = this.viewersByRoom.get(roomId) ?? new Set<string>();
-    users.add(userId);
-    this.viewersByRoom.set(roomId, users);
+    this.tracker.add(roomId, userId);
   }
 
   leave(roomId: string, userId: string): void {
-    const users = this.viewersByRoom.get(roomId);
-    if (!users) {
-      return;
-    }
-
-    users.delete(userId);
-    if (users.size === 0) {
-      this.viewersByRoom.delete(roomId);
-    }
+    this.tracker.remove(roomId, userId);
   }
 
   getViewers(roomId: string): string[] {
-    return Array.from(this.viewersByRoom.get(roomId) ?? []);
+    return this.tracker.getMembers(roomId);
   }
 
   removeUserEverywhere(userId: string): void {
-    for (const [roomId, users] of this.viewersByRoom.entries()) {
-      if (users.delete(userId) && users.size === 0) {
-        this.viewersByRoom.delete(roomId);
-      }
-    }
+    this.tracker.removeUserEverywhere(userId);
   }
 }
