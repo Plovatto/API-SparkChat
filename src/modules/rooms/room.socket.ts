@@ -5,9 +5,11 @@ import type { AppServer, AppSocket } from '../../sockets/events.js';
 import type { MessageService } from '../messages/index.js';
 import type { UserService } from '../users/index.js';
 import type { RoomService } from './room.service.js';
+import type { RoomRecord } from './room.types.js';
 
 const CHAT_CODE_PATTERN = /^[A-Z0-9]{6}$/;
 const ROOM_CODE_MIN_LENGTH = 4;
+const INITIAL_MESSAGES_LIMIT = 20;
 
 const createPrivateRoomPayloadSchema = z.object({
   targetChatCode: z.string().trim().min(1),
@@ -74,6 +76,17 @@ function extractErrorMessage(error: unknown): string {
   }
 
   return 'Erro inesperado.';
+}
+
+async function getInitialMessageViews(
+  roomService: RoomService,
+  messageService: MessageService,
+  room: RoomRecord,
+  userId: string,
+) {
+  const after = roomService.getVisibilityCutoff(room, userId);
+  const { messages } = await messageService.getRoomMessagesPage(room.id, { after, limit: INITIAL_MESSAGES_LIMIT });
+  return messageService.toViews(messages);
 }
 
 export function registerRoomSocketHandlers(
@@ -156,8 +169,7 @@ async function handleCreatePrivateRoom(
       await io.sockets.sockets.get(targetUser.socketId)?.join(room.id);
     }
 
-    const rawMessages = await messageService.getRoomMessages(room.id);
-    const messageViews = await messageService.toViews(roomService.filterMessagesForUser(room, rawMessages, userId));
+    const messageViews = await getInitialMessageViews(roomService, messageService, room, userId);
 
     const summaryForViewer = await roomService.buildSummary(room, userId);
     socket.emit('room:joined', { room: summaryForViewer, messages: messageViews });
@@ -259,8 +271,7 @@ async function handleJoinByCode(
       }
     }
 
-    const rawMessages = await messageService.getRoomMessages(room.id);
-    const messageViews = await messageService.toViews(roomService.filterMessagesForUser(room, rawMessages, userId));
+    const messageViews = await getInitialMessageViews(roomService, messageService, room, userId);
     const summary = await roomService.buildSummary(room, userId);
     socket.emit('room:joined', { room: summary, messages: messageViews });
 

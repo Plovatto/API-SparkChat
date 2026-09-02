@@ -213,6 +213,43 @@ describe('MessageService delivery tracking', () => {
     expect(message.status).toBe('delivered');
   });
 
+  it('marks a message read immediately when the recipient is currently viewing the room', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    const message = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: 'Oi Bob',
+      participantIds: [alice.id, bob.id],
+      viewingUserIds: [bob.id],
+    });
+
+    expect(message.deliveredTo).toEqual([bob.id]);
+    expect(message.readBy).toEqual([bob.id]);
+    expect(message.status).toBe('read');
+  });
+
+  it('ignores viewers who are not delivered recipients when marking a message read', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    await userService.setStatus(bob.id, 'offline');
+
+    const message = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: 'Oi Bob',
+      participantIds: [alice.id, bob.id],
+      viewingUserIds: [bob.id, alice.id],
+    });
+
+    expect(message.deliveredTo).toEqual([]);
+    expect(message.readBy).toEqual([]);
+    expect(message.status).toBe('sent');
+  });
+
   it('leaves a message as sent when the recipient is offline', async () => {
     const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
@@ -277,6 +314,94 @@ describe('MessageService delivery tracking', () => {
     expect(message?.deliveredTo).toEqual([bob.id]);
     expect(message?.readBy).toEqual([bob.id]);
     expect(message?.status).toBe('read');
+  });
+
+  it('marks only the provided message ids as read when opening a paged conversation', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    const older = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'antiga' });
+    const latest = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'recente' });
+
+    const marked = await messageService.markRoomAsRead('room-1', bob.id, [latest.id]);
+    const allMessages = await messageService.getRoomMessages('room-1');
+
+    expect(marked.map((message) => message.id)).toEqual([latest.id]);
+    expect(allMessages.find((message) => message.id === latest.id)?.readBy).toEqual([bob.id]);
+    expect(allMessages.find((message) => message.id === older.id)?.readBy).toEqual([]);
+  });
+});
+
+describe('MessageService.getRoomMessagesPage', () => {
+  it('returns the most recent messages in ascending order and flags that older ones remain', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+
+    for (let i = 0; i < 5; i += 1) {
+      await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: `msg ${i}` });
+    }
+
+    const { messages: page, hasMore } = await messageService.getRoomMessagesPage('room-1', { limit: 3 });
+
+    expect(page.map((message) => message.content)).toEqual(['msg 2', 'msg 3', 'msg 4']);
+    expect(hasMore).toBe(true);
+  });
+
+  it('reports hasMore as false once the full history fits within the limit', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+
+    await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'oi' });
+    await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'tudo bem?' });
+
+    const { messages: page, hasMore } = await messageService.getRoomMessagesPage('room-1', { limit: 10 });
+
+    expect(page).toHaveLength(2);
+    expect(hasMore).toBe(false);
+  });
+
+  it('paginates backwards with "before", excluding the boundary message', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+
+    for (let i = 0; i < 5; i += 1) {
+      await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: `msg ${i}` });
+    }
+
+    const firstPage = await messageService.getRoomMessagesPage('room-1', { limit: 3 });
+    expect(firstPage.messages.map((message) => message.content)).toEqual(['msg 2', 'msg 3', 'msg 4']);
+
+    const oldestLoaded = firstPage.messages[0];
+    if (!oldestLoaded) {
+      throw new Error('expected a loaded message');
+    }
+
+    const olderPage = await messageService.getRoomMessagesPage('room-1', { before: oldestLoaded.timestamp, limit: 3 });
+
+    expect(olderPage.messages.map((message) => message.content)).toEqual(['msg 0', 'msg 1']);
+    expect(olderPage.hasMore).toBe(false);
+  });
+
+  it('excludes messages before the visibility cutoff even when they would otherwise fit the page', async () => {
+    const { roomService, messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    const room = await roomService.createPrivateRoom(alice.id, bob.id);
+    await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'antes de sair' });
+    await roomService.deleteForUser(room.id, bob.id);
+    await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'depois de voltar' });
+
+    const roomAfterDelete = await roomService.getRoomById(room.id);
+    if (!roomAfterDelete) {
+      throw new Error('expected room to exist');
+    }
+
+    const cutoff = roomService.getVisibilityCutoff(roomAfterDelete, bob.id);
+    const { messages: page } = await messageService.getRoomMessagesPage(room.id, { after: cutoff, limit: 10 });
+
+    expect(page.map((message) => message.content)).toEqual(['depois de voltar']);
   });
 });
 

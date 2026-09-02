@@ -157,18 +157,13 @@ export class RoomService {
     return this.repository.update(room.id, { visibleTo: [...room.visibleTo, ...missing], reactivatedAt });
   }
 
+  getVisibilityCutoff(room: RoomRecord, userId: string): string | undefined {
+    return room.reactivatedAt?.[userId] ?? room.deletedAt[userId] ?? undefined;
+  }
+
   filterMessagesForUser(room: RoomRecord, messages: MessageRecord[], userId: string): MessageRecord[] {
-    const reactivatedAt = room.reactivatedAt?.[userId];
-    if (reactivatedAt) {
-      return messages.filter((message) => message.timestamp > reactivatedAt);
-    }
-
-    const deletedAt = room.deletedAt[userId];
-    if (deletedAt) {
-      return messages.filter((message) => message.timestamp > deletedAt);
-    }
-
-    return messages;
+    const cutoff = this.getVisibilityCutoff(room, userId);
+    return cutoff ? messages.filter((message) => message.timestamp > cutoff) : messages;
   }
 
   getVisibleRoomsForUser(userId: string): Promise<RoomRecord[]> {
