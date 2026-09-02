@@ -81,7 +81,7 @@ export function registerUserSocketHandlers(
   });
 
   socket.on('user:visibility', (payload) => {
-    void handleVisibility(socket, userService, payload);
+    void handleVisibility(io, socket, userService, roomService, messageService, payload);
   });
 
   socket.on('disconnect', () => {
@@ -175,7 +175,14 @@ async function handleUpdateTheme(socket: AppSocket, userService: UserService, pa
   }
 }
 
-async function handleVisibility(socket: AppSocket, userService: UserService, payload: unknown): Promise<void> {
+async function handleVisibility(
+  io: AppServer,
+  socket: AppSocket,
+  userService: UserService,
+  roomService: RoomService,
+  messageService: MessageService,
+  payload: unknown,
+): Promise<void> {
   const userId = socket.data.userId;
   if (!userId) {
     return;
@@ -194,6 +201,7 @@ async function handleVisibility(socket: AppSocket, userService: UserService, pay
         nickname: updated.nickname,
         avatar: updated.avatar,
       });
+      await deliverPendingMessages(io, roomService, messageService, updated.id);
     } else {
       socket.broadcast.emit('user:offline', {
         userId: updated.id,
