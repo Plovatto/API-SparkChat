@@ -6,6 +6,7 @@ import type { RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
 import type { MessageService } from './message.service.js';
 import type { RecordingService } from './recording.service.js';
+import type { RoomPresenceService } from './room-presence.service.js';
 import type { TypingService } from './typing.service.js';
 
 const sendMessagePayloadSchema = z
@@ -26,6 +27,18 @@ const roomIdPayloadSchema = z.object({
   roomId: z.string().trim().min(1),
 });
 
+const markReadPayloadSchema = z.object({
+  roomId: z.string().trim().min(1),
+  messageIds: z.array(z.string().trim().min(1)).max(100).optional(),
+});
+
+const getMessagesPayloadSchema = z.object({
+  roomId: z.string().trim().min(1),
+  before: z.string().trim().min(1).optional(),
+  limit: z.number().int().min(1).max(100).default(20),
+});
+const INITIAL_MESSAGES_LIMIT = 20;
+
 const deleteMessagePayloadSchema = z.object({
   messageId: z.string().trim().min(1),
 });
@@ -44,13 +57,13 @@ registerSocketEvent({
   event: 'message:mark-read',
   direction: 'client-to-server',
   module: 'messages',
-  payloadSchema: zodToJsonSchema(roomIdPayloadSchema),
+  payloadSchema: zodToJsonSchema(markReadPayloadSchema),
 });
 registerSocketEvent({
   event: 'messages:get',
   direction: 'client-to-server',
   module: 'messages',
-  payloadSchema: zodToJsonSchema(roomIdPayloadSchema),
+  payloadSchema: zodToJsonSchema(getMessagesPayloadSchema),
 });
 registerSocketEvent({
   event: 'message:delete',
@@ -88,6 +101,18 @@ registerSocketEvent({
   module: 'messages',
   payloadSchema: zodToJsonSchema(audioPlayedPayloadSchema),
 });
+registerSocketEvent({
+  event: 'room:view-start',
+  direction: 'client-to-server',
+  module: 'messages',
+  payloadSchema: zodToJsonSchema(roomIdPayloadSchema),
+});
+registerSocketEvent({
+  event: 'room:view-stop',
+  direction: 'client-to-server',
+  module: 'messages',
+  payloadSchema: zodToJsonSchema(roomIdPayloadSchema),
+});
 registerSocketEvent({ event: 'message:new', direction: 'server-to-client', module: 'messages' });
 registerSocketEvent({ event: 'message:mark-read-done', direction: 'server-to-client', module: 'messages' });
 registerSocketEvent({ event: 'message:read-receipt', direction: 'server-to-client', module: 'messages' });
@@ -113,9 +138,10 @@ export function registerMessageSocketHandlers(
   userService: UserService,
   typingService: TypingService,
   recordingService: RecordingService,
+  presenceService: RoomPresenceService,
 ): void {
   socket.on('message:send', (payload) => {
-    void handleSendMessage(io, socket, messageService, roomService, userService, payload);
+    void handleSendMessage(io, socket, messageService, roomService, userService, presenceService, payload);
   });
 
   socket.on('message:mark-read', (payload) => {
@@ -150,10 +176,68 @@ export function registerMessageSocketHandlers(
     void handleAudioPlayed(io, socket, messageService, payload);
   });
 
+  socket.on('room:view-start', (payload) => {
+    void handleRoomViewStart(socket, roomService, presenceService, payload);
+  });
+
+  socket.on('room:view-stop', (payload) => {
+    void handleRoomViewStop(socket, roomService, presenceService, payload);
+  });
+
   socket.on('disconnect', () => {
     handleTypingDisconnect(io, socket, typingService);
     handleRecordingDisconnect(io, socket, recordingService);
+    const userId = socket.data.userId;
+    if (userId) {
+      presenceService.removeUserEverywhere(userId);
+    }
   });
+}
+
+async function handleRoomViewStart(
+  socket: AppSocket,
+  roomService: RoomService,
+  presenceService: RoomPresenceService,
+  payload: unknown,
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    return;
+  }
+
+  try {
+    const { roomId } = roomIdPayloadSchema.parse(payload);
+    const room = await roomService.getRoomById(roomId);
+    if (!room || !roomService.isParticipant(room, userId)) {
+      return;
+    }
+    presenceService.view(roomId, userId);
+  } catch {
+    return;
+  }
+}
+
+async function handleRoomViewStop(
+  socket: AppSocket,
+  roomService: RoomService,
+  presenceService: RoomPresenceService,
+  payload: unknown,
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    return;
+  }
+
+  try {
+    const { roomId } = roomIdPayloadSchema.parse(payload);
+    const room = await roomService.getRoomById(roomId);
+    if (!room || !roomService.isParticipant(room, userId)) {
+      return;
+    }
+    presenceService.leave(roomId, userId);
+  } catch {
+    return;
+  }
 }
 
 async function handleSendMessage(
@@ -162,6 +246,7 @@ async function handleSendMessage(
   messageService: MessageService,
   roomService: RoomService,
   userService: UserService,
+  presenceService: RoomPresenceService,
   payload: unknown,
 ): Promise<void> {
   const userId = socket.data.userId;
@@ -202,6 +287,7 @@ async function handleSendMessage(
       duration,
       replyToMessageId,
       participantIds: room.participants,
+      viewingUserIds: presenceService.getViewers(roomId),
     });
     const reactivatedBefore = new Date(new Date(message.timestamp).getTime() - 1000).toISOString();
     const updatedRoom = (await roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;
@@ -219,9 +305,9 @@ async function handleSendMessage(
         }
 
         const summary = await roomService.buildSummary(updatedRoom, newlyVisibleUserId);
-        const messages = await messageService.toViews(
-          roomService.filterMessagesForUser(updatedRoom, rawMessages, newlyVisibleUserId),
-        );
+        const visibleMessages = roomService.filterMessagesForUser(updatedRoom, rawMessages, newlyVisibleUserId);
+        const page = visibleMessages.slice(-INITIAL_MESSAGES_LIMIT);
+        const messages = await messageService.toViews(page);
         io.to(recipient.socketId).emit('room:new', { room: summary, messages });
       }
     }
@@ -243,7 +329,7 @@ async function handleGetMessages(
   }
 
   try {
-    const { roomId } = roomIdPayloadSchema.parse(payload);
+    const { roomId, before, limit } = getMessagesPayloadSchema.parse(payload);
     const room = await roomService.getRoomById(roomId);
 
     if (!room || !roomService.isParticipant(room, userId)) {
@@ -251,10 +337,10 @@ async function handleGetMessages(
       return;
     }
 
-    const rawMessages = await messageService.getRoomMessages(roomId);
-    const messages = roomService.filterMessagesForUser(room, rawMessages, userId);
-    const views = await messageService.toViews(messages);
-    socket.emit('messages:list', { roomId, messages: views });
+    const after = roomService.getVisibilityCutoff(room, userId);
+    const { messages: page, hasMore } = await messageService.getRoomMessagesPage(roomId, { after, before, limit });
+    const views = await messageService.toViews(page);
+    socket.emit('messages:list', { roomId, messages: views, hasMore });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
@@ -396,9 +482,10 @@ async function handleMarkRead(socket: AppSocket, messageService: MessageService,
   }
 
   try {
-    const { roomId } = roomIdPayloadSchema.parse(payload);
-    const messages = await messageService.markRoomAsRead(roomId, userId);
-    const unreadCount = messageService.countUnread(messages, userId);
+    const { roomId, messageIds } = markReadPayloadSchema.parse(payload);
+    const messages = await messageService.markRoomAsRead(roomId, userId, messageIds);
+    const messagesForCount = messageIds && messageIds.length > 0 ? await messageService.getRoomMessages(roomId) : messages;
+    const unreadCount = messageService.countUnread(messagesForCount, userId);
 
     socket.emit('message:mark-read-done', { roomId, unreadCount });
     socket.to(roomId).emit('message:read-receipt', { roomId, userId });

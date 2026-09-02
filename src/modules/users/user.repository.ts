@@ -4,6 +4,17 @@ import { users } from '../../database/schema.js';
 import type { UserRecord } from './user.types.js';
 
 const socketIdsByUserId = new Map<string, string>();
+const onlineUserIds = new Set<string>();
+const profileByUserId = new Map<string, { nickname: string; avatar: number }>();
+
+function cacheProfile(user: UserRecord): void {
+  profileByUserId.set(user.id, { nickname: user.nickname, avatar: user.avatar });
+  if (user.status === 'online') {
+    onlineUserIds.add(user.id);
+  } else {
+    onlineUserIds.delete(user.id);
+  }
+}
 
 function toRecord(row: typeof users.$inferSelect): UserRecord {
   const theme =
@@ -11,7 +22,7 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
       ? { baseTheme: row.themeBaseTheme, colorTheme: row.themeColorTheme }
       : undefined;
 
-  return {
+  const record: UserRecord = {
     id: row.id,
     nickname: row.nickname,
     avatar: row.avatar,
@@ -23,6 +34,9 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
     lastSeen: row.lastSeen,
     ...(theme ? { theme } : {}),
   };
+
+  cacheProfile(record);
+  return record;
 }
 
 function isSamePersistedUser(a: UserRecord, b: UserRecord): boolean {
@@ -46,6 +60,7 @@ export class UserRepository {
 
   async insert(user: UserRecord): Promise<UserRecord> {
     socketIdsByUserId.set(user.id, user.socketId);
+    cacheProfile(user);
 
     await this.db.insert(users).values({
       id: user.id,
@@ -83,7 +98,13 @@ export class UserRepository {
         : Promise.resolve(),
     ]);
 
-    return current ? { ...current, ...patch } : null;
+    if (!current) {
+      return null;
+    }
+
+    const updated = { ...current, ...patch };
+    cacheProfile(updated);
+    return updated;
   }
 
   async replaceAll(items: UserRecord[]): Promise<void> {
@@ -107,5 +128,14 @@ export class UserRepository {
     const normalized = chatCode.toUpperCase().trim();
     const [row] = await this.db.select().from(users).where(eq(users.chatCode, normalized));
     return row ? toRecord(row) : null;
+  }
+
+  isOnline(id: string): boolean {
+    return onlineUserIds.has(id);
+  }
+
+  getCachedProfile(id: string): { id: string; nickname: string; avatar: number } | undefined {
+    const cached = profileByUserId.get(id);
+    return cached ? { id, ...cached } : undefined;
   }
 }

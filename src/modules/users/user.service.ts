@@ -70,6 +70,14 @@ export class UserService {
     return this.repository.findById(userId);
   }
 
+  isOnline(userId: string): boolean {
+    return this.repository.isOnline(userId);
+  }
+
+  getCachedProfile(userId: string): { id: string; nickname: string; avatar: number } | undefined {
+    return this.repository.getCachedProfile(userId);
+  }
+
   getUserByChatCode(chatCode: string): Promise<UserRecord | null> {
     return this.repository.findByChatCode(chatCode);
   }

@@ -5,7 +5,13 @@ import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { db } from './database/turso-client.js';
 import { runMigrations } from './database/migrate.js';
-import { MessageRepository, MessageService, RecordingService, TypingService } from './modules/messages/index.js';
+import {
+  MessageRepository,
+  MessageService,
+  RecordingService,
+  RoomPresenceService,
+  TypingService,
+} from './modules/messages/index.js';
 import { RoomRepository, RoomService } from './modules/rooms/index.js';
 import { UserRepository, UserService } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
@@ -30,6 +36,7 @@ const roomService = new RoomService(roomRepository, userService, messageService)
 
 const typingService = new TypingService();
 const recordingService = new RecordingService();
+const presenceService = new RoomPresenceService();
 
 const app = createApp({ userService });
 const httpServer = createServer(app);
@@ -48,7 +55,7 @@ const io = new Server<
   transports: ['websocket', 'polling'],
 });
 
-registerSocketHandlers(io, { userService, roomService, messageService, typingService, recordingService });
+registerSocketHandlers(io, { userService, roomService, messageService, typingService, recordingService, presenceService });
 
 httpServer.listen(env.PORT, () => {
   logger.info(`Server running on port ${env.PORT}`);

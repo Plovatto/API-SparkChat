@@ -16,4 +16,5 @@ export interface UserClientToServerEvents {
   'user:join': (payload: { nickname?: string; avatar?: number; loginCode?: string | null }) => void;
   'user:update-profile': (payload: { nickname: string; avatar: number }) => void;
   'user:update-theme': (payload: UserTheme) => void;
+  'user:visibility': (payload: { visible: boolean }) => void;
 }
