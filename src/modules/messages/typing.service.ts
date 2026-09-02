@@ -1,37 +1,19 @@
-export interface TypingRoomUpdate {
-  roomId: string;
-  users: string[];
-}
+import { RoomMembershipTracker, type RoomMembershipUpdate } from './room-membership-tracker.js';
+
+export type TypingRoomUpdate = RoomMembershipUpdate;
 
 export class TypingService {
-  private readonly typingByRoom = new Map<string, Set<string>>();
+  private readonly tracker = new RoomMembershipTracker();
 
   startTyping(roomId: string, userId: string): string[] {
-    const users = this.typingByRoom.get(roomId) ?? new Set<string>();
-    users.add(userId);
-    this.typingByRoom.set(roomId, users);
-    return Array.from(users);
+    return this.tracker.add(roomId, userId);
   }
 
   stopTyping(roomId: string, userId: string): string[] {
-    const users = this.typingByRoom.get(roomId);
-    if (!users) {
-      return [];
-    }
-
-    users.delete(userId);
-    return Array.from(users);
+    return this.tracker.remove(roomId, userId);
   }
 
   removeUserEverywhere(userId: string): TypingRoomUpdate[] {
-    const updates: TypingRoomUpdate[] = [];
-
-    for (const [roomId, users] of this.typingByRoom.entries()) {
-      if (users.delete(userId)) {
-        updates.push({ roomId, users: Array.from(users) });
-      }
-    }
-
-    return updates;
+    return this.tracker.removeUserEverywhere(userId);
   }
 }
