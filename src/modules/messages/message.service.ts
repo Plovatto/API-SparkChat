@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { UserRecord, UserService } from '../users/index.js';
+import type { UserService } from '../users/index.js';
 import { nextTimestamp } from './message.clock.js';
 import type { MessageRepository } from './message.repository.js';
 import type { MessageRecord, MessageReplySnapshot, MessageSender, MessageType, MessageView } from './message.types.js';
@@ -12,6 +12,7 @@ export interface SendMessageInput {
   duration?: number | undefined;
   replyToMessageId?: string | undefined;
   participantIds?: string[] | undefined;
+  viewingUserIds?: string[] | undefined;
 }
 
 export class MessageService {
@@ -21,7 +22,10 @@ export class MessageService {
   ) {}
 
   async sendMessage(input: SendMessageInput): Promise<MessageRecord> {
-    const deliveredTo = await this.resolveOnlineRecipients(input.participantIds ?? [], input.senderId);
+    const deliveredTo = this.resolveOnlineRecipients(input.participantIds ?? [], input.senderId);
+    const readBy = (input.viewingUserIds ?? []).filter(
+      (userId) => userId !== input.senderId && deliveredTo.includes(userId),
+    );
 
     const message: MessageRecord = {
       id: randomUUID(),
@@ -32,9 +36,9 @@ export class MessageService {
       duration: input.type === 'audio' ? (input.duration ?? null) : null,
       timestamp: nextTimestamp(input.roomId),
       deletedForEveryone: false,
-      status: deliveredTo.length > 0 ? 'delivered' : 'sent',
+      status: readBy.length > 0 ? 'read' : deliveredTo.length > 0 ? 'delivered' : 'sent',
       deliveredTo,
-      readBy: [],
+      readBy,
       playedBy: [],
       replyTo: input.replyToMessageId ? await this.buildReplySnapshot(input.replyToMessageId) : null,
     };
@@ -66,6 +70,13 @@ export class MessageService {
     return this.repository.findByRoomId(roomId);
   }
 
+  getRoomMessagesPage(
+    roomId: string,
+    options: { after?: string | undefined; before?: string | undefined; limit: number },
+  ): Promise<{ messages: MessageRecord[]; hasMore: boolean }> {
+    return this.repository.findPageByRoomId(roomId, options);
+  }
+
   async deleteMessage(messageId: string, requesterId: string): Promise<MessageRecord> {
     const message = await this.repository.findById(messageId);
     if (!message) {
@@ -89,8 +100,11 @@ export class MessageService {
     return messages.length > 0 ? (messages[messages.length - 1] ?? null) : null;
   }
 
-  async markRoomAsRead(roomId: string, userId: string): Promise<MessageRecord[]> {
-    const messages = await this.repository.findByRoomId(roomId);
+  async markRoomAsRead(roomId: string, userId: string, messageIds?: string[]): Promise<MessageRecord[]> {
+    const messages =
+      messageIds && messageIds.length > 0
+        ? await this.repository.findByRoomIdAndIds(roomId, messageIds)
+        : await this.repository.findByRoomId(roomId);
     let changed = false;
 
     const updated = messages.map((message) => {
@@ -107,10 +121,14 @@ export class MessageService {
       return messages;
     }
 
-    const all = await this.repository.findAll();
-    const updatedById = new Map(updated.map((message) => [message.id, message]));
-    const merged = all.map((message) => updatedById.get(message.id) ?? message);
-    await this.repository.replaceAll(merged);
+    await this.repository.updateMany(
+      updated
+        .filter((message, index) => message !== messages[index])
+        .map((message) => ({
+          id: message.id,
+          patch: { deliveredTo: message.deliveredTo, readBy: message.readBy, status: message.status },
+        })),
+    );
 
     return updated;
   }
@@ -130,20 +148,22 @@ export class MessageService {
     }
 
     const pendingIds = new Set(pending.map((message) => message.id));
-    const all = await this.repository.findAll();
-    const merged = all.map((message) => {
-      if (!pendingIds.has(message.id)) {
-        return message;
-      }
-      return {
+    const updated = messages
+      .filter((message) => pendingIds.has(message.id))
+      .map((message) => ({
         ...message,
         deliveredTo: [...message.deliveredTo, userId],
         status: message.status === 'read' ? message.status : ('delivered' as const),
-      };
-    });
-    await this.repository.replaceAll(merged);
+      }));
 
-    return merged.filter((message) => pendingIds.has(message.id));
+    await this.repository.updateMany(
+      updated.map((message) => ({
+        id: message.id,
+        patch: { deliveredTo: message.deliveredTo, status: message.status },
+      })),
+    );
+
+    return updated;
   }
 
   countUnread(messages: MessageRecord[], userId: string): number {
@@ -183,10 +203,8 @@ export class MessageService {
     return this.repository.update(messageId, { playedBy: [...message.playedBy, userId] });
   }
 
-  private async resolveOnlineRecipients(participantIds: string[], senderId: string): Promise<string[]> {
-    const others = participantIds.filter((id) => id !== senderId);
-    const users = await Promise.all(others.map((id) => this.userService.getUser(id)));
-    return users.filter((user): user is UserRecord => user !== null && user.status === 'online').map((user) => user.id);
+  private resolveOnlineRecipients(participantIds: string[], senderId: string): string[] {
+    return participantIds.filter((id) => id !== senderId && this.userService.isOnline(id));
   }
 
   private async buildReplySnapshot(messageId: string): Promise<MessageReplySnapshot | null> {
@@ -207,6 +225,11 @@ export class MessageService {
   private async resolveSender(senderId: string): Promise<MessageSender> {
     if (senderId === 'system') {
       return { id: 'system', nickname: 'Sistema', avatar: null };
+    }
+
+    const cached = this.userService.getCachedProfile(senderId);
+    if (cached) {
+      return { id: cached.id, nickname: cached.nickname, avatar: cached.avatar };
     }
 
     const user = await this.userService.getUser(senderId);

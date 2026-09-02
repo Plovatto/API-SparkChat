@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, lt } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { messages } from '../../database/schema.js';
 import type { MessageRecord, MessageReplySnapshot, MessageStatus, MessageType } from './message.types.js';
@@ -75,6 +75,28 @@ export class MessageRepository {
     return current ? { ...current, ...patch } : null;
   }
 
+  async updateMany(updates: { id: string; patch: Partial<MessageRecord> }[]): Promise<void> {
+    if (updates.length === 0) {
+      return;
+    }
+
+    const statements = updates.map(({ id, patch }) => {
+      const { replyTo, ...rest } = patch;
+      const columns: Partial<typeof messages.$inferInsert> = { ...rest };
+      if (replyTo !== undefined) {
+        columns.replyToSnapshot = replyTo;
+      }
+      return this.db.update(messages).set(columns).where(eq(messages.id, id));
+    });
+
+    if (statements.length === 1) {
+      await statements[0];
+      return;
+    }
+
+    await this.db.batch(statements as [(typeof statements)[number], ...(typeof statements)[number][]]);
+  }
+
   async replaceAll(items: MessageRecord[]): Promise<void> {
     const current = await this.findAll();
     const currentById = new Map(current.map((message) => [message.id, message]));
@@ -95,5 +117,44 @@ export class MessageRepository {
       .orderBy(asc(messages.timestamp));
 
     return rows.map(toRecord);
+  }
+
+  async findByRoomIdAndIds(roomId: string, ids: string[]): Promise<MessageRecord[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const rows = await this.db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.roomId, roomId), inArray(messages.id, ids)))
+      .orderBy(asc(messages.timestamp));
+
+    return rows.map(toRecord);
+  }
+
+  async findPageByRoomId(
+    roomId: string,
+    options: { after?: string | undefined; before?: string | undefined; limit: number },
+  ): Promise<{ messages: MessageRecord[]; hasMore: boolean }> {
+    const conditions = [eq(messages.roomId, roomId)];
+    if (options.after) {
+      conditions.push(gt(messages.timestamp, options.after));
+    }
+    if (options.before) {
+      conditions.push(lt(messages.timestamp, options.before));
+    }
+
+    const rows = await this.db
+      .select()
+      .from(messages)
+      .where(and(...conditions))
+      .orderBy(desc(messages.timestamp))
+      .limit(options.limit + 1);
+
+    const hasMore = rows.length > options.limit;
+    const page = rows.slice(0, options.limit).reverse().map(toRecord);
+
+    return { messages: page, hasMore };
   }
 }

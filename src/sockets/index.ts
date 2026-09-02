@@ -3,6 +3,7 @@ import {
   registerMessageSocketHandlers,
   type MessageService,
   type RecordingService,
+  type RoomPresenceService,
   type TypingService,
 } from '../modules/messages/index.js';
 import { registerRoomSocketHandlers, type RoomService } from '../modules/rooms/index.js';
@@ -15,6 +16,7 @@ export interface SocketDeps {
   messageService: MessageService;
   typingService: TypingService;
   recordingService: RecordingService;
+  presenceService: RoomPresenceService;
 }
 
 export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
@@ -31,6 +33,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       deps.userService,
       deps.typingService,
       deps.recordingService,
+      deps.presenceService,
     );
 
     socket.on('disconnect', (reason) => {
