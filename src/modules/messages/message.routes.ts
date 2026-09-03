@@ -1,15 +1,34 @@
 import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import multer from 'multer';
 import type { z } from 'zod';
 import { errorResponseSchema } from '../../docs/common-schemas.js';
 import { registry } from '../../docs/registry.js';
+import { createRequireAuth } from '../../middleware/auth.js';
+import type { UserService } from '../users/index.js';
 import {
   createMessageController,
   fileUploadResponseSchema,
   mediaUploadResponseSchema,
 } from './message.controller.js';
 import { audioUpload, fileUpload, imageUpload } from './message.upload.js';
+
+const uploadRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
+  message: { message: 'Muitos envios de arquivo. Aguarde um momento e tente novamente.' },
+});
+
+registry.registerComponent('securitySchemes', 'sessionAuth', {
+  type: 'http',
+  scheme: 'bearer',
+  bearerFormat: '<userId>:<sessionToken>',
+  description: 'Token de sessão obtido no login, enviado como "Bearer <userId>:<sessionToken>"',
+});
 
 function registerUploadPath(
   path: string,
@@ -23,6 +42,7 @@ function registerUploadPath(
     path,
     tags: ['Messages'],
     summary,
+    security: [{ sessionAuth: [] }],
     request: {
       body: {
         content: {
@@ -43,6 +63,14 @@ function registerUploadPath(
       },
       400: {
         description: maxSizeDescription,
+        content: { 'application/json': { schema: errorResponseSchema } },
+      },
+      401: {
+        description: 'Autenticação necessária ou sessão inválida',
+        content: { 'application/json': { schema: errorResponseSchema } },
+      },
+      429: {
+        description: 'Muitos envios em pouco tempo',
         content: { 'application/json': { schema: errorResponseSchema } },
       },
     },
@@ -95,26 +123,33 @@ const handleFileUploadError = createUploadErrorHandler(
   'PDF, vídeo (MP4, WEBM, MOV, AVI), documento do Office, ZIP, TXT ou CSV',
 );
 
-export function createMessageRouter(): Router {
+export function createMessageRouter(userService: UserService): Router {
   const router = Router();
   const controller = createMessageController();
+  const requireAuth = createRequireAuth(userService);
 
   router.post(
     '/upload-image',
+    uploadRateLimiter,
+    (req: Request, res: Response, next: NextFunction) => void requireAuth(req, res, next),
     imageUpload.single('image'),
     handleImageUploadError,
-    (req: Request, res: Response) => controller.uploadImage(req, res),
+    (req: Request, res: Response) => void controller.uploadImage(req, res),
   );
 
   router.post(
     '/upload-audio',
+    uploadRateLimiter,
+    (req: Request, res: Response, next: NextFunction) => void requireAuth(req, res, next),
     audioUpload.single('audio'),
     handleAudioUploadError,
-    (req: Request, res: Response) => controller.uploadAudio(req, res),
+    (req: Request, res: Response) => void controller.uploadAudio(req, res),
   );
 
   router.post(
     '/upload-file',
+    uploadRateLimiter,
+    (req: Request, res: Response, next: NextFunction) => void requireAuth(req, res, next),
     fileUpload.single('file'),
     handleFileUploadError,
     (req: Request, res: Response) => void controller.uploadFile(req, res),

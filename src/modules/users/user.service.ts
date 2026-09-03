@@ -147,6 +147,21 @@ export class UserService {
     return { user, sessionId, sessionToken };
   }
 
+  async verifySession(userId: string, sessionToken: string): Promise<UserRecord | null> {
+    const session = await this.sessions.findValid(userId, hashToken(sessionToken), SESSION_TTL_MS);
+    if (!session) {
+      return null;
+    }
+
+    const user = await this.repository.findById(userId);
+    if (!user) {
+      return null;
+    }
+
+    await this.sessions.touch(session.id);
+    return user;
+  }
+
   async resumeSession(
     userId: string,
     sessionToken: string,
