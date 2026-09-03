@@ -87,6 +87,24 @@ describe('RoomService', () => {
     expect(summaryForBob.userBlocked).toBe(false);
   });
 
+  it('exposes mentionCount for a group room, counting only messages that mention the viewer', async () => {
+    const { roomService, messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    await roomService.joinByCode(group.roomCode ?? '', bob.id);
+
+    await messageService.sendMessage({ roomId: group.id, senderId: alice.id, content: '@Bob confere isso', mentionedUserIds: [bob.id] });
+    await messageService.sendMessage({ roomId: group.id, senderId: alice.id, content: 'sem menção' });
+
+    const summaryForBob = await roomService.buildSummary(group, bob.id);
+    const summaryForAlice = await roomService.buildSummary(group, alice.id);
+
+    expect(summaryForBob.mentionCount).toBe(1);
+    expect(summaryForBob.unreadCount).toBe(2);
+    expect(summaryForAlice.mentionCount).toBe(0);
+  });
+
   it('joins a group by its room code and notifies only on the first join', async () => {
     const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');

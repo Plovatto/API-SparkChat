@@ -4,6 +4,7 @@ import { registerSocketEvent } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import type { RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
+import { parseMentionedUserIds } from './message.mentions.js';
 import type { MessageService } from './message.service.js';
 import type { RecordingService } from './recording.service.js';
 import type { RoomPresenceService } from './room-presence.service.js';
@@ -279,6 +280,15 @@ async function handleSendMessage(
 
     const newlyVisibleUserIds = roomService.getNewlyVisibleParticipants(room, userId);
 
+    let mentionedUserIds: string[] = [];
+    if (room.type === 'group' && type === 'text') {
+      const participantRecords = await Promise.all(room.participants.map((id) => userService.getUser(id)));
+      const participants = participantRecords
+        .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
+        .map((participant) => ({ id: participant.id, nickname: participant.nickname }));
+      mentionedUserIds = parseMentionedUserIds(content, participants);
+    }
+
     const message = await messageService.sendMessage({
       roomId,
       senderId: userId,
@@ -288,6 +298,7 @@ async function handleSendMessage(
       replyToMessageId,
       participantIds: room.participants,
       viewingUserIds: presenceService.getViewers(roomId),
+      mentionedUserIds,
     });
     const reactivatedBefore = new Date(new Date(message.timestamp).getTime() - 1000).toISOString();
     const updatedRoom = (await roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;
@@ -486,8 +497,9 @@ async function handleMarkRead(socket: AppSocket, messageService: MessageService,
     const messages = await messageService.markRoomAsRead(roomId, userId, messageIds);
     const messagesForCount = messageIds && messageIds.length > 0 ? await messageService.getRoomMessages(roomId) : messages;
     const unreadCount = messageService.countUnread(messagesForCount, userId);
+    const mentionCount = messageService.countUnreadMentions(messagesForCount, userId);
 
-    socket.emit('message:mark-read-done', { roomId, unreadCount });
+    socket.emit('message:mark-read-done', { roomId, unreadCount, mentionCount });
     socket.to(roomId).emit('message:read-receipt', { roomId, userId });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });

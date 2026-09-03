@@ -39,6 +39,7 @@ export interface RoomSummary {
   participants: RoomParticipant[];
   lastMessage: MessageView | null;
   unreadCount: number;
+  mentionCount: number;
   blockedBy: Record<string, string>;
   isBlockedBy: boolean;
   userBlocked: boolean;

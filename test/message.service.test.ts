@@ -51,6 +51,23 @@ describe('MessageService', () => {
     expect(messageService.countUnread(afterRead, bob.id)).toBe(0);
   });
 
+  it('counts only unread messages that mention the given user', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: '@Bob confere isso', mentionedUserIds: [bob.id] });
+    await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: '@Bob de novo', mentionedUserIds: [bob.id] });
+    await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'mensagem sem menção' });
+
+    const messages = await messageService.getRoomMessages('room-1');
+    expect(messageService.countUnreadMentions(messages, bob.id)).toBe(2);
+    expect(messageService.countUnreadMentions(messages, alice.id)).toBe(0);
+
+    const afterRead = await messageService.markRoomAsRead('room-1', bob.id);
+    expect(messageService.countUnreadMentions(afterRead, bob.id)).toBe(0);
+  });
+
   it('hides the content of a deleted-for-everyone message in its view', async () => {
     const { messageService, messageRepository, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');

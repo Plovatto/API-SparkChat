@@ -240,6 +240,7 @@ export class RoomService {
     const lastMessageRecord = messages.length > 0 ? (messages[messages.length - 1] ?? null) : null;
     const lastMessage = lastMessageRecord ? await this.messageService.toView(lastMessageRecord) : null;
     const unreadCount = this.messageService.countUnread(messages, viewerId);
+    const mentionCount = this.messageService.countUnreadMentions(messages, viewerId);
 
     return {
       id: room.id,
@@ -251,6 +252,7 @@ export class RoomService {
       participants,
       lastMessage,
       unreadCount,
+      mentionCount,
       blockedBy: room.blockedBy,
       isBlockedBy,
       userBlocked,
