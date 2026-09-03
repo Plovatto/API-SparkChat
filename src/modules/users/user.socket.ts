@@ -153,7 +153,7 @@ async function handleJoin(
     const input = joinPayloadSchema.parse(payload);
 
     if (input.mode === 'register') {
-      const { user, sessionToken, recoveryFile } = await userService.registerAccount({
+      const { user, sessionId, sessionToken, recoveryFile } = await userService.registerAccount({
         nickname: input.nickname,
         avatar: input.avatar,
         password: input.password,
@@ -163,6 +163,7 @@ async function handleJoin(
 
       socket.data.userId = user.id;
       socket.data.authMethod = 'password';
+      socket.data.sessionId = sessionId;
       socket.emit('user:registered', {
         user: userService.toPublicUser(user),
         sessionToken,
@@ -180,9 +181,10 @@ async function handleJoin(
       return;
     }
 
-    const { user, authMethod } = resumed;
+    const { user, authMethod, sessionId } = resumed;
     socket.data.userId = user.id;
     socket.data.authMethod = authMethod;
+    socket.data.sessionId = sessionId;
     socket.emit('user:resumed', { user: userService.toPublicUser(user), authMethod });
     socket.broadcast.emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
     await deliverPendingMessages(io, roomService, messageService, user.id);
@@ -305,6 +307,7 @@ async function handleChangePassword(socket: AppSocket, userService: UserService,
 
     delete socket.data.userId;
     delete socket.data.authMethod;
+    delete socket.data.sessionId;
     socket.emit('user:password-changed', { recoveryFile: recoveryFile.toString('base64') });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
@@ -342,6 +345,7 @@ async function handleListSessions(socket: AppSocket, userService: UserService): 
       device: describeDevice(session.userAgent),
       createdAt: session.createdAt,
       lastUsedAt: session.lastUsedAt,
+      isCurrent: session.id === socket.data.sessionId,
     })),
   });
 }
@@ -357,6 +361,12 @@ async function handleRevokeSession(socket: AppSocket, userService: UserService, 
     const { sessionId } = revokeSessionPayloadSchema.parse(payload);
     await userService.revokeSession(userId, sessionId);
     await handleListSessions(socket, userService);
+
+    if (sessionId === socket.data.sessionId) {
+      delete socket.data.userId;
+      delete socket.data.authMethod;
+      delete socket.data.sessionId;
+    }
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }

@@ -13,6 +13,7 @@ export type InterServerEvents = Record<string, never>;
 export interface SocketData {
   userId?: string;
   authMethod?: AuthMethod;
+  sessionId?: string;
 }
 
 export type AppServer = Server<
