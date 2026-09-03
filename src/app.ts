@@ -1,3 +1,4 @@
+import path from 'node:path';
 import cors from 'cors';
 import express, { type Express } from 'express';
 import { pinoHttp } from 'pino-http';
@@ -5,7 +6,7 @@ import swaggerUi from 'swagger-ui-express';
 import { z } from 'zod';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
-import { uploadsDir, uploadsUrlPrefix } from './config/paths.js';
+import { filesUploadDir, uploadsDir, uploadsUrlPrefix } from './config/paths.js';
 import { downloadButtonScript } from './docs/download-button.js';
 import { generateOpenApiDocument } from './docs/openapi-document.js';
 import { registry } from './docs/registry.js';
@@ -20,6 +21,8 @@ const healthResponseSchema = z
     uptime: z.number().openapi({ example: 123.45, description: 'Seconds since process start' }),
   })
   .openapi('HealthResponse');
+
+const INLINE_SAFE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.mov', '.avi']);
 
 registry.registerPath({
   method: 'get',
@@ -45,6 +48,17 @@ export function createApp(deps: ApiRouterDeps): Express {
     res.status(200).json({ status: 'ok', uptime: process.uptime() });
   });
 
+  app.use(
+    `${uploadsUrlPrefix}/files`,
+    express.static(filesUploadDir, {
+      setHeaders: (res, filePath) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        if (!INLINE_SAFE_FILE_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+          res.setHeader('Content-Disposition', 'attachment');
+        }
+      },
+    }),
+  );
   app.use(uploadsUrlPrefix, express.static(uploadsDir));
   app.use('/api', createApiRouter(deps));
 

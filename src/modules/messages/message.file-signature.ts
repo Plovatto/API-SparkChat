@@ -1,0 +1,69 @@
+import { open } from 'node:fs/promises';
+
+interface SignatureRule {
+  offset: number;
+  bytes: number[];
+}
+
+const SIGNATURES: Record<string, SignatureRule[][]> = {
+  'application/pdf': [[{ offset: 0, bytes: [0x25, 0x50, 0x44, 0x46] }]],
+  'video/webm': [[{ offset: 0, bytes: [0x1a, 0x45, 0xdf, 0xa3] }]],
+  'video/mp4': [[{ offset: 4, bytes: [0x66, 0x74, 0x79, 0x70] }]],
+  'video/quicktime': [[{ offset: 4, bytes: [0x66, 0x74, 0x79, 0x70] }]],
+  'video/x-msvideo': [
+    [
+      { offset: 0, bytes: [0x52, 0x49, 0x46, 0x46] },
+      { offset: 8, bytes: [0x41, 0x56, 0x49, 0x20] },
+    ],
+  ],
+  'application/zip': [
+    [{ offset: 0, bytes: [0x50, 0x4b, 0x03, 0x04] }],
+    [{ offset: 0, bytes: [0x50, 0x4b, 0x05, 0x06] }],
+  ],
+  'application/x-zip-compressed': [[{ offset: 0, bytes: [0x50, 0x4b, 0x03, 0x04] }]],
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': [
+    [{ offset: 0, bytes: [0x50, 0x4b, 0x03, 0x04] }],
+  ],
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': [
+    [{ offset: 0, bytes: [0x50, 0x4b, 0x03, 0x04] }],
+  ],
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': [
+    [{ offset: 0, bytes: [0x50, 0x4b, 0x03, 0x04] }],
+  ],
+  'application/msword': [[{ offset: 0, bytes: [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1] }]],
+  'application/vnd.ms-excel': [[{ offset: 0, bytes: [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1] }]],
+  'application/vnd.ms-powerpoint': [[{ offset: 0, bytes: [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1] }]],
+};
+
+const NO_SIGNATURE_MIME_TYPES = new Set(['text/plain', 'text/csv']);
+const SNIFF_LENGTH = 32;
+
+async function readLeadingBytes(filePath: string, length: number): Promise<Buffer> {
+  const handle = await open(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+function matchesRuleSet(buffer: Buffer, rules: SignatureRule[]): boolean {
+  return rules.every((rule) => rule.bytes.every((byte, index) => buffer[rule.offset + index] === byte));
+}
+
+export async function verifyFileSignature(filePath: string, mimeType: string): Promise<boolean> {
+  const buffer = await readLeadingBytes(filePath, SNIFF_LENGTH);
+
+  if (NO_SIGNATURE_MIME_TYPES.has(mimeType)) {
+    return !buffer.includes(0);
+  }
+
+  const ruleSets = SIGNATURES[mimeType];
+  if (!ruleSets) {
+    return false;
+  }
+
+  return ruleSets.some((rules) => matchesRuleSet(buffer, rules));
+}
