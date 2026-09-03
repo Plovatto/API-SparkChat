@@ -28,6 +28,7 @@ export interface RegisterAccountInput {
 export interface AuthenticatedResult {
   user: UserRecord;
   sessionToken: string;
+  sessionId: string;
 }
 
 export interface RegisteredResult extends AuthenticatedResult {
@@ -102,10 +103,10 @@ export class UserService {
     };
 
     const created = await this.repository.insert(user);
-    const sessionToken = await this.createSession(created.id, 'password', input.userAgent ?? '');
+    const { sessionId, sessionToken } = await this.createSession(created.id, 'password', input.userAgent ?? '');
     const recoveryFile = this.buildRecoveryFile(created.id, recoveryToken);
 
-    return { user: created, sessionToken, recoveryFile };
+    return { user: created, sessionId, sessionToken, recoveryFile };
   }
 
   async login(nickname: string, password: string, userAgent = ''): Promise<AuthenticatedResult | null> {
@@ -120,8 +121,8 @@ export class UserService {
       return null;
     }
 
-    const sessionToken = await this.createSession(user.id, 'password', userAgent);
-    return { user, sessionToken };
+    const { sessionId, sessionToken } = await this.createSession(user.id, 'password', userAgent);
+    return { user, sessionId, sessionToken };
   }
 
   async loginWithKeyfile(fileBuffer: Buffer, userAgent = ''): Promise<AuthenticatedResult | null> {
@@ -141,15 +142,15 @@ export class UserService {
       return null;
     }
 
-    const sessionToken = await this.createSession(user.id, 'keyfile', userAgent);
-    return { user, sessionToken };
+    const { sessionId, sessionToken } = await this.createSession(user.id, 'keyfile', userAgent);
+    return { user, sessionId, sessionToken };
   }
 
   async resumeSession(
     userId: string,
     sessionToken: string,
     socketId: string,
-  ): Promise<{ user: UserRecord; authMethod: AuthMethod } | null> {
+  ): Promise<{ user: UserRecord; authMethod: AuthMethod; sessionId: string } | null> {
     const session = await this.sessions.findValid(userId, hashToken(sessionToken), SESSION_TTL_MS);
     if (!session) {
       return null;
@@ -162,7 +163,7 @@ export class UserService {
       lastSeen: new Date().toISOString(),
     });
 
-    return user ? { user, authMethod: session.authMethod } : null;
+    return user ? { user, authMethod: session.authMethod, sessionId: session.id } : null;
   }
 
   async changePassword(
@@ -305,12 +306,17 @@ export class UserService {
     };
   }
 
-  private async createSession(userId: string, authMethod: AuthMethod, userAgent: string): Promise<string> {
+  private async createSession(
+    userId: string,
+    authMethod: AuthMethod,
+    userAgent: string,
+  ): Promise<{ sessionId: string; sessionToken: string }> {
     const sessionToken = generateToken();
+    const sessionId = randomUUID();
     const now = new Date().toISOString();
 
     await this.sessions.create({
-      id: randomUUID(),
+      id: sessionId,
       userId,
       tokenHash: hashToken(sessionToken),
       authMethod,
@@ -319,7 +325,7 @@ export class UserService {
       lastUsedAt: now,
     });
 
-    return sessionToken;
+    return { sessionId, sessionToken };
   }
 
   private buildRecoveryFile(userId: string, recoveryToken: string): Buffer {

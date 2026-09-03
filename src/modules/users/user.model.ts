@@ -64,6 +64,7 @@ export const sessionRecordSchema = z
     device: z.string().openapi({ example: 'Chrome · Windows' }),
     createdAt: z.string().openapi({ example: '2026-01-01T00:00:00.000Z' }),
     lastUsedAt: z.string().openapi({ example: '2026-01-01T00:00:00.000Z' }),
+    isCurrent: z.boolean().openapi({ example: true }),
   })
   .openapi('SessionSummary');
 

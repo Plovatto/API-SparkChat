@@ -109,6 +109,23 @@ describe('UserService.login', () => {
     expect(resumedB?.user.id).toBe(user.id);
   });
 
+  it('resolves each device to its own distinct, matching session id', async () => {
+    const { userService } = await buildRoomService();
+    const { user } = await registerAlice(userService);
+
+    const deviceA = await userService.login('Alice', PASSWORD);
+    const deviceB = await userService.login('Alice', PASSWORD);
+
+    const resumedA = await userService.resumeSession(user.id, deviceA?.sessionToken ?? '', 'socket-a');
+    const resumedB = await userService.resumeSession(user.id, deviceB?.sessionToken ?? '', 'socket-b');
+
+    expect(deviceA?.sessionId).toBeTruthy();
+    expect(deviceB?.sessionId).toBeTruthy();
+    expect(deviceA?.sessionId).not.toBe(deviceB?.sessionId);
+    expect(resumedA?.sessionId).toBe(deviceA?.sessionId);
+    expect(resumedB?.sessionId).toBe(deviceB?.sessionId);
+  });
+
   it('creates a session with the password auth method', async () => {
     const { userService } = await buildRoomService();
     const { user } = await registerAlice(userService);
