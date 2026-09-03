@@ -2,7 +2,7 @@ import type { MessageType, MessageView } from './message.types.js';
 
 export interface MessageServerToClientEvents {
   'message:new': (payload: MessageView & { clientTempId?: string | undefined }) => void;
-  'message:mark-read-done': (payload: { roomId: string; unreadCount: number }) => void;
+  'message:mark-read-done': (payload: { roomId: string; unreadCount: number; mentionCount: number }) => void;
   'message:read-receipt': (payload: { roomId: string; userId: string }) => void;
   'messages:list': (payload: { roomId: string; messages: MessageView[]; hasMore: boolean }) => void;
   'message:deleted': (payload: { messageId: string; roomId: string }) => void;

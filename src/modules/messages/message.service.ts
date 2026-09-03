@@ -13,6 +13,7 @@ export interface SendMessageInput {
   replyToMessageId?: string | undefined;
   participantIds?: string[] | undefined;
   viewingUserIds?: string[] | undefined;
+  mentionedUserIds?: string[] | undefined;
 }
 
 export class MessageService {
@@ -41,6 +42,7 @@ export class MessageService {
       readBy,
       playedBy: [],
       replyTo: input.replyToMessageId ? await this.buildReplySnapshot(input.replyToMessageId) : null,
+      mentionedUserIds: input.mentionedUserIds ?? [],
     };
 
     return this.repository.insert(message);
@@ -61,6 +63,7 @@ export class MessageService {
       readBy: [],
       playedBy: [],
       replyTo: null,
+      mentionedUserIds: [],
     };
 
     return this.repository.insert(message);
@@ -172,6 +175,16 @@ export class MessageService {
     ).length;
   }
 
+  countUnreadMentions(messages: MessageRecord[], userId: string): number {
+    return messages.filter(
+      (message) =>
+        message.senderId !== userId &&
+        !message.deletedForEveryone &&
+        !message.readBy.includes(userId) &&
+        message.mentionedUserIds.includes(userId),
+    ).length;
+  }
+
   async toView(message: MessageRecord): Promise<MessageView> {
     return {
       id: message.id,
@@ -187,6 +200,7 @@ export class MessageService {
       readBy: message.readBy,
       playedBy: message.playedBy,
       replyTo: message.replyTo,
+      mentionedUserIds: message.mentionedUserIds,
     };
   }
 
