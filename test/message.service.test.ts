@@ -84,6 +84,46 @@ describe('MessageService', () => {
     expect(view.deletedForEveryone).toBe(true);
   });
 
+  it('stores and returns file metadata for a file message', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const fileMeta = { name: 'relatorio.pdf', mimeType: 'application/pdf', size: 204800 };
+
+    const message = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: '/uploads/files/abc.pdf',
+      type: 'file',
+      fileMeta,
+    });
+    const view = await messageService.toView(message);
+
+    expect(view.type).toBe('file');
+    expect(view.fileMeta).toEqual(fileMeta);
+  });
+
+  it('hides fileMeta of a deleted-for-everyone file message in its view', async () => {
+    const { messageService, messageRepository, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const fileMeta = { name: 'relatorio.pdf', mimeType: 'application/pdf', size: 204800 };
+
+    const message = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: '/uploads/files/abc.pdf',
+      type: 'file',
+      fileMeta,
+    });
+    await messageRepository.update(message.id, { deletedForEveryone: true });
+    const deleted = await messageRepository.findById(message.id);
+    if (!deleted) {
+      throw new Error('message not found');
+    }
+
+    const view = await messageService.toView(deleted);
+    expect(view.fileMeta).toBeNull();
+  });
+
   it('lets the sender delete their own message, clearing content and flagging it', async () => {
     const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
@@ -132,8 +172,32 @@ describe('MessageService', () => {
       content: 'Oi Bob!',
       type: 'text',
       duration: null,
+      fileMeta: null,
       sender: { id: alice.id, nickname: 'Alice', avatar: 0 },
     });
+  });
+
+  it('includes fileMeta in the reply snapshot when replying to a file message', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const fileMeta = { name: 'video.mp4', mimeType: 'video/mp4', size: 102400 };
+
+    const original = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: '/uploads/files/video.mp4',
+      type: 'file',
+      fileMeta,
+    });
+    const reply = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: bob.id,
+      content: 'olha isso',
+      replyToMessageId: original.id,
+    });
+
+    expect(reply.replyTo?.fileMeta).toEqual(fileMeta);
   });
 
   it('leaves replyTo null when replying to a message id that does not exist', async () => {
