@@ -8,6 +8,7 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   TURSO_DATABASE_URL: z.string().optional(),
   TURSO_AUTH_TOKEN: z.string().optional(),
+  RECOVERY_FILE_SECRET: z.string().min(32),
 });
 
 const parsed = envSchema.safeParse(process.env);
