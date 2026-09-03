@@ -1,4 +1,4 @@
-import type { MessageType, MessageView } from './message.types.js';
+import type { MessageFileMeta, MessageType, MessageView } from './message.types.js';
 
 export interface MessageServerToClientEvents {
   'message:new': (payload: MessageView & { clientTempId?: string | undefined }) => void;
@@ -15,10 +15,11 @@ export interface MessageClientToServerEvents {
   'message:send': (payload: {
     roomId: string;
     content: string;
-    type?: Extract<MessageType, 'text' | 'image' | 'audio'>;
+    type?: Extract<MessageType, 'text' | 'image' | 'audio' | 'file'>;
     duration?: number;
     replyToMessageId?: string;
     clientTempId?: string | undefined;
+    fileMeta?: MessageFileMeta;
   }) => void;
   'message:mark-read': (payload: { roomId: string; messageIds?: string[] }) => void;
   'messages:get': (payload: { roomId: string; before?: string; limit?: number }) => void;

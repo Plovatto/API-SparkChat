@@ -2,18 +2,26 @@ import { randomUUID } from 'node:crypto';
 import type { UserService } from '../users/index.js';
 import { nextTimestamp } from './message.clock.js';
 import type { MessageRepository } from './message.repository.js';
-import type { MessageRecord, MessageReplySnapshot, MessageSender, MessageType, MessageView } from './message.types.js';
+import type {
+  MessageFileMeta,
+  MessageRecord,
+  MessageReplySnapshot,
+  MessageSender,
+  MessageType,
+  MessageView,
+} from './message.types.js';
 
 export interface SendMessageInput {
   roomId: string;
   senderId: string;
   content: string;
-  type?: Extract<MessageType, 'text' | 'image' | 'audio'> | undefined;
+  type?: Extract<MessageType, 'text' | 'image' | 'audio' | 'file'> | undefined;
   duration?: number | undefined;
   replyToMessageId?: string | undefined;
   participantIds?: string[] | undefined;
   viewingUserIds?: string[] | undefined;
   mentionedUserIds?: string[] | undefined;
+  fileMeta?: MessageFileMeta | null | undefined;
 }
 
 export class MessageService {
@@ -43,6 +51,7 @@ export class MessageService {
       playedBy: [],
       replyTo: input.replyToMessageId ? await this.buildReplySnapshot(input.replyToMessageId) : null,
       mentionedUserIds: input.mentionedUserIds ?? [],
+      fileMeta: input.fileMeta ?? null,
     };
 
     return this.repository.insert(message);
@@ -64,6 +73,7 @@ export class MessageService {
       playedBy: [],
       replyTo: null,
       mentionedUserIds: [],
+      fileMeta: null,
     };
 
     return this.repository.insert(message);
@@ -201,6 +211,7 @@ export class MessageService {
       playedBy: message.playedBy,
       replyTo: message.replyTo,
       mentionedUserIds: message.mentionedUserIds,
+      fileMeta: message.deletedForEveryone ? null : message.fileMeta,
     };
   }
 
@@ -232,6 +243,7 @@ export class MessageService {
       content: original.content,
       type: original.type,
       duration: original.duration,
+      fileMeta: original.fileMeta,
       sender: await this.resolveSender(original.senderId),
     };
   }
