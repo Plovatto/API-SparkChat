@@ -24,6 +24,7 @@ export interface RoomParticipant {
   nickname: string;
   avatar: number;
   status: UserStatus;
+  statusText: string | null;
   lastSeen: string;
   isAdmin: boolean;
 }

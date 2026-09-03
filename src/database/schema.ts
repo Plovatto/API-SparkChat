@@ -8,6 +8,7 @@ export const users = sqliteTable('users', {
   passwordHash: text('password_hash').notNull(),
   recoveryTokenHash: text('recovery_token_hash').notNull(),
   status: text('status').notNull().default('offline'),
+  statusText: text('status_text'),
   createdAt: text('created_at').notNull(),
   lastSeen: text('last_seen').notNull(),
   themeBaseTheme: text('theme_base_theme'),

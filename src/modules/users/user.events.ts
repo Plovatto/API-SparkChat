@@ -8,7 +8,7 @@ export interface UserServerToClientEvents {
     userId: string;
     user: { id: string; status: UserStatus; lastSeen: string };
   }) => void;
-  'user:profile-updated': (payload: { userId: string; nickname: string; avatar: number }) => void;
+  'user:profile-updated': (payload: { userId: string; nickname: string; avatar: number; statusText: string | null }) => void;
   'user:profile-updated-success': (payload: { user: PublicUser; recoveryFile: string | null }) => void;
   'user:password-changed': (payload: { recoveryFile: string }) => void;
   'user:recovery-file-regenerated': (payload: { recoveryFile: string }) => void;
@@ -23,6 +23,7 @@ export interface UserClientToServerEvents {
       | { mode: 'resume'; userId: string; sessionToken: string },
   ) => void;
   'user:update-profile': (payload: { nickname: string; avatar: number }) => void;
+  'user:update-status-text': (payload: { statusText: string }) => void;
   'user:update-theme': (payload: UserTheme) => void;
   'user:visibility': (payload: { visible: boolean }) => void;
   'user:change-password': (payload: { currentPassword?: string; newPassword: string }) => void;

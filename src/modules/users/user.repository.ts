@@ -31,6 +31,7 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
     recoveryTokenHash: row.recoveryTokenHash,
     socketId: socketIdsByUserId.get(row.id) ?? '',
     status: row.status as UserRecord['status'],
+    statusText: row.statusText ?? null,
     createdAt: row.createdAt,
     lastSeen: row.lastSeen,
     ...(theme ? { theme } : {}),

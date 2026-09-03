@@ -379,3 +379,33 @@ describe('UserService theme', () => {
     expect(updated).toBeNull();
   });
 });
+
+describe('UserService.updateStatusText', () => {
+  it('sets a trimmed status text', async () => {
+    const { userService } = await buildRoomService();
+    const { user } = await registerAlice(userService);
+
+    const updated = await userService.updateStatusText(user.id, '  no trampo  ');
+
+    expect(updated?.statusText).toBe('no trampo');
+    expect((await userService.getUser(user.id))?.statusText).toBe('no trampo');
+  });
+
+  it('clears the status text when given an empty or whitespace-only string', async () => {
+    const { userService } = await buildRoomService();
+    const { user } = await registerAlice(userService);
+    await userService.updateStatusText(user.id, 'no trampo');
+
+    const updated = await userService.updateStatusText(user.id, '   ');
+
+    expect(updated?.statusText).toBeNull();
+  });
+
+  it('returns null when updating the status text of an unknown user', async () => {
+    const { userService } = await buildRoomService();
+
+    const updated = await userService.updateStatusText('unknown-id', 'oi');
+
+    expect(updated).toBeNull();
+  });
+});

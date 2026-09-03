@@ -277,6 +277,7 @@ function toParticipant(user: UserRecord, isAdmin: boolean): RoomParticipant {
     nickname: user.nickname,
     avatar: user.avatar,
     status: user.status,
+    statusText: user.statusText,
     lastSeen: user.lastSeen,
     isAdmin,
   };
