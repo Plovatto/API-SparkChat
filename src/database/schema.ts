@@ -49,6 +49,7 @@ export const roomParticipants = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     isVisible: integer('is_visible', { mode: 'boolean' }).notNull().default(true),
+    isAdmin: integer('is_admin', { mode: 'boolean' }).notNull().default(false),
     blockedAt: text('blocked_at'),
     blockedByUserId: text('blocked_by_user_id'),
     deletedAt: text('deleted_at'),

@@ -31,8 +31,14 @@ const blockPayloadSchema = z.object({
   blockedUserId: z.string().trim().min(1),
 });
 
+const memberActionPayloadSchema = z.object({
+  roomId: z.string().trim().min(1),
+  userId: z.string().trim().min(1),
+});
+
 const roomIdPayloadJsonSchema = zodToJsonSchema(roomIdPayloadSchema);
 const blockPayloadJsonSchema = zodToJsonSchema(blockPayloadSchema);
+const memberActionPayloadJsonSchema = zodToJsonSchema(memberActionPayloadSchema);
 
 registerSocketEvent({
   event: 'room:create-private',
@@ -56,6 +62,8 @@ registerSocketEvent({ event: 'room:join', direction: 'client-to-server', module:
 registerSocketEvent({ event: 'room:delete', direction: 'client-to-server', module: 'rooms', payloadSchema: roomIdPayloadJsonSchema });
 registerSocketEvent({ event: 'rooms:get', direction: 'client-to-server', module: 'rooms' });
 registerSocketEvent({ event: 'group:leave', direction: 'client-to-server', module: 'rooms', payloadSchema: roomIdPayloadJsonSchema });
+registerSocketEvent({ event: 'group:remove-member', direction: 'client-to-server', module: 'rooms', payloadSchema: memberActionPayloadJsonSchema });
+registerSocketEvent({ event: 'group:promote-admin', direction: 'client-to-server', module: 'rooms', payloadSchema: memberActionPayloadJsonSchema });
 registerSocketEvent({ event: 'user:block', direction: 'client-to-server', module: 'rooms', payloadSchema: blockPayloadJsonSchema });
 registerSocketEvent({ event: 'user:unblock', direction: 'client-to-server', module: 'rooms', payloadSchema: blockPayloadJsonSchema });
 registerSocketEvent({ event: 'room:joined', direction: 'server-to-client', module: 'rooms' });
@@ -66,6 +74,7 @@ registerSocketEvent({ event: 'rooms:list', direction: 'server-to-client', module
 registerSocketEvent({ event: 'group:user-joined', direction: 'server-to-client', module: 'rooms' });
 registerSocketEvent({ event: 'group:left', direction: 'server-to-client', module: 'rooms' });
 registerSocketEvent({ event: 'group:user-left', direction: 'server-to-client', module: 'rooms' });
+registerSocketEvent({ event: 'group:participants-updated', direction: 'server-to-client', module: 'rooms' });
 registerSocketEvent({ event: 'user:blocked', direction: 'server-to-client', module: 'rooms' });
 registerSocketEvent({ event: 'user:unblocked', direction: 'server-to-client', module: 'rooms' });
 
@@ -121,6 +130,14 @@ export function registerRoomSocketHandlers(
 
   socket.on('group:leave', (payload) => {
     void handleLeaveGroup(socket, roomService, userService, messageService, payload);
+  });
+
+  socket.on('group:remove-member', (payload) => {
+    void handleRemoveMember(io, socket, roomService, userService, messageService, payload);
+  });
+
+  socket.on('group:promote-admin', (payload) => {
+    void handlePromoteAdmin(io, socket, roomService, userService, messageService, payload);
   });
 
   socket.on('user:block', (payload) => {
@@ -261,9 +278,10 @@ async function handleJoinByCode(
         io.to(room.id).emit('message:new', await messageService.toView(systemMessage));
 
         const participantRecords = await Promise.all(room.participants.map((id) => userService.getUser(id)));
+        const admins = new Set(room.admins);
         const participants = participantRecords
           .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
-          .map((participant) => roomService.toParticipantView(participant));
+          .map((participant) => roomService.toParticipantView(participant, admins.has(participant.id)));
 
         socket.to(room.id).emit('group:user-joined', { roomId: room.id, participants });
       }
@@ -334,9 +352,10 @@ async function handleLeaveGroup(
 
     if (updatedRoom && user) {
       const remainingRecords = await Promise.all(updatedRoom.participants.map((id) => userService.getUser(id)));
+      const remainingAdmins = new Set(updatedRoom.admins);
       const remaining = remainingRecords
         .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
-        .map((participant) => roomService.toParticipantView(participant));
+        .map((participant) => roomService.toParticipantView(participant, remainingAdmins.has(participant.id)));
 
       socket.to(roomId).emit('group:user-left', {
         roomId,
@@ -350,6 +369,105 @@ async function handleLeaveGroup(
     }
 
     await socket.leave(roomId);
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleRemoveMember(
+  io: AppServer,
+  socket: AppSocket,
+  roomService: RoomService,
+  userService: UserService,
+  messageService: MessageService,
+  payload: unknown,
+): Promise<void> {
+  const actingUserId = socket.data.userId;
+  if (!actingUserId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { roomId, userId: targetUserId } = memberActionPayloadSchema.parse(payload);
+    const [actingUser, targetUser] = await Promise.all([
+      userService.getUser(actingUserId),
+      userService.getUser(targetUserId),
+    ]);
+
+    const updatedRoom = await roomService.removeMember(roomId, actingUserId, targetUserId);
+    if (!updatedRoom || !actingUser || !targetUser) {
+      return;
+    }
+
+    const remainingRecords = await Promise.all(updatedRoom.participants.map((id) => userService.getUser(id)));
+    const remainingAdmins = new Set(updatedRoom.admins);
+    const remaining = remainingRecords
+      .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
+      .map((participant) => roomService.toParticipantView(participant, remainingAdmins.has(participant.id)));
+
+    io.to(roomId).emit('group:user-left', {
+      roomId,
+      userId: targetUserId,
+      userName: targetUser.nickname,
+      participants: remaining,
+    });
+
+    if (targetUser.socketId) {
+      const targetSocket = io.sockets.sockets.get(targetUser.socketId);
+      targetSocket?.emit('group:left', { roomId });
+      await targetSocket?.leave(roomId);
+    }
+
+    const systemMessage = await messageService.createSystemMessage(
+      roomId,
+      `${targetUser.nickname} foi removido do grupo por ${actingUser.nickname}`,
+    );
+    io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handlePromoteAdmin(
+  io: AppServer,
+  socket: AppSocket,
+  roomService: RoomService,
+  userService: UserService,
+  messageService: MessageService,
+  payload: unknown,
+): Promise<void> {
+  const actingUserId = socket.data.userId;
+  if (!actingUserId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { roomId, userId: targetUserId } = memberActionPayloadSchema.parse(payload);
+    const [actingUser, targetUser] = await Promise.all([
+      userService.getUser(actingUserId),
+      userService.getUser(targetUserId),
+    ]);
+
+    const updatedRoom = await roomService.promoteAdmin(roomId, actingUserId, targetUserId);
+    if (!updatedRoom || !actingUser || !targetUser) {
+      return;
+    }
+
+    const participantRecords = await Promise.all(updatedRoom.participants.map((id) => userService.getUser(id)));
+    const admins = new Set(updatedRoom.admins);
+    const participants = participantRecords
+      .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
+      .map((participant) => roomService.toParticipantView(participant, admins.has(participant.id)));
+
+    io.to(roomId).emit('group:participants-updated', { roomId, participants });
+
+    const systemMessage = await messageService.createSystemMessage(
+      roomId,
+      `${targetUser.nickname} foi promovido a administrador por ${actingUser.nickname}`,
+    );
+    io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }

@@ -35,7 +35,7 @@ describe('RoomService', () => {
     expect(second.id).toBe(first.id);
   });
 
-  it('creates a group room with a generated room code and the creator as participant', async () => {
+  it('creates a group room with a generated room code and the creator as participant and admin', async () => {
     const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
@@ -45,6 +45,7 @@ describe('RoomService', () => {
     expect(room.name).toBe('Amigos');
     expect(room.roomCode).toMatch(/^[A-Z0-9]{8}$/);
     expect(room.participants).toEqual([alice.id]);
+    expect(room.admins).toEqual([alice.id]);
     expect(room.createdBy).toBe(alice.id);
   });
 
@@ -131,6 +132,107 @@ describe('RoomService', () => {
 
     expect(updated?.participants).toEqual([alice.id]);
     expect(updated?.visibleTo).toEqual([alice.id]);
+  });
+
+  it('removes the leaving user from the admin list too', async () => {
+    const { roomService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    await roomService.joinByCode(group.roomCode ?? '', bob.id);
+    await roomService.promoteAdmin(group.id, alice.id, bob.id);
+
+    const updated = await roomService.leaveGroup(group.id, bob.id);
+
+    expect(updated?.admins).toEqual([alice.id]);
+  });
+
+  it('lets an admin promote another participant to admin', async () => {
+    const { roomService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    await roomService.joinByCode(group.roomCode ?? '', bob.id);
+
+    const updated = await roomService.promoteAdmin(group.id, alice.id, bob.id);
+
+    expect(updated?.admins.sort()).toEqual([alice.id, bob.id].sort());
+  });
+
+  it('rejects promoting an admin when the acting user is not one', async () => {
+    const { roomService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const carol = await createUser(userService, 'Carol');
+    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    await roomService.joinByCode(group.roomCode ?? '', bob.id);
+    await roomService.joinByCode(group.roomCode ?? '', carol.id);
+
+    await expect(roomService.promoteAdmin(group.id, bob.id, carol.id)).rejects.toThrow(
+      'Apenas administradores podem promover outros membros.',
+    );
+  });
+
+  it('rejects promoting someone who is not a participant', async () => {
+    const { roomService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const outsider = await createUser(userService, 'Outsider');
+    const group = await roomService.createGroupRoom('Amigos', alice.id);
+
+    await expect(roomService.promoteAdmin(group.id, alice.id, outsider.id)).rejects.toThrow(
+      'Usuário não faz parte do grupo.',
+    );
+  });
+
+  it('lets an admin remove a member from the group', async () => {
+    const { roomService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    await roomService.joinByCode(group.roomCode ?? '', bob.id);
+
+    const updated = await roomService.removeMember(group.id, alice.id, bob.id);
+
+    expect(updated?.participants).toEqual([alice.id]);
+    expect(updated?.visibleTo).toEqual([alice.id]);
+    expect(updated?.admins).toEqual([alice.id]);
+  });
+
+  it('rejects removing a member when the acting user is not an admin', async () => {
+    const { roomService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const carol = await createUser(userService, 'Carol');
+    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    await roomService.joinByCode(group.roomCode ?? '', bob.id);
+    await roomService.joinByCode(group.roomCode ?? '', carol.id);
+
+    await expect(roomService.removeMember(group.id, bob.id, carol.id)).rejects.toThrow(
+      'Apenas administradores podem remover membros.',
+    );
+  });
+
+  it('rejects an admin trying to remove themselves', async () => {
+    const { roomService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const group = await roomService.createGroupRoom('Amigos', alice.id);
+
+    await expect(roomService.removeMember(group.id, alice.id, alice.id)).rejects.toThrow(
+      'Use a opção de sair do grupo para se remover.',
+    );
+  });
+
+  it('exposes isAdmin per participant in the room summary', async () => {
+    const { roomService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const { room: groupWithBob } = await roomService.joinByCode(group.roomCode ?? '', bob.id);
+
+    const summary = await roomService.buildSummary(groupWithBob, alice.id);
+
+    expect(summary.participants.find((p) => p.id === alice.id)?.isAdmin).toBe(true);
+    expect(summary.participants.find((p) => p.id === bob.id)?.isAdmin).toBe(false);
   });
 
   it('blocks and unblocks a user within a room', async () => {
