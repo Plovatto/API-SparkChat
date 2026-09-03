@@ -5,6 +5,7 @@ export const NICKNAME_MIN_LENGTH = 2;
 export const NICKNAME_MAX_LENGTH = 20;
 export const NICKNAME_MIN_LETTERS = 2;
 export const PASSWORD_MIN_LENGTH = 12;
+export const STATUS_TEXT_MAX_LENGTH = 30;
 
 const NICKNAME_CHARSET_PATTERN = /^[\p{L}\p{N}]+$/u;
 const NICKNAME_LETTER_PATTERN = /\p{L}/gu;
@@ -47,6 +48,7 @@ export const publicUserSchema = z
     nickname: z.string().openapi({ example: 'Ada' }),
     avatar: z.number().int().openapi({ example: 0 }),
     status: userStatusSchema,
+    statusText: z.string().nullable().openapi({ example: 'no trampo' }),
     theme: userThemeSchema,
   })
   .openapi('PublicUser');

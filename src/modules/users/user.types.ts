@@ -9,6 +9,7 @@ export interface UserRecord {
   recoveryTokenHash: string;
   socketId: string;
   status: UserStatus;
+  statusText: string | null;
   createdAt: string;
   lastSeen: string;
   theme?: UserTheme;
