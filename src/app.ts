@@ -1,6 +1,8 @@
 import path from 'node:path';
 import cors from 'cors';
 import express, { type Express } from 'express';
+import { rateLimit } from 'express-rate-limit';
+import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 import swaggerUi from 'swagger-ui-express';
 import { z } from 'zod';
@@ -24,6 +26,15 @@ const healthResponseSchema = z
 
 const INLINE_SAFE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.mov', '.avi']);
 
+const apiRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
+  message: { message: 'Muitas requisições em pouco tempo. Aguarde e tente novamente.' },
+});
+
 registry.registerPath({
   method: 'get',
   path: '/health',
@@ -40,9 +51,34 @@ registry.registerPath({
 export function createApp(deps: ApiRouterDeps): Express {
   const app = express();
 
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:'],
+          connectSrc: ["'self'"],
+          objectSrc: ["'none'"],
+          frameAncestors: ["'none'"],
+        },
+      },
+    }),
+  );
   app.use(cors({ origin: env.FRONTEND_URL, credentials: true }));
   app.use(express.json());
-  app.use(pinoHttp({ logger }));
+  app.use(
+    pinoHttp({
+      logger,
+      redact: {
+        paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
+        censor: '[redacted]',
+      },
+    }),
+  );
+  app.use('/api', apiRateLimiter);
 
   app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', uptime: process.uptime() });
@@ -59,7 +95,14 @@ export function createApp(deps: ApiRouterDeps): Express {
       },
     }),
   );
-  app.use(uploadsUrlPrefix, express.static(uploadsDir));
+  app.use(
+    uploadsUrlPrefix,
+    express.static(uploadsDir, {
+      setHeaders: (res) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+      },
+    }),
+  );
   app.use('/api', createApiRouter(deps));
 
   const openApiDocument = generateOpenApiDocument();
