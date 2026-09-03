@@ -3,13 +3,16 @@ import { afterAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { uploadsDir } from '../src/config/paths.js';
-import { UserRepository, UserService } from '../src/modules/users/index.js';
+import { LoginRateLimiter, UserRepository, UserService, UserSessionRepository } from '../src/modules/users/index.js';
 import { createTestDb } from './support/create-test-db.js';
+import { TEST_RECOVERY_FILE_SECRET } from './support/test-constants.js';
 
 const db = await createTestDb();
 const userRepository = new UserRepository(db);
-const userService = new UserService(userRepository);
-const app = createApp({ userService });
+const userSessionRepository = new UserSessionRepository(db);
+const userService = new UserService(userRepository, userSessionRepository, TEST_RECOVERY_FILE_SECRET);
+const loginRateLimiter = new LoginRateLimiter();
+const app = createApp({ userService, loginRateLimiter });
 
 afterAll(async () => {
   await rm(uploadsDir, { recursive: true, force: true });

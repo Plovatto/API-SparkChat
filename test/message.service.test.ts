@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { buildRoomService } from './support/build-room-service.js';
 
 async function createUser(userService: Awaited<ReturnType<typeof buildRoomService>>['userService'], nickname: string) {
-  return userService.joinOrCreate({ nickname, avatar: 0, socketId: `socket-${nickname}` });
+  const { user } = await userService.registerAccount({
+    nickname,
+    avatar: 0,
+    password: 'correct-horse-battery-staple',
+    socketId: `socket-${nickname}`,
+  });
+  return user;
 }
 
 describe('MessageService', () => {
