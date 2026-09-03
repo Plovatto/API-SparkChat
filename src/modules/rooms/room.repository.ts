@@ -34,6 +34,7 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
     name: room.name ?? undefined,
     roomCode: room.roomCode ?? undefined,
     participants: participants.map((participant) => participant.userId),
+    admins: participants.filter((participant) => participant.isAdmin).map((participant) => participant.userId),
     createdBy: room.createdBy ?? undefined,
     createdAt: room.createdAt,
     visibleTo: participants.filter((participant) => participant.isVisible).map((participant) => participant.userId),
@@ -92,10 +93,12 @@ export class RoomRepository {
     }
 
     const merged: RoomRecord = { ...current, ...patch };
-    const { id: _id, participants, visibleTo, blockedBy, deletedAt, reactivatedAt, joinedAt, ...columns } = patch;
+    const { id: _id, participants, admins, visibleTo, blockedBy, deletedAt, reactivatedAt, joinedAt, ...columns } =
+      patch;
 
     const touchesParticipants =
       participants !== undefined ||
+      admins !== undefined ||
       visibleTo !== undefined ||
       blockedBy !== undefined ||
       deletedAt !== undefined ||
@@ -195,6 +198,7 @@ export class RoomRepository {
         roomId: room.id,
         userId,
         isVisible: room.visibleTo.includes(userId),
+        isAdmin: room.admins.includes(userId),
         blockedByUserId,
         blockedAt,
         deletedAt: room.deletedAt[userId] ?? null,

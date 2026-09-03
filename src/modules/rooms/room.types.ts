@@ -9,6 +9,7 @@ export interface RoomRecord {
   name?: string | undefined;
   roomCode?: string | undefined;
   participants: string[];
+  admins: string[];
   createdBy?: string | undefined;
   createdAt: string;
   visibleTo: string[];
@@ -24,6 +25,7 @@ export interface RoomParticipant {
   avatar: number;
   status: UserStatus;
   lastSeen: string;
+  isAdmin: boolean;
 }
 
 export interface RoomSummary {
