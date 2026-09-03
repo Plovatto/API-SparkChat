@@ -30,6 +30,7 @@ export interface MessageRecord {
   readBy: string[];
   playedBy: string[];
   replyTo: MessageReplySnapshot | null;
+  mentionedUserIds: string[];
 }
 
 export interface MessageView {
@@ -46,4 +47,5 @@ export interface MessageView {
   readBy: string[];
   playedBy: string[];
   replyTo: MessageReplySnapshot | null;
+  mentionedUserIds: string[];
 }

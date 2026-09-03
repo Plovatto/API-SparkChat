@@ -43,6 +43,13 @@
       "when": 1788556800000,
       "tag": "0005_user_status_text",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788643200000,
+      "tag": "0006_message_mentions",
+      "breakpoints": true
     }
   ]
 }

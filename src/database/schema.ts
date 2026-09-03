@@ -79,6 +79,7 @@ export const messages = sqliteTable(
     readBy: text('read_by', { mode: 'json' }).$type<string[]>().notNull(),
     playedBy: text('played_by', { mode: 'json' }).$type<string[]>().notNull(),
     replyToSnapshot: text('reply_to_snapshot', { mode: 'json' }),
+    mentionedUserIds: text('mentioned_user_ids', { mode: 'json' }).$type<string[]>(),
   },
   (table) => [index('messages_room_id_timestamp_idx').on(table.roomId, table.timestamp)],
 );
