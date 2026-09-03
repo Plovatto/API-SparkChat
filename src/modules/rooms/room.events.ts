@@ -27,7 +27,7 @@ export interface RoomServerToClientEvents {
 }
 
 export interface RoomClientToServerEvents {
-  'room:create-private': (payload: { targetChatCode: string }) => void;
+  'room:create-private': (payload: { targetNickname: string }) => void;
   'room:create-group': (payload: { roomName: string }) => void;
   'room:join-by-code': (payload: { roomCode: string }) => void;
   'room:join': (payload: { roomId: string }) => void;

@@ -225,7 +225,6 @@ function toParticipant(user: UserRecord): RoomParticipant {
     nickname: user.nickname,
     avatar: user.avatar,
     status: user.status,
-    chatCode: user.chatCode,
     lastSeen: user.lastSeen,
   };
 }

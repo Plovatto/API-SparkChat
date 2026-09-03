@@ -23,7 +23,6 @@ export interface RoomParticipant {
   nickname: string;
   avatar: number;
   status: UserStatus;
-  chatCode: string;
   lastSeen: string;
 }
 
