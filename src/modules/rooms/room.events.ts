@@ -22,6 +22,7 @@ export interface RoomServerToClientEvents {
     userName: string;
     participants: RoomParticipant[];
   }) => void;
+  'group:participants-updated': (payload: { roomId: string; participants: RoomParticipant[] }) => void;
   'user:blocked': (payload: BlockStatusPayload) => void;
   'user:unblocked': (payload: BlockStatusPayload) => void;
 }
@@ -34,6 +35,8 @@ export interface RoomClientToServerEvents {
   'room:delete': (payload: { roomId: string }) => void;
   'rooms:get': () => void;
   'group:leave': (payload: { roomId: string }) => void;
+  'group:remove-member': (payload: { roomId: string; userId: string }) => void;
+  'group:promote-admin': (payload: { roomId: string; userId: string }) => void;
   'user:block': (payload: { roomId: string; blockedUserId: string }) => void;
   'user:unblock': (payload: { roomId: string; blockedUserId: string }) => void;
 }
