@@ -49,6 +49,26 @@ describe('verifyFileSignature', () => {
     expect(await verifyFileSignature(filePath, 'video/mp4')).toBe(true);
   });
 
+  it('accepts a real PNG signature', async () => {
+    const filePath = await writeTempFile([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(await verifyFileSignature(filePath, 'image/png')).toBe(true);
+  });
+
+  it('rejects a file with the wrong bytes claiming to be a PNG', async () => {
+    const filePath = await writeTempFile(Buffer.from('<svg onload=alert(1)>'));
+    expect(await verifyFileSignature(filePath, 'image/png')).toBe(false);
+  });
+
+  it('accepts a real WEBP signature', async () => {
+    const filePath = await writeTempFile([0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]);
+    expect(await verifyFileSignature(filePath, 'image/webp')).toBe(true);
+  });
+
+  it('accepts a real OGG audio signature', async () => {
+    const filePath = await writeTempFile([0x4f, 0x67, 0x67, 0x53]);
+    expect(await verifyFileSignature(filePath, 'audio/ogg')).toBe(true);
+  });
+
   it('rejects a mimetype with no known signature', async () => {
     const filePath = await writeTempFile([0x00, 0x00, 0x00, 0x00]);
     expect(await verifyFileSignature(filePath, 'application/x-msdownload')).toBe(false);

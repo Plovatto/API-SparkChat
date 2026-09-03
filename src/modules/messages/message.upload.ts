@@ -7,8 +7,8 @@ import { audioUploadDir, filesUploadDir, imagesUploadDir } from '../../config/pa
 function createMediaUpload(
   destination: string,
   allowedMimeTypes: Set<string>,
+  allowedExtensions: Set<string>,
   maxFileSizeBytes: number,
-  blockedExtensions?: Set<string>,
 ) {
   const storage = multer.diskStorage({
     destination(_req, _file, callback) {
@@ -30,7 +30,7 @@ function createMediaUpload(
       }
 
       const extension = path.extname(file.originalname).toLowerCase();
-      if (blockedExtensions?.has(extension)) {
+      if (!allowedExtensions.has(extension)) {
         callback(new multer.MulterError('LIMIT_UNEXPECTED_FILE', file.fieldname));
         return;
       }
@@ -41,6 +41,8 @@ function createMediaUpload(
 }
 
 const allowedImageMimeTypes = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const allowedImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
+
 const allowedAudioMimeTypes = new Set([
   'audio/webm',
   'audio/ogg',
@@ -50,6 +52,7 @@ const allowedAudioMimeTypes = new Set([
   'audio/wav',
   'audio/x-wav',
 ]);
+const allowedAudioExtensions = new Set(['.webm', '.ogg', '.oga', '.mp4', '.m4a', '.aac', '.mp3', '.wav']);
 
 const allowedFileMimeTypes = new Set([
   'application/pdf',
@@ -69,33 +72,27 @@ const allowedFileMimeTypes = new Set([
   'text/csv',
 ]);
 
-const blockedFileExtensions = new Set([
-  '.exe',
-  '.bat',
-  '.cmd',
-  '.com',
-  '.scr',
-  '.msi',
-  '.dll',
-  '.app',
-  '.sh',
-  '.ps1',
-  '.vbs',
-  '.vbe',
-  '.js',
-  '.jse',
-  '.wsf',
-  '.jar',
-  '.apk',
-  '.html',
-  '.htm',
-  '.svg',
+const allowedFileExtensions = new Set([
+  '.pdf',
+  '.mp4',
+  '.webm',
+  '.mov',
+  '.avi',
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx',
+  '.zip',
+  '.txt',
+  '.csv',
 ]);
 
 const maxImageSizeBytes = 5 * 1024 * 1024;
 const maxAudioSizeBytes = 8 * 1024 * 1024;
 const maxFileSizeBytes = 50 * 1024 * 1024;
 
-export const imageUpload = createMediaUpload(imagesUploadDir, allowedImageMimeTypes, maxImageSizeBytes);
-export const audioUpload = createMediaUpload(audioUploadDir, allowedAudioMimeTypes, maxAudioSizeBytes);
-export const fileUpload = createMediaUpload(filesUploadDir, allowedFileMimeTypes, maxFileSizeBytes, blockedFileExtensions);
+export const imageUpload = createMediaUpload(imagesUploadDir, allowedImageMimeTypes, allowedImageExtensions, maxImageSizeBytes);
+export const audioUpload = createMediaUpload(audioUploadDir, allowedAudioMimeTypes, allowedAudioExtensions, maxAudioSizeBytes);
+export const fileUpload = createMediaUpload(filesUploadDir, allowedFileMimeTypes, allowedFileExtensions, maxFileSizeBytes);
