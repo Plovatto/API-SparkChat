@@ -82,7 +82,7 @@ export class RoomService {
 
   async deleteForUser(roomId: string, userId: string): Promise<RoomRecord | null> {
     const room = await this.repository.findById(roomId);
-    if (!room) {
+    if (!room || !room.participants.includes(userId)) {
       return null;
     }
 
@@ -94,7 +94,7 @@ export class RoomService {
 
   async leaveGroup(roomId: string, userId: string): Promise<RoomRecord | null> {
     const room = await this.repository.findById(roomId);
-    if (!room) {
+    if (!room || !room.participants.includes(userId)) {
       return null;
     }
 
@@ -157,13 +157,21 @@ export class RoomService {
       return null;
     }
 
+    if (userId === blockedUserId || !room.participants.includes(userId) || !room.participants.includes(blockedUserId)) {
+      return null;
+    }
+
     const blockedBy = { ...room.blockedBy, [blockedUserId]: userId };
     return this.repository.update(roomId, { blockedBy });
   }
 
-  async unblockUser(roomId: string, blockedUserId: string): Promise<RoomRecord | null> {
+  async unblockUser(roomId: string, userId: string, blockedUserId: string): Promise<RoomRecord | null> {
     const room = await this.repository.findById(roomId);
     if (!room) {
+      return null;
+    }
+
+    if (!room.participants.includes(userId) || room.blockedBy[blockedUserId] !== userId) {
       return null;
     }
 

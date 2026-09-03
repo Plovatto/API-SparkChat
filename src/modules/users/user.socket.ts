@@ -5,6 +5,7 @@ import type { AppServer, AppSocket } from '../../sockets/events.js';
 import type { MessageService } from '../messages/index.js';
 import type { RoomService } from '../rooms/index.js';
 import { describeDevice } from './user.device.js';
+import type { LoginRateLimiter } from './user.login-rate-limiter.js';
 import {
   NICKNAME_MAX_LENGTH,
   NICKNAME_MIN_LENGTH,
@@ -119,9 +120,10 @@ export function registerUserSocketHandlers(
   userService: UserService,
   roomService: RoomService,
   messageService: MessageService,
+  loginRateLimiter: LoginRateLimiter,
 ): void {
   socket.on('user:join', (payload) => {
-    void handleJoin(io, socket, userService, roomService, messageService, payload);
+    void handleJoin(io, socket, userService, roomService, messageService, loginRateLimiter, payload);
   });
 
   socket.on('user:update-profile', (payload) => {
@@ -167,12 +169,20 @@ async function handleJoin(
   userService: UserService,
   roomService: RoomService,
   messageService: MessageService,
+  loginRateLimiter: LoginRateLimiter,
   payload: unknown,
 ): Promise<void> {
   try {
     const input = joinPayloadSchema.parse(payload);
 
     if (input.mode === 'register') {
+      const ip = socket.handshake.address;
+      if (loginRateLimiter.isBlockedForRegistration(ip)) {
+        socket.emit('error', { message: 'Muitas contas criadas a partir deste endereço. Tente novamente mais tarde.' });
+        return;
+      }
+      loginRateLimiter.registerAttemptForRegistration(ip);
+
       const { user, sessionId, sessionToken, recoveryFile } = await userService.registerAccount({
         nickname: input.nickname,
         avatar: input.avatar,
