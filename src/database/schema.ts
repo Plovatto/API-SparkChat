@@ -3,15 +3,32 @@ import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlit
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
   nickname: text('nickname').notNull(),
+  nicknameNormalized: text('nickname_normalized').notNull().unique(),
   avatar: integer('avatar').notNull(),
-  loginCode: text('login_code').notNull().unique(),
-  chatCode: text('chat_code').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  recoveryTokenHash: text('recovery_token_hash').notNull(),
   status: text('status').notNull().default('offline'),
   createdAt: text('created_at').notNull(),
   lastSeen: text('last_seen').notNull(),
   themeBaseTheme: text('theme_base_theme'),
   themeColorTheme: text('theme_color_theme'),
 });
+
+export const sessions = sqliteTable(
+  'sessions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull().unique(),
+    authMethod: text('auth_method').notNull(),
+    userAgent: text('user_agent').notNull(),
+    createdAt: text('created_at').notNull(),
+    lastUsedAt: text('last_used_at').notNull(),
+  },
+  (table) => [index('sessions_user_id_idx').on(table.userId)],
+);
 
 export const rooms = sqliteTable('rooms', {
   id: text('id').primaryKey(),

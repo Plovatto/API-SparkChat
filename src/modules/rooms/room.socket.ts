@@ -7,12 +7,11 @@ import type { UserService } from '../users/index.js';
 import type { RoomService } from './room.service.js';
 import type { RoomRecord } from './room.types.js';
 
-const CHAT_CODE_PATTERN = /^[A-Z0-9]{6}$/;
 const ROOM_CODE_MIN_LENGTH = 4;
 const INITIAL_MESSAGES_LIMIT = 20;
 
 const createPrivateRoomPayloadSchema = z.object({
-  targetChatCode: z.string().trim().min(1),
+  targetNickname: z.string().trim().min(1),
 });
 
 const createGroupRoomPayloadSchema = z.object({
@@ -148,17 +147,16 @@ async function handleCreatePrivateRoom(
   }
 
   try {
-    const { targetChatCode } = createPrivateRoomPayloadSchema.parse(payload);
-    const normalizedCode = targetChatCode.toUpperCase().trim();
+    const { targetNickname } = createPrivateRoomPayloadSchema.parse(payload);
 
-    if (!CHAT_CODE_PATTERN.test(normalizedCode)) {
-      socket.emit('error', { message: 'Formato de código inválido.' });
+    const targetUser = await userService.getUserByNickname(targetNickname);
+    if (!targetUser) {
+      socket.emit('error', { message: 'Usuário não encontrado.' });
       return;
     }
 
-    const targetUser = await userService.getUserByChatCode(normalizedCode);
-    if (!targetUser) {
-      socket.emit('error', { message: 'Usuário não encontrado.' });
+    if (targetUser.id === userId) {
+      socket.emit('error', { message: 'Você não pode iniciar uma conversa consigo mesmo.' });
       return;
     }
 

@@ -25,9 +25,10 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
   const record: UserRecord = {
     id: row.id,
     nickname: row.nickname,
+    nicknameNormalized: row.nicknameNormalized,
     avatar: row.avatar,
-    chatCode: row.chatCode,
-    loginCode: row.loginCode,
+    passwordHash: row.passwordHash,
+    recoveryTokenHash: row.recoveryTokenHash,
     socketId: socketIdsByUserId.get(row.id) ?? '',
     status: row.status as UserRecord['status'],
     createdAt: row.createdAt,
@@ -37,12 +38,6 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
 
   cacheProfile(record);
   return record;
-}
-
-function isSamePersistedUser(a: UserRecord, b: UserRecord): boolean {
-  const { socketId: _a, ...restA } = a;
-  const { socketId: _b, ...restB } = b;
-  return JSON.stringify(restA) === JSON.stringify(restB);
 }
 
 export class UserRepository {
@@ -65,9 +60,10 @@ export class UserRepository {
     await this.db.insert(users).values({
       id: user.id,
       nickname: user.nickname,
+      nicknameNormalized: user.nicknameNormalized,
       avatar: user.avatar,
-      loginCode: user.loginCode,
-      chatCode: user.chatCode,
+      passwordHash: user.passwordHash,
+      recoveryTokenHash: user.recoveryTokenHash,
       status: user.status,
       createdAt: user.createdAt,
       lastSeen: user.lastSeen,
@@ -107,26 +103,8 @@ export class UserRepository {
     return updated;
   }
 
-  async replaceAll(items: UserRecord[]): Promise<void> {
-    const current = await this.findAll();
-    const currentById = new Map(current.map((user) => [user.id, user]));
-
-    const changed = items.filter((item) => {
-      const existing = currentById.get(item.id);
-      return !(existing && isSamePersistedUser(existing, item));
-    });
-
-    await Promise.all(changed.map((item) => this.update(item.id, item)));
-  }
-
-  async findByLoginCode(loginCode: string): Promise<UserRecord | null> {
-    const [row] = await this.db.select().from(users).where(eq(users.loginCode, loginCode));
-    return row ? toRecord(row) : null;
-  }
-
-  async findByChatCode(chatCode: string): Promise<UserRecord | null> {
-    const normalized = chatCode.toUpperCase().trim();
-    const [row] = await this.db.select().from(users).where(eq(users.chatCode, normalized));
+  async findByNickname(nicknameNormalized: string): Promise<UserRecord | null> {
+    const [row] = await this.db.select().from(users).where(eq(users.nicknameNormalized, nicknameNormalized));
     return row ? toRecord(row) : null;
   }
 

@@ -13,7 +13,7 @@ import {
   TypingService,
 } from './modules/messages/index.js';
 import { RoomRepository, RoomService } from './modules/rooms/index.js';
-import { UserRepository, UserService } from './modules/users/index.js';
+import { LoginRateLimiter, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import type {
   ClientToServerEvents,
@@ -25,8 +25,9 @@ import type {
 await runMigrations(db);
 
 const userRepository = new UserRepository(db);
-const userService = new UserService(userRepository);
-await userService.migrateLegacyCodes();
+const userSessionRepository = new UserSessionRepository(db);
+const userService = new UserService(userRepository, userSessionRepository, env.RECOVERY_FILE_SECRET);
+const loginRateLimiter = new LoginRateLimiter();
 
 const messageRepository = new MessageRepository(db);
 const messageService = new MessageService(messageRepository, userService);
@@ -38,7 +39,7 @@ const typingService = new TypingService();
 const recordingService = new RecordingService();
 const presenceService = new RoomPresenceService();
 
-const app = createApp({ userService });
+const app = createApp({ userService, loginRateLimiter });
 const httpServer = createServer(app);
 
 const io = new Server<
