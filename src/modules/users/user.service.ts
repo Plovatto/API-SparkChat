@@ -98,6 +98,7 @@ export class UserService {
       recoveryTokenHash: hashToken(recoveryToken),
       socketId: input.socketId,
       status: 'online',
+      statusText: null,
       createdAt: now,
       lastSeen: now,
     };
@@ -285,6 +286,11 @@ export class UserService {
     return this.repository.update(userId, { theme });
   }
 
+  updateStatusText(userId: string, statusText: string): Promise<UserRecord | null> {
+    const trimmed = statusText.trim();
+    return this.repository.update(userId, { statusText: trimmed.length > 0 ? trimmed : null });
+  }
+
   async listSessions(userId: string): Promise<SessionRecord[]> {
     const allSessions = await this.sessions.listByUser(userId);
     const cutoff = Date.now() - SESSION_TTL_MS;
@@ -302,6 +308,7 @@ export class UserService {
       nickname: user.nickname,
       avatar: user.avatar,
       status: user.status,
+      statusText: user.statusText,
       theme: user.theme ?? DEFAULT_THEME,
     };
   }

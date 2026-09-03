@@ -5,7 +5,13 @@ import type { AppServer, AppSocket } from '../../sockets/events.js';
 import type { MessageService } from '../messages/index.js';
 import type { RoomService } from '../rooms/index.js';
 import { describeDevice } from './user.device.js';
-import { NICKNAME_MAX_LENGTH, NICKNAME_MIN_LENGTH, PASSWORD_MIN_LENGTH, userThemeSchema } from './user.model.js';
+import {
+  NICKNAME_MAX_LENGTH,
+  NICKNAME_MIN_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  STATUS_TEXT_MAX_LENGTH,
+  userThemeSchema,
+} from './user.model.js';
 import type { UserService } from './user.service.js';
 
 const joinPayloadSchema = z.discriminatedUnion('mode', [
@@ -25,6 +31,10 @@ const joinPayloadSchema = z.discriminatedUnion('mode', [
 const updateProfilePayloadSchema = z.object({
   nickname: z.string().trim().min(NICKNAME_MIN_LENGTH).max(NICKNAME_MAX_LENGTH),
   avatar: z.number().int().min(0),
+});
+
+const updateStatusTextPayloadSchema = z.object({
+  statusText: z.string().max(STATUS_TEXT_MAX_LENGTH),
 });
 
 const visibilityPayloadSchema = z.object({
@@ -51,6 +61,12 @@ registerSocketEvent({
   direction: 'client-to-server',
   module: 'users',
   payloadSchema: zodToJsonSchema(updateProfilePayloadSchema),
+});
+registerSocketEvent({
+  event: 'user:update-status-text',
+  direction: 'client-to-server',
+  module: 'users',
+  payloadSchema: zodToJsonSchema(updateStatusTextPayloadSchema),
 });
 registerSocketEvent({
   event: 'user:update-theme',
@@ -110,6 +126,10 @@ export function registerUserSocketHandlers(
 
   socket.on('user:update-profile', (payload) => {
     void handleUpdateProfile(io, socket, userService, payload);
+  });
+
+  socket.on('user:update-status-text', (payload) => {
+    void handleUpdateStatusText(io, socket, userService, payload);
   });
 
   socket.on('user:update-theme', (payload) => {
@@ -231,10 +251,47 @@ async function handleUpdateProfile(
       return;
     }
 
-    io.emit('user:profile-updated', { userId: result.user.id, nickname: result.user.nickname, avatar: result.user.avatar });
+    io.emit('user:profile-updated', {
+      userId: result.user.id,
+      nickname: result.user.nickname,
+      avatar: result.user.avatar,
+      statusText: result.user.statusText,
+    });
     socket.emit('user:profile-updated-success', {
       user: userService.toPublicUser(result.user),
       recoveryFile: result.recoveryFile ? result.recoveryFile.toString('base64') : null,
+    });
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleUpdateStatusText(
+  io: AppServer,
+  socket: AppSocket,
+  userService: UserService,
+  payload: unknown,
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { statusText } = updateStatusTextPayloadSchema.parse(payload);
+    const updated = await userService.updateStatusText(userId, statusText);
+
+    if (!updated) {
+      socket.emit('error', { message: 'Usuário não encontrado.' });
+      return;
+    }
+
+    io.emit('user:profile-updated', {
+      userId: updated.id,
+      nickname: updated.nickname,
+      avatar: updated.avatar,
+      statusText: updated.statusText,
     });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
