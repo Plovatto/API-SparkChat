@@ -1,6 +1,12 @@
 export type MessageStatus = 'sent' | 'delivered' | 'read';
 
-export type MessageType = 'text' | 'system' | 'image' | 'audio';
+export type MessageType = 'text' | 'system' | 'image' | 'audio' | 'file';
+
+export interface MessageFileMeta {
+  name: string;
+  mimeType: string;
+  size: number;
+}
 
 export interface MessageSender {
   id: string;
@@ -13,6 +19,7 @@ export interface MessageReplySnapshot {
   content: string;
   type: MessageType;
   duration: number | null;
+  fileMeta: MessageFileMeta | null;
   sender: MessageSender;
 }
 
@@ -31,6 +38,7 @@ export interface MessageRecord {
   playedBy: string[];
   replyTo: MessageReplySnapshot | null;
   mentionedUserIds: string[];
+  fileMeta: MessageFileMeta | null;
 }
 
 export interface MessageView {
@@ -48,4 +56,5 @@ export interface MessageView {
   playedBy: string[];
   replyTo: MessageReplySnapshot | null;
   mentionedUserIds: string[];
+  fileMeta: MessageFileMeta | null;
 }

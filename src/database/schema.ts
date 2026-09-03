@@ -80,6 +80,7 @@ export const messages = sqliteTable(
     playedBy: text('played_by', { mode: 'json' }).$type<string[]>().notNull(),
     replyToSnapshot: text('reply_to_snapshot', { mode: 'json' }),
     mentionedUserIds: text('mentioned_user_ids', { mode: 'json' }).$type<string[]>(),
+    fileMeta: text('file_meta', { mode: 'json' }).$type<{ name: string; mimeType: string; size: number }>(),
   },
   (table) => [index('messages_room_id_timestamp_idx').on(table.roomId, table.timestamp)],
 );
