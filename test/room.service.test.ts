@@ -262,8 +262,43 @@ describe('RoomService', () => {
     const blocked = await roomService.blockUser(room.id, alice.id, bob.id);
     expect(blocked?.blockedBy[bob.id]).toBe(alice.id);
 
-    const unblocked = await roomService.unblockUser(room.id, bob.id);
+    const unblocked = await roomService.unblockUser(room.id, alice.id, bob.id);
     expect(unblocked?.blockedBy[bob.id]).toBeUndefined();
+  });
+
+  it('rejects blocking when the acting user is not a room participant', async () => {
+    const { roomService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const outsider = await createUser(userService, 'Outsider');
+    const room = await roomService.createPrivateRoom(alice.id, bob.id);
+
+    const result = await roomService.blockUser(room.id, outsider.id, bob.id);
+    expect(result).toBeNull();
+  });
+
+  it('rejects unblocking when the acting user is not the one who blocked', async () => {
+    const { roomService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const room = await roomService.createPrivateRoom(alice.id, bob.id);
+
+    await roomService.blockUser(room.id, alice.id, bob.id);
+    const result = await roomService.unblockUser(room.id, bob.id, bob.id);
+
+    expect(result).toBeNull();
+  });
+
+  it('ignores leaveGroup and deleteForUser for a user who is not a participant', async () => {
+    const { roomService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const outsider = await createUser(userService, 'Outsider');
+    const room = await roomService.createPrivateRoom(alice.id, bob.id);
+    const group = await roomService.createGroupRoom('Amigos', alice.id);
+
+    expect(await roomService.deleteForUser(room.id, outsider.id)).toBeNull();
+    expect(await roomService.leaveGroup(group.id, outsider.id)).toBeNull();
   });
 
   it('only treats actual room participants as participants', async () => {

@@ -200,6 +200,41 @@ describe('UserService.resumeSession', () => {
   });
 });
 
+describe('UserService.verifySession', () => {
+  it('returns the user for a valid session token without changing socket or status', async () => {
+    const { userService } = await buildRoomService();
+    const { user, sessionToken } = await registerAlice(userService);
+
+    const result = await userService.verifySession(user.id, sessionToken);
+
+    expect(result?.id).toBe(user.id);
+  });
+
+  it('rejects an unknown session token', async () => {
+    const { userService } = await buildRoomService();
+    const { user } = await registerAlice(userService);
+
+    const result = await userService.verifySession(user.id, 'not-a-real-token');
+
+    expect(result).toBeNull();
+  });
+
+  it('rejects a token that belongs to a different user', async () => {
+    const { userService } = await buildRoomService();
+    const { sessionToken } = await registerAlice(userService);
+    const { user: bob } = await userService.registerAccount({
+      nickname: 'Bob',
+      avatar: 0,
+      password: 'correct-horse-battery-staple',
+      socketId: 'socket-bob',
+    });
+
+    const result = await userService.verifySession(bob.id, sessionToken);
+
+    expect(result).toBeNull();
+  });
+});
+
 describe('UserService.changePassword', () => {
   it('rejects when the current password is wrong for a password-authenticated session', async () => {
     const { userService } = await buildRoomService();

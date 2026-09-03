@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { uploadsUrlPrefix } from '../../config/paths.js';
 import { registerSocketEvent } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import type { RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
 import { parseMentionedUserIds } from './message.mentions.js';
+import type { MessageRateLimiter } from './message.rate-limiter.js';
 import type { MessageService } from './message.service.js';
 import type { RecordingService } from './recording.service.js';
 import type { RoomPresenceService } from './room-presence.service.js';
@@ -142,6 +144,16 @@ function extractErrorMessage(error: unknown): string {
   return 'Erro inesperado.';
 }
 
+const uploadedMediaPathPattern = new RegExp(`^${uploadsUrlPrefix}/(images|audio|files)/[^/]+$`);
+
+function isUploadedMediaUrl(content: string): boolean {
+  try {
+    return uploadedMediaPathPattern.test(new URL(content).pathname);
+  } catch {
+    return uploadedMediaPathPattern.test(content);
+  }
+}
+
 export function registerMessageSocketHandlers(
   io: AppServer,
   socket: AppSocket,
@@ -151,9 +163,10 @@ export function registerMessageSocketHandlers(
   typingService: TypingService,
   recordingService: RecordingService,
   presenceService: RoomPresenceService,
+  messageRateLimiter: MessageRateLimiter,
 ): void {
   socket.on('message:send', (payload) => {
-    void handleSendMessage(io, socket, messageService, roomService, userService, presenceService, payload);
+    void handleSendMessage(io, socket, messageService, roomService, userService, presenceService, messageRateLimiter, payload);
   });
 
   socket.on('message:mark-read', (payload) => {
@@ -185,7 +198,7 @@ export function registerMessageSocketHandlers(
   });
 
   socket.on('audio:played', (payload) => {
-    void handleAudioPlayed(io, socket, messageService, payload);
+    void handleAudioPlayed(io, socket, messageService, roomService, payload);
   });
 
   socket.on('room:view-start', (payload) => {
@@ -259,6 +272,7 @@ async function handleSendMessage(
   roomService: RoomService,
   userService: UserService,
   presenceService: RoomPresenceService,
+  messageRateLimiter: MessageRateLimiter,
   payload: unknown,
 ): Promise<void> {
   const userId = socket.data.userId;
@@ -269,14 +283,25 @@ async function handleSendMessage(
 
   let clientTempId: string | undefined;
 
+  if (messageRateLimiter.isBlocked(userId)) {
+    socket.emit('error', { message: 'Você está enviando mensagens muito rápido. Aguarde um instante.' });
+    return;
+  }
+  messageRateLimiter.registerSend(userId);
+
   try {
     const parsed = sendMessagePayloadSchema.parse(payload);
     const { roomId, content, type, duration, replyToMessageId, fileMeta } = parsed;
     clientTempId = parsed.clientTempId;
 
+    if (type !== 'text' && !isUploadedMediaUrl(content)) {
+      socket.emit('error', { message: 'Conteúdo de mídia inválido.', clientTempId });
+      return;
+    }
+
     const room = await roomService.getRoomById(roomId);
 
-    if (!room) {
+    if (!room || !roomService.isParticipant(room, userId)) {
       socket.emit('error', { message: 'Sala não encontrada.', clientTempId });
       return;
     }
@@ -394,6 +419,7 @@ async function handleAudioPlayed(
   io: AppServer,
   socket: AppSocket,
   messageService: MessageService,
+  roomService: RoomService,
   payload: unknown,
 ): Promise<void> {
   const userId = socket.data.userId;
@@ -405,6 +431,11 @@ async function handleAudioPlayed(
     const { messageId } = audioPlayedPayloadSchema.parse(payload);
     const updated = await messageService.markAudioPlayed(messageId, userId);
     if (!updated) {
+      return;
+    }
+
+    const room = await roomService.getRoomById(updated.roomId);
+    if (!room || !roomService.isParticipant(room, userId)) {
       return;
     }
 

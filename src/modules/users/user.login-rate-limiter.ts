@@ -1,12 +1,18 @@
 const MAX_ATTEMPTS = 5;
 const WINDOW_MS = 15 * 60 * 1000;
 
+const MAX_REGISTER_ATTEMPTS = 10;
+
 function buildKey(nickname: string, ip: string): string {
   return `${nickname.trim().toLowerCase()}:${ip}`;
 }
 
 function buildKeyfileKey(ip: string): string {
   return `keyfile:${ip}`;
+}
+
+function buildRegisterKey(ip: string): string {
+  return `register:${ip}`;
 }
 
 export class LoginRateLimiter {
@@ -36,8 +42,16 @@ export class LoginRateLimiter {
     this.failuresByKey.delete(buildKeyfileKey(ip));
   }
 
-  private isBlockedForKey(key: string): boolean {
-    return this.pruneAndGet(key).length >= MAX_ATTEMPTS;
+  isBlockedForRegistration(ip: string): boolean {
+    return this.isBlockedForKey(buildRegisterKey(ip), MAX_REGISTER_ATTEMPTS);
+  }
+
+  registerAttemptForRegistration(ip: string): void {
+    this.registerFailureForKey(buildRegisterKey(ip));
+  }
+
+  private isBlockedForKey(key: string, maxAttempts: number = MAX_ATTEMPTS): boolean {
+    return this.pruneAndGet(key).length >= maxAttempts;
   }
 
   private registerFailureForKey(key: string): void {

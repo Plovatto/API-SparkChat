@@ -26,18 +26,32 @@ export const fileUploadResponseSchema = z
 
 export function createMessageController() {
   return {
-    uploadImage(req: Request, res: Response): void {
+    async uploadImage(req: Request, res: Response): Promise<void> {
       if (!req.file) {
         res.status(400).json({ message: 'Nenhuma imagem enviada.' });
+        return;
+      }
+
+      const isValid = await verifyFileSignature(req.file.path, req.file.mimetype);
+      if (!isValid) {
+        await rm(req.file.path, { force: true });
+        res.status(400).json({ message: 'O conteúdo do arquivo não corresponde ao tipo declarado.' });
         return;
       }
 
       res.status(201).json({ url: imageUrlPath(req.file.filename) });
     },
 
-    uploadAudio(req: Request, res: Response): void {
+    async uploadAudio(req: Request, res: Response): Promise<void> {
       if (!req.file) {
         res.status(400).json({ message: 'Nenhum áudio enviado.' });
+        return;
+      }
+
+      const isValid = await verifyFileSignature(req.file.path, req.file.mimetype);
+      if (!isValid) {
+        await rm(req.file.path, { force: true });
+        res.status(400).json({ message: 'O conteúdo do arquivo não corresponde ao tipo declarado.' });
         return;
       }
 

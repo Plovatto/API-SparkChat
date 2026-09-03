@@ -121,7 +121,7 @@ export function registerRoomSocketHandlers(
   });
 
   socket.on('room:join', (payload) => {
-    void handleJoinRoom(socket, payload);
+    void handleJoinRoom(socket, roomService, payload);
   });
 
   socket.on('room:delete', (payload) => {
@@ -298,7 +298,7 @@ async function handleJoinByCode(
   }
 }
 
-async function handleJoinRoom(socket: AppSocket, payload: unknown): Promise<void> {
+async function handleJoinRoom(socket: AppSocket, roomService: RoomService, payload: unknown): Promise<void> {
   const userId = socket.data.userId;
   if (!userId) {
     socket.emit('error', { message: 'Usuário não autenticado.' });
@@ -307,6 +307,12 @@ async function handleJoinRoom(socket: AppSocket, payload: unknown): Promise<void
 
   try {
     const { roomId } = roomIdPayloadSchema.parse(payload);
+    const room = await roomService.getRoomById(roomId);
+    if (!room || !roomService.isParticipant(room, userId)) {
+      socket.emit('error', { message: 'Sala não encontrada.' });
+      return;
+    }
+
     await socket.join(roomId);
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
@@ -524,7 +530,7 @@ async function handleUnblockUser(
 
   try {
     const { roomId, blockedUserId } = blockPayloadSchema.parse(payload);
-    const room = await roomService.unblockUser(roomId, blockedUserId);
+    const room = await roomService.unblockUser(roomId, userId, blockedUserId);
     if (!room) {
       return;
     }

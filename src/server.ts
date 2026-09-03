@@ -6,6 +6,7 @@ import { logger } from './config/logger.js';
 import { db } from './database/turso-client.js';
 import { runMigrations } from './database/migrate.js';
 import {
+  MessageRateLimiter,
   MessageRepository,
   MessageService,
   RecordingService,
@@ -38,6 +39,7 @@ const roomService = new RoomService(roomRepository, userService, messageService)
 const typingService = new TypingService();
 const recordingService = new RecordingService();
 const presenceService = new RoomPresenceService();
+const messageRateLimiter = new MessageRateLimiter();
 
 const app = createApp({ userService, loginRateLimiter });
 const httpServer = createServer(app);
@@ -56,7 +58,16 @@ const io = new Server<
   transports: ['websocket', 'polling'],
 });
 
-registerSocketHandlers(io, { userService, roomService, messageService, typingService, recordingService, presenceService });
+registerSocketHandlers(io, {
+  userService,
+  roomService,
+  messageService,
+  typingService,
+  recordingService,
+  presenceService,
+  loginRateLimiter,
+  messageRateLimiter,
+});
 
 httpServer.listen(env.PORT, () => {
   logger.info(`Server running on port ${env.PORT}`);

@@ -1,5 +1,6 @@
 export { createMessageController, mediaUploadResponseSchema } from './message.controller.js';
 export { createMessageRouter } from './message.routes.js';
+export { MessageRateLimiter } from './message.rate-limiter.js';
 export { MessageRepository } from './message.repository.js';
 export { MessageService } from './message.service.js';
 export { registerMessageSocketHandlers } from './message.socket.js';
