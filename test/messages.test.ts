@@ -69,3 +69,64 @@ describe('POST /api/messages/upload-audio', () => {
     expect(response.status).toBe(400);
   });
 });
+
+describe('POST /api/messages/upload-file', () => {
+  it('stores a valid PDF and returns its url and metadata', async () => {
+    const response = await request(app)
+      .post('/api/messages/upload-file')
+      .attach('file', Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]), {
+        filename: 'relatorio.pdf',
+        contentType: 'application/pdf',
+      });
+
+    const body = response.body as { url: string; name: string; mimeType: string; size: number };
+    expect(response.status).toBe(201);
+    expect(body.url).toMatch(/^\/uploads\/files\/.+\.pdf$/);
+    expect(body.name).toBe('relatorio.pdf');
+    expect(body.mimeType).toBe('application/pdf');
+    expect(body.size).toBeGreaterThan(0);
+  });
+
+  it('preserves accented characters in the original filename', async () => {
+    const response = await request(app)
+      .post('/api/messages/upload-file')
+      .attach('file', Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]), {
+        filename: 'relatório.pdf',
+        contentType: 'application/pdf',
+      });
+
+    const body = response.body as { name: string };
+    expect(response.status).toBe(201);
+    expect(body.name).toBe('relatório.pdf');
+  });
+
+  it('rejects a request with no file', async () => {
+    const response = await request(app).post('/api/messages/upload-file');
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects a mimetype that is not in the allowed list', async () => {
+    const response = await request(app)
+      .post('/api/messages/upload-file')
+      .attach('file', Buffer.from('hello'), { filename: 'notes.exe', contentType: 'application/x-msdownload' });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects a file whose declared mimetype does not match its real content', async () => {
+    const response = await request(app)
+      .post('/api/messages/upload-file')
+      .attach('file', Buffer.from('this is not really a pdf'), { filename: 'fake.pdf', contentType: 'application/pdf' });
+
+    expect(response.status).toBe(400);
+  });
+
+  it('rejects a blocked extension even when the mimetype is spoofed to look allowed', async () => {
+    const response = await request(app)
+      .post('/api/messages/upload-file')
+      .attach('file', Buffer.from([0x25, 0x50, 0x44, 0x46]), { filename: 'virus.exe', contentType: 'application/pdf' });
+
+    expect(response.status).toBe(400);
+  });
+});

@@ -1,12 +1,23 @@
 import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
 import multer from 'multer';
+import type { z } from 'zod';
 import { errorResponseSchema } from '../../docs/common-schemas.js';
 import { registry } from '../../docs/registry.js';
-import { createMessageController, mediaUploadResponseSchema } from './message.controller.js';
-import { audioUpload, imageUpload } from './message.upload.js';
+import {
+  createMessageController,
+  fileUploadResponseSchema,
+  mediaUploadResponseSchema,
+} from './message.controller.js';
+import { audioUpload, fileUpload, imageUpload } from './message.upload.js';
 
-function registerUploadPath(path: string, fieldName: 'image' | 'audio', summary: string, maxSizeDescription: string): void {
+function registerUploadPath(
+  path: string,
+  fieldName: 'image' | 'audio' | 'file',
+  summary: string,
+  maxSizeDescription: string,
+  responseSchema: z.ZodTypeAny,
+): void {
   registry.registerPath({
     method: 'post',
     path,
@@ -28,7 +39,7 @@ function registerUploadPath(path: string, fieldName: 'image' | 'audio', summary:
     responses: {
       201: {
         description: 'Arquivo armazenado com sucesso',
-        content: { 'application/json': { schema: mediaUploadResponseSchema } },
+        content: { 'application/json': { schema: responseSchema } },
       },
       400: {
         description: maxSizeDescription,
@@ -43,12 +54,21 @@ registerUploadPath(
   'image',
   'Envia uma imagem e retorna sua URL para uso em uma mensagem do tipo image',
   'Nenhuma imagem enviada, tipo de arquivo inválido ou arquivo maior que 5MB',
+  mediaUploadResponseSchema,
 );
 registerUploadPath(
   '/api/messages/upload-audio',
   'audio',
   'Envia um áudio e retorna sua URL para uso em uma mensagem do tipo audio',
   'Nenhum áudio enviado, tipo de arquivo inválido ou arquivo maior que 8MB',
+  mediaUploadResponseSchema,
+);
+registerUploadPath(
+  '/api/messages/upload-file',
+  'file',
+  'Envia um arquivo (PDF, vídeo, documento, etc) e retorna sua URL e metadados para uso em uma mensagem do tipo file',
+  'Nenhum arquivo enviado, tipo de arquivo inválido ou arquivo maior que 50MB',
+  fileUploadResponseSchema,
 );
 
 function createUploadErrorHandler(mediaLabel: string, maxSizeLabel: string, acceptedTypesLabel: string) {
@@ -69,6 +89,11 @@ function createUploadErrorHandler(mediaLabel: string, maxSizeLabel: string, acce
 
 const handleImageUploadError = createUploadErrorHandler('imagem', '5MB', 'JPEG, PNG, GIF ou WEBP');
 const handleAudioUploadError = createUploadErrorHandler('áudio', '8MB', 'WEBM, OGG, MP4, AAC, MPEG ou WAV');
+const handleFileUploadError = createUploadErrorHandler(
+  'arquivo',
+  '50MB',
+  'PDF, vídeo (MP4, WEBM, MOV, AVI), documento do Office, ZIP, TXT ou CSV',
+);
 
 export function createMessageRouter(): Router {
   const router = Router();
@@ -86,6 +111,13 @@ export function createMessageRouter(): Router {
     audioUpload.single('audio'),
     handleAudioUploadError,
     (req: Request, res: Response) => controller.uploadAudio(req, res),
+  );
+
+  router.post(
+    '/upload-file',
+    fileUpload.single('file'),
+    handleFileUploadError,
+    (req: Request, res: Response) => void controller.uploadFile(req, res),
   );
 
   return router;

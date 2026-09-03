@@ -19,6 +19,7 @@ function toRecord(row: typeof messages.$inferSelect): MessageRecord {
     playedBy: row.playedBy,
     replyTo: (row.replyToSnapshot as MessageReplySnapshot | null) ?? null,
     mentionedUserIds: row.mentionedUserIds ?? [],
+    fileMeta: row.fileMeta ?? null,
   };
 }
 
@@ -55,6 +56,7 @@ export class MessageRepository {
       playedBy: message.playedBy,
       replyToSnapshot: message.replyTo,
       mentionedUserIds: message.mentionedUserIds,
+      fileMeta: message.fileMeta,
     });
 
     return message;

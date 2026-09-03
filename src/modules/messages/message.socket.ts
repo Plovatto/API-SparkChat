@@ -10,18 +10,29 @@ import type { RecordingService } from './recording.service.js';
 import type { RoomPresenceService } from './room-presence.service.js';
 import type { TypingService } from './typing.service.js';
 
+const fileMetaSchema = z.object({
+  name: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().min(1),
+  size: z.number().int().positive(),
+});
+
 const sendMessagePayloadSchema = z
   .object({
     roomId: z.string().trim().min(1),
     content: z.string().trim().min(1).max(5000),
-    type: z.enum(['text', 'image', 'audio']).default('text'),
+    type: z.enum(['text', 'image', 'audio', 'file']).default('text'),
     duration: z.number().int().positive().optional(),
     replyToMessageId: z.string().trim().min(1).optional(),
     clientTempId: z.string().trim().min(1).optional(),
+    fileMeta: fileMetaSchema.optional(),
   })
   .refine((data) => data.type !== 'audio' || typeof data.duration === 'number', {
     message: 'duration é obrigatório para mensagens de áudio.',
     path: ['duration'],
+  })
+  .refine((data) => data.type !== 'file' || data.fileMeta !== undefined, {
+    message: 'fileMeta é obrigatório para mensagens do tipo file.',
+    path: ['fileMeta'],
   });
 
 const roomIdPayloadSchema = z.object({
@@ -260,7 +271,7 @@ async function handleSendMessage(
 
   try {
     const parsed = sendMessagePayloadSchema.parse(payload);
-    const { roomId, content, type, duration, replyToMessageId } = parsed;
+    const { roomId, content, type, duration, replyToMessageId, fileMeta } = parsed;
     clientTempId = parsed.clientTempId;
 
     const room = await roomService.getRoomById(roomId);
@@ -299,6 +310,7 @@ async function handleSendMessage(
       participantIds: room.participants,
       viewingUserIds: presenceService.getViewers(roomId),
       mentionedUserIds,
+      fileMeta,
     });
     const reactivatedBefore = new Date(new Date(message.timestamp).getTime() - 1000).toISOString();
     const updatedRoom = (await roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;
