@@ -27,6 +27,7 @@ export class RoomService {
       id: randomUUID(),
       type: 'private',
       participants: [userId, targetUserId],
+      admins: [],
       createdAt: new Date().toISOString(),
       visibleTo: [userId],
       blockedBy: {},
@@ -44,6 +45,7 @@ export class RoomService {
       name,
       roomCode: generateRoomCode(),
       participants: [creatorId],
+      admins: [creatorId],
       createdBy: creatorId,
       createdAt: now,
       visibleTo: [creatorId],
@@ -98,8 +100,55 @@ export class RoomService {
 
     const participants = room.participants.filter((id) => id !== userId);
     const visibleTo = room.visibleTo.filter((id) => id !== userId);
+    const admins = room.admins.filter((id) => id !== userId);
 
-    return this.repository.update(roomId, { participants, visibleTo });
+    return this.repository.update(roomId, { participants, visibleTo, admins });
+  }
+
+  async promoteAdmin(roomId: string, actingUserId: string, targetUserId: string): Promise<RoomRecord | null> {
+    const room = await this.repository.findById(roomId);
+    if (!room) {
+      return null;
+    }
+
+    if (!room.admins.includes(actingUserId)) {
+      throw new Error('Apenas administradores podem promover outros membros.');
+    }
+
+    if (!room.participants.includes(targetUserId)) {
+      throw new Error('Usuário não faz parte do grupo.');
+    }
+
+    if (room.admins.includes(targetUserId)) {
+      return room;
+    }
+
+    return this.repository.update(roomId, { admins: [...room.admins, targetUserId] });
+  }
+
+  async removeMember(roomId: string, actingUserId: string, targetUserId: string): Promise<RoomRecord | null> {
+    const room = await this.repository.findById(roomId);
+    if (!room) {
+      return null;
+    }
+
+    if (!room.admins.includes(actingUserId)) {
+      throw new Error('Apenas administradores podem remover membros.');
+    }
+
+    if (targetUserId === actingUserId) {
+      throw new Error('Use a opção de sair do grupo para se remover.');
+    }
+
+    if (!room.participants.includes(targetUserId)) {
+      throw new Error('Usuário não faz parte do grupo.');
+    }
+
+    const participants = room.participants.filter((id) => id !== targetUserId);
+    const visibleTo = room.visibleTo.filter((id) => id !== targetUserId);
+    const admins = room.admins.filter((id) => id !== targetUserId);
+
+    return this.repository.update(roomId, { participants, visibleTo, admins });
   }
 
   async blockUser(roomId: string, userId: string, blockedUserId: string): Promise<RoomRecord | null> {
@@ -177,7 +226,10 @@ export class RoomService {
 
   async buildSummary(room: RoomRecord, viewerId: string): Promise<RoomSummary> {
     const participantRecords = await Promise.all(room.participants.map((id) => this.userService.getUser(id)));
-    const participants = participantRecords.filter((user): user is UserRecord => user !== null).map(toParticipant);
+    const admins = new Set(room.admins);
+    const participants = participantRecords
+      .filter((user): user is UserRecord => user !== null)
+      .map((user) => toParticipant(user, admins.has(user.id)));
 
     const creator = room.createdBy ? await this.userService.getUser(room.createdBy) : null;
     const isBlockedBy = Boolean(room.blockedBy[viewerId]);
@@ -206,8 +258,8 @@ export class RoomService {
     };
   }
 
-  toParticipantView(user: UserRecord): RoomParticipant {
-    return toParticipant(user);
+  toParticipantView(user: UserRecord, isAdmin: boolean): RoomParticipant {
+    return toParticipant(user, isAdmin);
   }
 
   private async makeVisible(room: RoomRecord, userId: string): Promise<RoomRecord> {
@@ -219,12 +271,13 @@ export class RoomService {
   }
 }
 
-function toParticipant(user: UserRecord): RoomParticipant {
+function toParticipant(user: UserRecord, isAdmin: boolean): RoomParticipant {
   return {
     id: user.id,
     nickname: user.nickname,
     avatar: user.avatar,
     status: user.status,
     lastSeen: user.lastSeen,
+    isAdmin,
   };
 }
