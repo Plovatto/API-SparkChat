@@ -24,6 +24,7 @@ export interface UserServerToClientEvents {
   'user:password-changed': (payload: { recoveryFile: string; recoveryToken: string }) => void;
   'user:recovery-file-regenerated': (payload: { recoveryFile: string; recoveryToken: string }) => void;
   'user:sessions': (payload: { sessions: SessionSummary[] }) => void;
+  'user:session-revoked': () => void;
   'e2e:public-keys': (payload: { keys: E2ePublicKeyEntry[] }) => void;
   'e2e:my-keys': (payload: {
     publicKey: string | null;

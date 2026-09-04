@@ -96,6 +96,7 @@ registerSocketEvent({
   module: 'users',
   payloadSchema: zodToJsonSchema(revokeSessionPayloadSchema),
 });
+registerSocketEvent({ event: 'user:session-revoked', direction: 'server-to-client', module: 'users' });
 registerSocketEvent({
   event: 'e2e:publish-keys',
   direction: 'client-to-server',
@@ -171,7 +172,7 @@ export function registerUserSocketHandlers(
   });
 
   socket.on('user:revoke-session', (payload) => {
-    void handleRevokeSession(socket, userService, payload);
+    void handleRevokeSession(io, socket, userService, payload);
   });
 
   socket.on('e2e:publish-keys', (payload) => {
@@ -447,7 +448,7 @@ async function handleListSessions(socket: AppSocket, userService: UserService): 
   });
 }
 
-async function handleRevokeSession(socket: AppSocket, userService: UserService, payload: unknown): Promise<void> {
+async function handleRevokeSession(io: AppServer, socket: AppSocket, userService: UserService, payload: unknown): Promise<void> {
   const userId = socket.data.userId;
   if (!userId) {
     socket.emit('error', { message: 'Usuário não autenticado.' });
@@ -463,9 +464,23 @@ async function handleRevokeSession(socket: AppSocket, userService: UserService, 
       delete socket.data.userId;
       delete socket.data.authMethod;
       delete socket.data.sessionId;
+    } else {
+      disconnectRevokedSession(io, socket, userId, sessionId);
     }
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+function disconnectRevokedSession(io: AppServer, requester: AppSocket, userId: string, sessionId: string): void {
+  for (const target of io.sockets.sockets.values()) {
+    if (target.id === requester.id) {
+      continue;
+    }
+    if (target.data.userId === userId && target.data.sessionId === sessionId) {
+      target.emit('user:session-revoked');
+      target.disconnect(true);
+    }
   }
 }
 
