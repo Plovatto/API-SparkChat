@@ -26,40 +26,45 @@ export interface SocketDeps {
 }
 
 export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
+  const { aiService } = deps;
+
   io.on('connection', (socket: AppSocket) => {
     logger.info({ socketId: socket.id }, 'Client connected');
 
-    registerUserSocketHandlers(io, socket, deps.userService, deps.roomService, deps.messageService, deps.loginRateLimiter);
-    registerRoomSocketHandlers(
-      io,
-      socket,
-      deps.roomService,
-      deps.userService,
-      deps.messageService,
-      deps.roomKeyRepository,
-      ({ io: server, room }) => {
-        if (deps.aiService.isAssistantRoom(room)) {
-          void deps.aiService.sendWelcomeMessage(server, room);
+    registerUserSocketHandlers(io, socket, {
+      userService: deps.userService,
+      roomService: deps.roomService,
+      messageService: deps.messageService,
+      loginRateLimiter: deps.loginRateLimiter,
+    });
+
+    registerRoomSocketHandlers(io, socket, {
+      roomService: deps.roomService,
+      userService: deps.userService,
+      messageService: deps.messageService,
+      roomKeyRepository: deps.roomKeyRepository,
+      onRoomCreated: ({ io: server, room }) => {
+        if (aiService.isAssistantRoom(room)) {
+          void aiService.sendWelcomeMessage(server, room);
         }
       },
-      (room) => deps.aiService.isAssistantRoom(room),
-    );
-    registerMessageSocketHandlers(
-      io,
-      socket,
-      deps.messageService,
-      deps.roomService,
-      deps.userService,
-      deps.typingService,
-      deps.recordingService,
-      deps.presenceService,
-      deps.messageRateLimiter,
-      ({ io: server, room, message }) => {
-        if (message.type !== 'system' && deps.aiService.isAssistantRoom(room)) {
-          deps.aiService.handleIncomingMessage(server, room, message);
+      shouldResetInsteadOfDelete: (room) => aiService.isAssistantRoom(room),
+    });
+
+    registerMessageSocketHandlers(io, socket, {
+      messageService: deps.messageService,
+      roomService: deps.roomService,
+      userService: deps.userService,
+      typingService: deps.typingService,
+      recordingService: deps.recordingService,
+      presenceService: deps.presenceService,
+      messageRateLimiter: deps.messageRateLimiter,
+      onMessageSent: ({ io: server, room, message }) => {
+        if (message.type !== 'system' && aiService.isAssistantRoom(room)) {
+          aiService.handleIncomingMessage(server, room, message);
         }
       },
-    );
+    });
 
     socket.on('disconnect', (reason) => {
       logger.info({ socketId: socket.id, reason }, 'Client disconnected');

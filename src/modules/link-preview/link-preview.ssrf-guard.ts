@@ -60,15 +60,15 @@ export async function assertPublicHttpUrl(rawUrl: string): Promise<URL> {
   try {
     parsed = new URL(rawUrl);
   } catch {
-    throw new Error('URL inv·lida.');
+    throw new Error('URL inv√°lida.');
   }
 
   if (!ALLOWED_PROTOCOLS.has(parsed.protocol)) {
-    throw new Error('Apenas URLs http/https s„o suportadas.');
+    throw new Error('Apenas URLs http/https s√£o suportadas.');
   }
 
   if (parsed.port) {
-    throw new Error('Portas customizadas n„o s„o suportadas.');
+    throw new Error('Portas customizadas n√£o s√£o suportadas.');
   }
 
   const hostname = parsed.hostname.replace(/^\[|\]$/g, '');
@@ -76,14 +76,14 @@ export async function assertPublicHttpUrl(rawUrl: string): Promise<URL> {
 
   if (literalVersion !== 0) {
     if (isPrivateAddress(hostname)) {
-      throw new Error('EndereÁo n„o permitido.');
+      throw new Error('Endere√ßo n√£o permitido.');
     }
     return parsed;
   }
 
   const resolved = await dns.lookup(hostname, { all: true });
   if (resolved.length === 0 || resolved.some((entry) => isPrivateAddress(entry.address))) {
-    throw new Error('EndereÁo n„o permitido.');
+    throw new Error('Endere√ßo n√£o permitido.');
   }
 
   return parsed;

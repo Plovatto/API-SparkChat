@@ -1,7 +1,9 @@
 import { and, asc, desc, eq, gt, inArray, lt } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { messages } from '../../database/schema.js';
-import type { MessageRecord, MessageReplySnapshot, MessageStatus, MessageType } from './message.types.js';
+import type { MessageRecord, MessageReplySnapshot } from './message.types.js';
+
+type MessageColumns = Partial<typeof messages.$inferInsert>;
 
 function normalizeReplySnapshot(snapshot: MessageReplySnapshot | null | undefined): MessageReplySnapshot | null {
   if (!snapshot) {
@@ -16,15 +18,15 @@ function toRecord(row: typeof messages.$inferSelect): MessageRecord {
     roomId: row.roomId,
     senderId: row.senderId,
     content: row.content,
-    type: row.type as MessageType,
+    type: row.type,
     duration: row.duration,
     timestamp: row.timestamp,
     deletedForEveryone: row.deletedForEveryone,
-    status: row.status as MessageStatus,
+    status: row.status,
     deliveredTo: row.deliveredTo,
     readBy: row.readBy,
     playedBy: row.playedBy,
-    replyTo: normalizeReplySnapshot(row.replyToSnapshot as MessageReplySnapshot | null | undefined),
+    replyTo: normalizeReplySnapshot(row.replyToSnapshot),
     mentionedUserIds: row.mentionedUserIds ?? [],
     fileMeta: row.fileMeta ?? null,
     caption: row.caption ?? null,
@@ -32,17 +34,17 @@ function toRecord(row: typeof messages.$inferSelect): MessageRecord {
   };
 }
 
-function isSameMessage(a: MessageRecord, b: MessageRecord): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+function toColumns(patch: Partial<MessageRecord>): MessageColumns {
+  const { replyTo, ...rest } = patch;
+  const columns: MessageColumns = { ...rest };
+  if (replyTo !== undefined) {
+    columns.replyToSnapshot = replyTo;
+  }
+  return columns;
 }
 
 export class MessageRepository {
   constructor(private readonly db: Database) {}
-
-  async findAll(): Promise<MessageRecord[]> {
-    const rows = await this.db.select().from(messages);
-    return rows.map(toRecord);
-  }
 
   async findById(id: string): Promise<MessageRecord | null> {
     const [row] = await this.db.select().from(messages).where(eq(messages.id, id));
@@ -74,11 +76,7 @@ export class MessageRepository {
   }
 
   async update(id: string, patch: Partial<MessageRecord>): Promise<MessageRecord | null> {
-    const { replyTo, ...rest } = patch;
-    const columns: Partial<typeof messages.$inferInsert> = { ...rest };
-    if (replyTo !== undefined) {
-      columns.replyToSnapshot = replyTo;
-    }
+    const columns = toColumns(patch);
 
     const [current] = await Promise.all([
       this.findById(id),
@@ -95,14 +93,9 @@ export class MessageRepository {
       return;
     }
 
-    const statements = updates.map(({ id, patch }) => {
-      const { replyTo, ...rest } = patch;
-      const columns: Partial<typeof messages.$inferInsert> = { ...rest };
-      if (replyTo !== undefined) {
-        columns.replyToSnapshot = replyTo;
-      }
-      return this.db.update(messages).set(columns).where(eq(messages.id, id));
-    });
+    const statements = updates.map(({ id, patch }) =>
+      this.db.update(messages).set(toColumns(patch)).where(eq(messages.id, id)),
+    );
 
     if (statements.length === 1) {
       await statements[0];
@@ -110,18 +103,6 @@ export class MessageRepository {
     }
 
     await this.db.batch(statements as [(typeof statements)[number], ...(typeof statements)[number][]]);
-  }
-
-  async replaceAll(items: MessageRecord[]): Promise<void> {
-    const current = await this.findAll();
-    const currentById = new Map(current.map((message) => [message.id, message]));
-
-    const changed = items.filter((item) => {
-      const existing = currentById.get(item.id);
-      return !(existing && isSameMessage(existing, item));
-    });
-
-    await Promise.all(changed.map((item) => this.update(item.id, item)));
   }
 
   async findByRoomId(roomId: string): Promise<MessageRecord[]> {

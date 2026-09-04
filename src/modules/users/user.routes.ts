@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { errorResponseSchema } from '../../docs/common-schemas.js';
 import { registry } from '../../docs/registry.js';
+import { asyncHandler } from '../../middleware/async-handler.js';
 import {
   createUserController,
   keyfileLoginResponseSchema,
@@ -93,17 +94,9 @@ export function createUserRouter(userService: UserService, loginRateLimiter: Log
   const router = Router();
   const controller = createUserController(userService, loginRateLimiter);
 
-  router.post('/login', (req, res) => {
-    void controller.login(req, res);
-  });
-
-  router.post('/login-with-keyfile', keyfileUpload.single('keyfile'), (req, res) => {
-    void controller.loginWithKeyfile(req, res);
-  });
-
-  router.get('/nickname-availability', (req, res) => {
-    void controller.checkNicknameAvailability(req, res);
-  });
+  router.post('/login', asyncHandler(controller.login));
+  router.post('/login-with-keyfile', keyfileUpload.single('keyfile'), asyncHandler(controller.loginWithKeyfile));
+  router.get('/nickname-availability', asyncHandler(controller.checkNicknameAvailability));
 
   return router;
 }

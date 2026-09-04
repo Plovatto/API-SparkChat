@@ -1,6 +1,6 @@
-import type { NextFunction, Request, Response } from 'express';
-import type { UserRecord } from '../modules/users/index.js';
-import type { UserService } from '../modules/users/index.js';
+import type { RequestHandler } from 'express';
+import type { UserRecord, UserService } from '../modules/users/index.js';
+import { asyncHandler } from './async-handler.js';
 
 declare module 'express-serve-static-core' {
   interface Request {
@@ -25,8 +25,8 @@ function parseBearerToken(header: string | undefined): { userId: string; session
   };
 }
 
-export function createRequireAuth(userService: UserService) {
-  return async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
+export function createRequireAuth(userService: UserService): RequestHandler {
+  return asyncHandler(async (req, res, next) => {
     const credentials = parseBearerToken(req.headers.authorization);
     if (!credentials) {
       res.status(401).json({ message: 'Autenticação necessária.' });
@@ -41,5 +41,5 @@ export function createRequireAuth(userService: UserService) {
 
     req.authenticatedUser = user;
     next();
-  };
+  });
 }

@@ -355,8 +355,8 @@ export class UserService {
     const users = await Promise.all(unique.map((id) => this.repository.findById(id)));
 
     return users
-      .filter((user): user is UserRecord => user !== null && Boolean(user.e2ePublicKey))
-      .map((user) => ({ userId: user.id, publicKey: user.e2ePublicKey as string }));
+      .filter((user): user is UserRecord & { e2ePublicKey: string } => Boolean(user?.e2ePublicKey))
+      .map((user) => ({ userId: user.id, publicKey: user.e2ePublicKey }));
   }
 
   toPublicUser(user: UserRecord): PublicUser {

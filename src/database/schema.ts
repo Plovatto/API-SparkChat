@@ -1,4 +1,14 @@
 import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import type { LinkPreviewCacheRecord } from '../modules/link-preview/link-preview.types.js';
+import type {
+  MessageFileMeta,
+  MessageLinkPreview,
+  MessageReplySnapshot,
+  MessageStatus,
+  MessageType,
+} from '../modules/messages/message.types.js';
+import type { RoomType } from '../modules/rooms/room.types.js';
+import type { AuthMethod, UserStatus } from '../modules/users/user.model.js';
 
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
@@ -7,7 +17,7 @@ export const users = sqliteTable('users', {
   avatar: integer('avatar').notNull(),
   passwordHash: text('password_hash').notNull(),
   recoveryTokenHash: text('recovery_token_hash').notNull(),
-  status: text('status').notNull().default('offline'),
+  status: text('status').$type<UserStatus>().notNull().default('offline'),
   statusText: text('status_text'),
   createdAt: text('created_at').notNull(),
   lastSeen: text('last_seen').notNull(),
@@ -26,7 +36,7 @@ export const sessions = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     tokenHash: text('token_hash').notNull().unique(),
-    authMethod: text('auth_method').notNull(),
+    authMethod: text('auth_method').$type<AuthMethod>().notNull(),
     userAgent: text('user_agent').notNull(),
     createdAt: text('created_at').notNull(),
     lastUsedAt: text('last_used_at').notNull(),
@@ -36,7 +46,7 @@ export const sessions = sqliteTable(
 
 export const rooms = sqliteTable('rooms', {
   id: text('id').primaryKey(),
-  type: text('type').notNull(),
+  type: text('type').$type<RoomType>().notNull(),
   name: text('name'),
   roomCode: text('room_code').unique(),
   createdBy: text('created_by').references(() => users.id),
@@ -91,32 +101,26 @@ export const messages = sqliteTable(
     roomId: text('room_id').notNull(),
     senderId: text('sender_id').notNull(),
     content: text('content').notNull(),
-    type: text('type').notNull(),
+    type: text('type').$type<MessageType>().notNull(),
     duration: integer('duration'),
     timestamp: text('timestamp').notNull(),
     deletedForEveryone: integer('deleted_for_everyone', { mode: 'boolean' }).notNull().default(false),
-    status: text('status').notNull().default('sent'),
+    status: text('status').$type<MessageStatus>().notNull().default('sent'),
     deliveredTo: text('delivered_to', { mode: 'json' }).$type<string[]>().notNull(),
     readBy: text('read_by', { mode: 'json' }).$type<string[]>().notNull(),
     playedBy: text('played_by', { mode: 'json' }).$type<string[]>().notNull(),
-    replyToSnapshot: text('reply_to_snapshot', { mode: 'json' }),
+    replyToSnapshot: text('reply_to_snapshot', { mode: 'json' }).$type<MessageReplySnapshot>(),
     mentionedUserIds: text('mentioned_user_ids', { mode: 'json' }).$type<string[]>(),
-    fileMeta: text('file_meta', { mode: 'json' }).$type<{ name: string; mimeType: string; size: number }>(),
+    fileMeta: text('file_meta', { mode: 'json' }).$type<MessageFileMeta>(),
     caption: text('caption'),
-    linkPreview: text('link_preview', { mode: 'json' }).$type<{
-      url: string;
-      title: string;
-      description: string | null;
-      imageUrl: string | null;
-      siteName: string | null;
-    }>(),
+    linkPreview: text('link_preview', { mode: 'json' }).$type<MessageLinkPreview>(),
   },
   (table) => [index('messages_room_id_timestamp_idx').on(table.roomId, table.timestamp)],
 );
 
 export const linkPreviews = sqliteTable('link_previews', {
   url: text('url').primaryKey(),
-  status: text('status').notNull(),
+  status: text('status').$type<LinkPreviewCacheRecord['status']>().notNull(),
   title: text('title'),
   description: text('description'),
   imageUrl: text('image_url'),

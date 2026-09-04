@@ -5,26 +5,24 @@ function currentDateKey(): string {
 }
 
 export class AiUsageLimiter {
-  private readonly countByKey = new Map<string, number>();
+  private readonly countByUserId = new Map<string, number>();
+  private dateKey = currentDateKey();
 
   isBlocked(userId: string): boolean {
-    return this.getUsed(userId) >= AI_DAILY_MESSAGE_LIMIT;
+    this.rolloverIfNeeded();
+    return (this.countByUserId.get(userId) ?? 0) >= AI_DAILY_MESSAGE_LIMIT;
   }
 
   registerUsage(userId: string): void {
-    const key = this.buildKey(userId);
-    this.countByKey.set(key, this.getUsed(userId) + 1);
+    this.rolloverIfNeeded();
+    this.countByUserId.set(userId, (this.countByUserId.get(userId) ?? 0) + 1);
   }
 
-  getRemaining(userId: string): number {
-    return Math.max(0, AI_DAILY_MESSAGE_LIMIT - this.getUsed(userId));
-  }
-
-  private getUsed(userId: string): number {
-    return this.countByKey.get(this.buildKey(userId)) ?? 0;
-  }
-
-  private buildKey(userId: string): string {
-    return `${userId}:${currentDateKey()}`;
+  private rolloverIfNeeded(): void {
+    const today = currentDateKey();
+    if (today !== this.dateKey) {
+      this.dateKey = today;
+      this.countByUserId.clear();
+    }
   }
 }

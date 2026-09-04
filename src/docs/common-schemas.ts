@@ -6,5 +6,3 @@ export const errorResponseSchema = z
     message: z.string().openapi({ example: 'Mensagem de erro' }),
   })
   .openapi('ErrorResponse');
-
-export type ErrorResponse = z.infer<typeof errorResponseSchema>;

@@ -1,11 +1,12 @@
 import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
-import { rateLimit } from 'express-rate-limit';
 import multer from 'multer';
 import type { z } from 'zod';
 import { errorResponseSchema } from '../../docs/common-schemas.js';
 import { registry } from '../../docs/registry.js';
+import { asyncHandler } from '../../middleware/async-handler.js';
 import { createRequireAuth } from '../../middleware/auth.js';
+import { createRateLimiter } from '../../middleware/rate-limit.js';
 import type { UserService } from '../users/index.js';
 import {
   createMessageController,
@@ -14,20 +15,9 @@ import {
 } from './message.controller.js';
 import { audioUpload, fileUpload, imageUpload } from './message.upload.js';
 
-const uploadRateLimiter = rateLimit({
-  windowMs: 60 * 1000,
+const uploadRateLimiter = createRateLimiter({
   limit: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
-  message: { message: 'Muitos envios de arquivo. Aguarde um momento e tente novamente.' },
-});
-
-registry.registerComponent('securitySchemes', 'sessionAuth', {
-  type: 'http',
-  scheme: 'bearer',
-  bearerFormat: '<userId>:<sessionToken>',
-  description: 'Token de sessão obtido no login, enviado como "Bearer <userId>:<sessionToken>"',
+  message: 'Muitos envios de arquivo. Aguarde um momento e tente novamente.',
 });
 
 function registerUploadPath(
@@ -131,28 +121,28 @@ export function createMessageRouter(userService: UserService): Router {
   router.post(
     '/upload-image',
     uploadRateLimiter,
-    (req: Request, res: Response, next: NextFunction) => void requireAuth(req, res, next),
+    requireAuth,
     imageUpload.single('image'),
     handleImageUploadError,
-    (req: Request, res: Response) => void controller.uploadImage(req, res),
+    asyncHandler(controller.uploadImage),
   );
 
   router.post(
     '/upload-audio',
     uploadRateLimiter,
-    (req: Request, res: Response, next: NextFunction) => void requireAuth(req, res, next),
+    requireAuth,
     audioUpload.single('audio'),
     handleAudioUploadError,
-    (req: Request, res: Response) => void controller.uploadAudio(req, res),
+    asyncHandler(controller.uploadAudio),
   );
 
   router.post(
     '/upload-file',
     uploadRateLimiter,
-    (req: Request, res: Response, next: NextFunction) => void requireAuth(req, res, next),
+    requireAuth,
     fileUpload.single('file'),
     handleFileUploadError,
-    (req: Request, res: Response) => void controller.uploadFile(req, res),
+    asyncHandler(controller.uploadFile),
   );
 
   return router;

@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiUsageLimiter } from '@/modules/ai/ai.usage-limiter.js';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('AiUsageLimiter', () => {
   it('allows usage until the daily limit is reached', () => {
@@ -20,14 +24,20 @@ describe('AiUsageLimiter', () => {
 
     expect(limiter.isBlocked('user-1')).toBe(false);
     expect(limiter.isBlocked('user-2')).toBe(false);
-    expect(limiter.getRemaining('user-2')).toBe(50);
   });
 
-  it('reports how many messages are left today', () => {
-    const limiter = new AiUsageLimiter();
-    limiter.registerUsage('user-1');
-    limiter.registerUsage('user-1');
+  it('resets the count once the day changes', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T23:59:00.000Z'));
 
-    expect(limiter.getRemaining('user-1')).toBe(48);
+    const limiter = new AiUsageLimiter();
+    for (let i = 0; i < 50; i += 1) {
+      limiter.registerUsage('user-1');
+    }
+    expect(limiter.isBlocked('user-1')).toBe(true);
+
+    vi.setSystemTime(new Date('2026-01-02T00:01:00.000Z'));
+
+    expect(limiter.isBlocked('user-1')).toBe(false);
   });
 });

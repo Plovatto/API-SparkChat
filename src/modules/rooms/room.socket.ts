@@ -1,8 +1,10 @@
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import { registerSocketEvent } from '../../docs/socket-registry.js';
+import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
-import type { MessageService } from '../messages/index.js';
+import { roomIdPayloadSchema } from '../../sockets/payloads.js';
+import { extractErrorMessage } from '../../sockets/socket-errors.js';
+import { requireSocketUserId } from '../../sockets/socket-session.js';
+import { INITIAL_MESSAGES_LIMIT, type MessageService, type MessageView } from '../messages/index.js';
 import type { UserService } from '../users/index.js';
 import type { RoomKeyRepository } from './room.e2e.js';
 import type { RoomService } from './room.service.js';
@@ -11,8 +13,17 @@ import type { RoomRecord } from './room.types.js';
 export type OnRoomCreatedHook = (context: { io: AppServer; room: RoomRecord }) => void;
 export type ShouldResetInsteadOfDeleteHook = (room: RoomRecord) => boolean;
 
+export interface RoomSocketDeps {
+  roomService: RoomService;
+  userService: UserService;
+  messageService: MessageService;
+  roomKeyRepository: RoomKeyRepository;
+  onRoomCreated?: OnRoomCreatedHook;
+  shouldResetInsteadOfDelete?: ShouldResetInsteadOfDeleteHook;
+}
+
 const ROOM_CODE_MIN_LENGTH = 4;
-const INITIAL_MESSAGES_LIMIT = 20;
+const MAX_SEALED_KEY_LENGTH = 2000;
 
 const createPrivateRoomPayloadSchema = z.object({
   targetNickname: z.string().trim().min(1),
@@ -26,10 +37,6 @@ const joinByCodePayloadSchema = z.object({
   roomCode: z.string().trim().min(1),
 });
 
-const roomIdPayloadSchema = z.object({
-  roomId: z.string().trim().min(1),
-});
-
 const blockPayloadSchema = z.object({
   roomId: z.string().trim().min(1),
   blockedUserId: z.string().trim().min(1),
@@ -39,8 +46,6 @@ const memberActionPayloadSchema = z.object({
   roomId: z.string().trim().min(1),
   userId: z.string().trim().min(1),
 });
-
-const MAX_SEALED_KEY_LENGTH = 2000;
 
 const publishRoomKeyPayloadSchema = z.object({
   roomId: z.string().trim().min(1),
@@ -59,171 +64,111 @@ const getRoomKeysPayloadSchema = z.object({
   roomIds: z.array(z.string().trim().min(1)).min(1).max(200),
 });
 
-const roomIdPayloadJsonSchema = zodToJsonSchema(roomIdPayloadSchema);
-const blockPayloadJsonSchema = zodToJsonSchema(blockPayloadSchema);
-const memberActionPayloadJsonSchema = zodToJsonSchema(memberActionPayloadSchema);
-const publishRoomKeyPayloadJsonSchema = zodToJsonSchema(publishRoomKeyPayloadSchema);
-const getRoomKeysPayloadJsonSchema = zodToJsonSchema(getRoomKeysPayloadSchema);
+registerClientEvents('rooms', {
+  'room:create-private': createPrivateRoomPayloadSchema,
+  'room:create-group': createGroupRoomPayloadSchema,
+  'room:join-by-code': joinByCodePayloadSchema,
+  'room:join': roomIdPayloadSchema,
+  'room:delete': roomIdPayloadSchema,
+  'rooms:get': null,
+  'group:leave': roomIdPayloadSchema,
+  'group:remove-member': memberActionPayloadSchema,
+  'group:promote-admin': memberActionPayloadSchema,
+  'user:block': blockPayloadSchema,
+  'user:unblock': blockPayloadSchema,
+  'e2e:publish-room-key': publishRoomKeyPayloadSchema,
+  'e2e:get-room-keys': getRoomKeysPayloadSchema,
+  'e2e:request-room-key': roomIdPayloadSchema,
+});
 
-registerSocketEvent({
-  event: 'room:create-private',
-  direction: 'client-to-server',
-  module: 'rooms',
-  payloadSchema: zodToJsonSchema(createPrivateRoomPayloadSchema),
-});
-registerSocketEvent({
-  event: 'room:create-group',
-  direction: 'client-to-server',
-  module: 'rooms',
-  payloadSchema: zodToJsonSchema(createGroupRoomPayloadSchema),
-});
-registerSocketEvent({
-  event: 'room:join-by-code',
-  direction: 'client-to-server',
-  module: 'rooms',
-  payloadSchema: zodToJsonSchema(joinByCodePayloadSchema),
-});
-registerSocketEvent({ event: 'room:join', direction: 'client-to-server', module: 'rooms', payloadSchema: roomIdPayloadJsonSchema });
-registerSocketEvent({ event: 'room:delete', direction: 'client-to-server', module: 'rooms', payloadSchema: roomIdPayloadJsonSchema });
-registerSocketEvent({ event: 'rooms:get', direction: 'client-to-server', module: 'rooms' });
-registerSocketEvent({ event: 'group:leave', direction: 'client-to-server', module: 'rooms', payloadSchema: roomIdPayloadJsonSchema });
-registerSocketEvent({ event: 'group:remove-member', direction: 'client-to-server', module: 'rooms', payloadSchema: memberActionPayloadJsonSchema });
-registerSocketEvent({ event: 'group:promote-admin', direction: 'client-to-server', module: 'rooms', payloadSchema: memberActionPayloadJsonSchema });
-registerSocketEvent({ event: 'user:block', direction: 'client-to-server', module: 'rooms', payloadSchema: blockPayloadJsonSchema });
-registerSocketEvent({ event: 'user:unblock', direction: 'client-to-server', module: 'rooms', payloadSchema: blockPayloadJsonSchema });
-registerSocketEvent({
-  event: 'e2e:publish-room-key',
-  direction: 'client-to-server',
-  module: 'rooms',
-  payloadSchema: publishRoomKeyPayloadJsonSchema,
-});
-registerSocketEvent({
-  event: 'e2e:get-room-keys',
-  direction: 'client-to-server',
-  module: 'rooms',
-  payloadSchema: getRoomKeysPayloadJsonSchema,
-});
-registerSocketEvent({
-  event: 'e2e:request-room-key',
-  direction: 'client-to-server',
-  module: 'rooms',
-  payloadSchema: roomIdPayloadJsonSchema,
-});
-registerSocketEvent({ event: 'e2e:room-keys', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'e2e:room-key', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'e2e:key-request', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'room:joined', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'room:new', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'room:created', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'room:deleted', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'rooms:list', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'group:user-joined', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'group:left', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'group:user-left', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'group:participants-updated', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'user:blocked', direction: 'server-to-client', module: 'rooms' });
-registerSocketEvent({ event: 'user:unblocked', direction: 'server-to-client', module: 'rooms' });
+registerServerEvents('rooms', [
+  'room:joined',
+  'room:new',
+  'room:created',
+  'room:deleted',
+  'rooms:list',
+  'group:user-joined',
+  'group:left',
+  'group:user-left',
+  'group:participants-updated',
+  'user:blocked',
+  'user:unblocked',
+  'e2e:room-keys',
+  'e2e:room-key',
+  'e2e:key-request',
+]);
 
-function extractErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return 'Erro inesperado.';
+async function getInitialMessageViews(deps: RoomSocketDeps, room: RoomRecord, userId: string): Promise<MessageView[]> {
+  const after = deps.roomService.getVisibilityCutoff(room, userId);
+  const { messages } = await deps.messageService.getRoomMessagesPage(room.id, { after, limit: INITIAL_MESSAGES_LIMIT });
+  return deps.messageService.toViews(messages);
 }
 
-async function getInitialMessageViews(
-  roomService: RoomService,
-  messageService: MessageService,
-  room: RoomRecord,
-  userId: string,
-) {
-  const after = roomService.getVisibilityCutoff(room, userId);
-  const { messages } = await messageService.getRoomMessagesPage(room.id, { after, limit: INITIAL_MESSAGES_LIMIT });
-  return messageService.toViews(messages);
-}
-
-export function registerRoomSocketHandlers(
-  io: AppServer,
-  socket: AppSocket,
-  roomService: RoomService,
-  userService: UserService,
-  messageService: MessageService,
-  roomKeyRepository: RoomKeyRepository,
-  onRoomCreated?: OnRoomCreatedHook,
-  shouldResetInsteadOfDelete?: ShouldResetInsteadOfDeleteHook,
-): void {
+export function registerRoomSocketHandlers(io: AppServer, socket: AppSocket, deps: RoomSocketDeps): void {
   socket.on('room:create-private', (payload) => {
-    void handleCreatePrivateRoom(io, socket, roomService, userService, messageService, payload, onRoomCreated);
+    void handleCreatePrivateRoom(io, socket, deps, payload);
   });
 
   socket.on('room:create-group', (payload) => {
-    void handleCreateGroupRoom(socket, roomService, userService, messageService, payload);
+    void handleCreateGroupRoom(socket, deps, payload);
   });
 
   socket.on('rooms:get', () => {
-    void handleRoomsGet(socket, roomService);
+    void handleRoomsGet(socket, deps);
   });
 
   socket.on('room:join-by-code', (payload) => {
-    void handleJoinByCode(io, socket, roomService, userService, messageService, payload);
+    void handleJoinByCode(io, socket, deps, payload);
   });
 
   socket.on('room:join', (payload) => {
-    void handleJoinRoom(socket, roomService, payload);
+    void handleJoinRoom(socket, deps, payload);
   });
 
   socket.on('room:delete', (payload) => {
-    void handleDeleteRoom(io, socket, roomService, payload, onRoomCreated, shouldResetInsteadOfDelete);
+    void handleDeleteRoom(io, socket, deps, payload);
   });
 
   socket.on('group:leave', (payload) => {
-    void handleLeaveGroup(socket, roomService, userService, messageService, payload);
+    void handleLeaveGroup(socket, deps, payload);
   });
 
   socket.on('group:remove-member', (payload) => {
-    void handleRemoveMember(io, socket, roomService, userService, messageService, payload);
+    void handleRemoveMember(io, socket, deps, payload);
   });
 
   socket.on('group:promote-admin', (payload) => {
-    void handlePromoteAdmin(io, socket, roomService, userService, messageService, payload);
+    void handlePromoteAdmin(io, socket, deps, payload);
   });
 
   socket.on('user:block', (payload) => {
-    void handleBlockUser(io, socket, roomService, userService, payload);
+    void handleBlockUser(io, socket, deps, payload);
   });
 
   socket.on('user:unblock', (payload) => {
-    void handleUnblockUser(io, socket, roomService, userService, payload);
+    void handleUnblockUser(io, socket, deps, payload);
   });
 
   socket.on('e2e:publish-room-key', (payload) => {
-    void handlePublishRoomKey(io, socket, roomService, userService, roomKeyRepository, payload);
+    void handlePublishRoomKey(io, socket, deps, payload);
   });
 
   socket.on('e2e:get-room-keys', (payload) => {
-    void handleGetRoomKeys(socket, roomService, roomKeyRepository, payload);
+    void handleGetRoomKeys(socket, deps, payload);
   });
 
   socket.on('e2e:request-room-key', (payload) => {
-    void handleRequestRoomKey(socket, roomService, payload);
+    void handleRequestRoomKey(socket, deps, payload);
   });
 }
 
-async function handleCreatePrivateRoom(
-  io: AppServer,
-  socket: AppSocket,
-  roomService: RoomService,
-  userService: UserService,
-  messageService: MessageService,
-  payload: unknown,
-  onRoomCreated?: OnRoomCreatedHook,
-): Promise<void> {
-  const userId = socket.data.userId;
+async function handleCreatePrivateRoom(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
+
+  const { roomService, userService } = deps;
 
   try {
     const { targetNickname } = createPrivateRoomPayloadSchema.parse(payload);
@@ -247,31 +192,26 @@ async function handleCreatePrivateRoom(
       await io.sockets.sockets.get(targetUser.socketId)?.join(room.id);
     }
 
-    const messageViews = await getInitialMessageViews(roomService, messageService, room, userId);
+    const messageViews = await getInitialMessageViews(deps, room, userId);
 
     const summaryForViewer = await roomService.buildSummary(room, userId);
     socket.emit('room:joined', { room: summaryForViewer, messages: messageViews });
 
     if (!existingRoom) {
-      onRoomCreated?.({ io, room });
+      deps.onRoomCreated?.({ io, room });
     }
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
 }
 
-async function handleCreateGroupRoom(
-  socket: AppSocket,
-  roomService: RoomService,
-  userService: UserService,
-  messageService: MessageService,
-  payload: unknown,
-): Promise<void> {
-  const userId = socket.data.userId;
+async function handleCreateGroupRoom(socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
+
+  const { roomService, userService, messageService } = deps;
 
   try {
     const { roomName } = createGroupRoomPayloadSchema.parse(payload);
@@ -279,10 +219,7 @@ async function handleCreateGroupRoom(
     await socket.join(room.id);
 
     const user = await userService.getUser(userId);
-    const systemMessage = await messageService.createSystemMessage(
-      room.id,
-      `${user?.nickname ?? 'Alguém'} criou o grupo`,
-    );
+    const systemMessage = await messageService.createSystemMessage(room.id, `${user?.nickname ?? 'Alguém'} criou o grupo`);
 
     const summary = await roomService.buildSummary(room, userId);
     socket.emit('room:created', { room: summary, messages: [await messageService.toView(systemMessage)] });
@@ -291,16 +228,15 @@ async function handleCreateGroupRoom(
   }
 }
 
-async function handleRoomsGet(socket: AppSocket, roomService: RoomService): Promise<void> {
-  const userId = socket.data.userId;
+async function handleRoomsGet(socket: AppSocket, deps: RoomSocketDeps): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
   try {
-    const rooms = await roomService.getVisibleRoomsForUser(userId);
-    const summaries = await Promise.all(rooms.map((room) => roomService.buildSummary(room, userId)));
+    const rooms = await deps.roomService.getVisibleRoomsForUser(userId);
+    const summaries = await Promise.all(rooms.map((room) => deps.roomService.buildSummary(room, userId)));
 
     for (const room of rooms) {
       await socket.join(room.id);
@@ -312,19 +248,13 @@ async function handleRoomsGet(socket: AppSocket, roomService: RoomService): Prom
   }
 }
 
-async function handleJoinByCode(
-  io: AppServer,
-  socket: AppSocket,
-  roomService: RoomService,
-  userService: UserService,
-  messageService: MessageService,
-  payload: unknown,
-): Promise<void> {
-  const userId = socket.data.userId;
+async function handleJoinByCode(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
+
+  const { roomService, userService, messageService } = deps;
 
   try {
     const { roomCode } = joinByCodePayloadSchema.parse(payload);
@@ -344,17 +274,12 @@ async function handleJoinByCode(
         const systemMessage = await messageService.createSystemMessage(room.id, `${user.nickname} entrou no grupo`);
         io.to(room.id).emit('message:new', await messageService.toView(systemMessage));
 
-        const participantRecords = await Promise.all(room.participants.map((id) => userService.getUser(id)));
-        const admins = new Set(room.admins);
-        const participants = participantRecords
-          .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
-          .map((participant) => roomService.toParticipantView(participant, admins.has(participant.id)));
-
+        const participants = await roomService.buildParticipantViews(room);
         socket.to(room.id).emit('group:user-joined', { roomId: room.id, participants });
       }
     }
 
-    const messageViews = await getInitialMessageViews(roomService, messageService, room, userId);
+    const messageViews = await getInitialMessageViews(deps, room, userId);
     const summary = await roomService.buildSummary(room, userId);
     socket.emit('room:joined', { room: summary, messages: messageViews });
 
@@ -365,17 +290,16 @@ async function handleJoinByCode(
   }
 }
 
-async function handleJoinRoom(socket: AppSocket, roomService: RoomService, payload: unknown): Promise<void> {
-  const userId = socket.data.userId;
+async function handleJoinRoom(socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
   try {
     const { roomId } = roomIdPayloadSchema.parse(payload);
-    const room = await roomService.getRoomById(roomId);
-    if (!room || !roomService.isParticipant(room, userId)) {
+    const room = await deps.roomService.getRoomById(roomId);
+    if (!room || !deps.roomService.isParticipant(room, userId)) {
       socket.emit('error', { message: 'Sala não encontrada.' });
       return;
     }
@@ -386,19 +310,13 @@ async function handleJoinRoom(socket: AppSocket, roomService: RoomService, paylo
   }
 }
 
-async function handleDeleteRoom(
-  io: AppServer,
-  socket: AppSocket,
-  roomService: RoomService,
-  payload: unknown,
-  onRoomCreated?: OnRoomCreatedHook,
-  shouldResetInsteadOfDelete?: ShouldResetInsteadOfDeleteHook,
-): Promise<void> {
-  const userId = socket.data.userId;
+async function handleDeleteRoom(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
+
+  const { roomService } = deps;
 
   try {
     const { roomId } = roomIdPayloadSchema.parse(payload);
@@ -408,11 +326,11 @@ async function handleDeleteRoom(
       return;
     }
 
-    if (shouldResetInsteadOfDelete?.(room)) {
+    if (deps.shouldResetInsteadOfDelete?.(room)) {
       await roomService.resetVisibilityForUser(room, userId);
       const summary = await roomService.buildSummary(room, userId);
       socket.emit('room:new', { room: summary, messages: [] });
-      onRoomCreated?.({ io, room });
+      deps.onRoomCreated?.({ io, room });
       return;
     }
 
@@ -424,18 +342,13 @@ async function handleDeleteRoom(
   }
 }
 
-async function handleLeaveGroup(
-  socket: AppSocket,
-  roomService: RoomService,
-  userService: UserService,
-  messageService: MessageService,
-  payload: unknown,
-): Promise<void> {
-  const userId = socket.data.userId;
+async function handleLeaveGroup(socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
+
+  const { roomService, userService, messageService } = deps;
 
   try {
     const { roomId } = roomIdPayloadSchema.parse(payload);
@@ -445,11 +358,7 @@ async function handleLeaveGroup(
     socket.emit('group:left', { roomId });
 
     if (updatedRoom && user) {
-      const remainingRecords = await Promise.all(updatedRoom.participants.map((id) => userService.getUser(id)));
-      const remainingAdmins = new Set(updatedRoom.admins);
-      const remaining = remainingRecords
-        .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
-        .map((participant) => roomService.toParticipantView(participant, remainingAdmins.has(participant.id)));
+      const remaining = await roomService.buildParticipantViews(updatedRoom);
 
       socket.to(roomId).emit('group:user-left', {
         roomId,
@@ -468,19 +377,13 @@ async function handleLeaveGroup(
   }
 }
 
-async function handleRemoveMember(
-  io: AppServer,
-  socket: AppSocket,
-  roomService: RoomService,
-  userService: UserService,
-  messageService: MessageService,
-  payload: unknown,
-): Promise<void> {
-  const actingUserId = socket.data.userId;
+async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const actingUserId = requireSocketUserId(socket);
   if (!actingUserId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
+
+  const { roomService, userService, messageService } = deps;
 
   try {
     const { roomId, userId: targetUserId } = memberActionPayloadSchema.parse(payload);
@@ -494,11 +397,7 @@ async function handleRemoveMember(
       return;
     }
 
-    const remainingRecords = await Promise.all(updatedRoom.participants.map((id) => userService.getUser(id)));
-    const remainingAdmins = new Set(updatedRoom.admins);
-    const remaining = remainingRecords
-      .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
-      .map((participant) => roomService.toParticipantView(participant, remainingAdmins.has(participant.id)));
+    const remaining = await roomService.buildParticipantViews(updatedRoom);
 
     io.to(roomId).emit('group:user-left', {
       roomId,
@@ -523,19 +422,13 @@ async function handleRemoveMember(
   }
 }
 
-async function handlePromoteAdmin(
-  io: AppServer,
-  socket: AppSocket,
-  roomService: RoomService,
-  userService: UserService,
-  messageService: MessageService,
-  payload: unknown,
-): Promise<void> {
-  const actingUserId = socket.data.userId;
+async function handlePromoteAdmin(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const actingUserId = requireSocketUserId(socket);
   if (!actingUserId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
+
+  const { roomService, userService, messageService } = deps;
 
   try {
     const { roomId, userId: targetUserId } = memberActionPayloadSchema.parse(payload);
@@ -549,12 +442,7 @@ async function handlePromoteAdmin(
       return;
     }
 
-    const participantRecords = await Promise.all(updatedRoom.participants.map((id) => userService.getUser(id)));
-    const admins = new Set(updatedRoom.admins);
-    const participants = participantRecords
-      .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
-      .map((participant) => roomService.toParticipantView(participant, admins.has(participant.id)));
-
+    const participants = await roomService.buildParticipantViews(updatedRoom);
     io.to(roomId).emit('group:participants-updated', { roomId, participants });
 
     const systemMessage = await messageService.createSystemMessage(
@@ -567,29 +455,22 @@ async function handlePromoteAdmin(
   }
 }
 
-async function handleBlockUser(
-  io: AppServer,
-  socket: AppSocket,
-  roomService: RoomService,
-  userService: UserService,
-  payload: unknown,
-): Promise<void> {
-  const userId = socket.data.userId;
+async function handleBlockUser(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
   try {
     const { roomId, blockedUserId } = blockPayloadSchema.parse(payload);
-    const room = await roomService.blockUser(roomId, userId, blockedUserId);
+    const room = await deps.roomService.blockUser(roomId, userId, blockedUserId);
     if (!room) {
       return;
     }
 
     socket.emit('user:blocked', { roomId, blockedUserId, blockedBy: room.blockedBy, isBlocking: true });
 
-    const blockedUser = await userService.getUser(blockedUserId);
+    const blockedUser = await deps.userService.getUser(blockedUserId);
     if (blockedUser?.socketId) {
       io.to(blockedUser.socketId).emit('user:blocked', {
         roomId,
@@ -603,29 +484,22 @@ async function handleBlockUser(
   }
 }
 
-async function handleUnblockUser(
-  io: AppServer,
-  socket: AppSocket,
-  roomService: RoomService,
-  userService: UserService,
-  payload: unknown,
-): Promise<void> {
-  const userId = socket.data.userId;
+async function handleUnblockUser(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
   try {
     const { roomId, blockedUserId } = blockPayloadSchema.parse(payload);
-    const room = await roomService.unblockUser(roomId, userId, blockedUserId);
+    const room = await deps.roomService.unblockUser(roomId, userId, blockedUserId);
     if (!room) {
       return;
     }
 
     socket.emit('user:unblocked', { roomId, blockedUserId, blockedBy: room.blockedBy, isBlocking: true });
 
-    const blockedUser = await userService.getUser(blockedUserId);
+    const blockedUser = await deps.userService.getUser(blockedUserId);
     if (blockedUser?.socketId) {
       io.to(blockedUser.socketId).emit('user:unblocked', {
         roomId,
@@ -639,19 +513,13 @@ async function handleUnblockUser(
   }
 }
 
-async function handlePublishRoomKey(
-  io: AppServer,
-  socket: AppSocket,
-  roomService: RoomService,
-  userService: UserService,
-  roomKeyRepository: RoomKeyRepository,
-  payload: unknown,
-): Promise<void> {
-  const actingUserId = socket.data.userId;
+async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const actingUserId = requireSocketUserId(socket);
   if (!actingUserId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
+
+  const { roomService, userService, roomKeyRepository } = deps;
 
   try {
     const { roomId, keys } = publishRoomKeyPayloadSchema.parse(payload);
@@ -679,17 +547,13 @@ async function handlePublishRoomKey(
   }
 }
 
-async function handleGetRoomKeys(
-  socket: AppSocket,
-  roomService: RoomService,
-  roomKeyRepository: RoomKeyRepository,
-  payload: unknown,
-): Promise<void> {
-  const userId = socket.data.userId;
+async function handleGetRoomKeys(socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
+
+  const { roomService, roomKeyRepository } = deps;
 
   try {
     const { roomIds } = getRoomKeysPayloadSchema.parse(payload);
@@ -713,17 +577,16 @@ async function handleGetRoomKeys(
   }
 }
 
-async function handleRequestRoomKey(socket: AppSocket, roomService: RoomService, payload: unknown): Promise<void> {
-  const userId = socket.data.userId;
+async function handleRequestRoomKey(socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
   try {
     const { roomId } = roomIdPayloadSchema.parse(payload);
-    const room = await roomService.getRoomById(roomId);
-    if (!room || !roomService.isParticipant(room, userId)) {
+    const room = await deps.roomService.getRoomById(roomId);
+    if (!room || !deps.roomService.isParticipant(room, userId)) {
       return;
     }
 

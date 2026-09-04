@@ -30,7 +30,7 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
     passwordHash: row.passwordHash,
     recoveryTokenHash: row.recoveryTokenHash,
     socketId: socketIdsByUserId.get(row.id) ?? '',
-    status: row.status as UserRecord['status'],
+    status: row.status,
     statusText: row.statusText ?? null,
     createdAt: row.createdAt,
     lastSeen: row.lastSeen,
@@ -46,11 +46,6 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
 
 export class UserRepository {
   constructor(private readonly db: Database) {}
-
-  async findAll(): Promise<UserRecord[]> {
-    const rows = await this.db.select().from(users);
-    return rows.map(toRecord);
-  }
 
   async findById(id: string): Promise<UserRecord | null> {
     const [row] = await this.db.select().from(users).where(eq(users.id, id));
@@ -69,10 +64,14 @@ export class UserRepository {
       passwordHash: user.passwordHash,
       recoveryTokenHash: user.recoveryTokenHash,
       status: user.status,
+      statusText: user.statusText,
       createdAt: user.createdAt,
       lastSeen: user.lastSeen,
       themeBaseTheme: user.theme?.baseTheme,
       themeColorTheme: user.theme?.colorTheme,
+      e2ePublicKey: user.e2ePublicKey,
+      e2eEncryptedPrivateKeyByPassword: user.e2eEncryptedPrivateKeyByPassword,
+      e2eEncryptedPrivateKeyByRecovery: user.e2eEncryptedPrivateKeyByRecovery,
     });
 
     return user;

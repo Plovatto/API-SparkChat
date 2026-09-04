@@ -1,7 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { sessions } from '../../database/schema.js';
-import type { AuthMethod } from './user.model.js';
 import type { SessionRecord } from './user.types.js';
 
 function toRecord(row: typeof sessions.$inferSelect): SessionRecord {
@@ -9,7 +8,7 @@ function toRecord(row: typeof sessions.$inferSelect): SessionRecord {
     id: row.id,
     userId: row.userId,
     tokenHash: row.tokenHash,
-    authMethod: row.authMethod as AuthMethod,
+    authMethod: row.authMethod,
     userAgent: row.userAgent,
     createdAt: row.createdAt,
     lastUsedAt: row.lastUsedAt,

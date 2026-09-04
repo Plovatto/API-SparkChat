@@ -27,11 +27,9 @@ export function isValidNicknameFormat(nickname: string): boolean {
   return letterCount >= NICKNAME_MIN_LETTERS;
 }
 
-export const authMethodSchema = z.enum(['password', 'keyfile']).openapi('AuthMethod');
+export type AuthMethod = 'password' | 'keyfile';
 
-export type AuthMethod = z.infer<typeof authMethodSchema>;
-
-export const userStatusSchema = z.enum(['online', 'offline']).openapi('UserStatus');
+const userStatusSchema = z.enum(['online', 'offline']).openapi('UserStatus');
 
 export type UserStatus = z.infer<typeof userStatusSchema>;
 
@@ -61,15 +59,11 @@ export const nicknameAvailabilityStatusSchema = z.enum(['available', 'taken', 'i
 
 export type NicknameAvailabilityStatus = z.infer<typeof nicknameAvailabilityStatusSchema>;
 
-export const sessionRecordSchema = z
-  .object({
-    id: z.string().openapi({ example: '3e3f4a1e-3b7a-4f7b-8f2a-2b7a7b9b2b2a' }),
-    authMethod: authMethodSchema,
-    device: z.string().openapi({ example: 'Chrome · Windows' }),
-    createdAt: z.string().openapi({ example: '2026-01-01T00:00:00.000Z' }),
-    lastUsedAt: z.string().openapi({ example: '2026-01-01T00:00:00.000Z' }),
-    isCurrent: z.boolean().openapi({ example: true }),
-  })
-  .openapi('SessionSummary');
-
-export type SessionSummary = z.infer<typeof sessionRecordSchema>;
+export interface SessionSummary {
+  id: string;
+  authMethod: AuthMethod;
+  device: string;
+  createdAt: string;
+  lastUsedAt: string;
+  isCurrent: boolean;
+}

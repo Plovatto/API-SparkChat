@@ -123,11 +123,6 @@ export class MessageService {
     return updated;
   }
 
-  async getLastMessage(roomId: string): Promise<MessageRecord | null> {
-    const messages = await this.repository.findByRoomId(roomId);
-    return messages.length > 0 ? (messages[messages.length - 1] ?? null) : null;
-  }
-
   async markRoomAsRead(roomId: string, userId: string, messageIds?: string[]): Promise<MessageRecord[]> {
     const messages =
       messageIds && messageIds.length > 0
