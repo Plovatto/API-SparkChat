@@ -97,6 +97,31 @@ describe('POST /api/messages/upload-image', () => {
 
     expect(response.status).toBe(400);
   });
+
+  it('skips the content-signature check and marks the url when the upload is end-to-end encrypted', async () => {
+    const response = await request(app)
+      .post('/api/messages/upload-image')
+      .set('Authorization', authHeader)
+      .field('encrypted', '1')
+      .attach('image', Buffer.from('this is opaque ciphertext, not a real png'), {
+        filename: 'photo.png',
+        contentType: 'image/png',
+      });
+
+    const body = response.body as { url: string };
+    expect(response.status).toBe(201);
+    expect(body.url).toMatch(/^\/uploads\/images\/.+\.png\?e2e=1$/);
+  });
+
+  it('still enforces the mimetype and extension allowlist for encrypted uploads', async () => {
+    const response = await request(app)
+      .post('/api/messages/upload-image')
+      .set('Authorization', authHeader)
+      .field('encrypted', '1')
+      .attach('image', Buffer.from('ciphertext'), { filename: 'evil.exe', contentType: 'application/x-msdownload' });
+
+    expect(response.status).toBe(400);
+  });
 });
 
 describe('POST /api/messages/upload-audio', () => {

@@ -20,6 +20,7 @@ export interface MessageClientToServerEvents {
     replyToMessageId?: string;
     clientTempId?: string | undefined;
     fileMeta?: MessageFileMeta;
+    mentionedUserIds?: string[];
   }) => void;
   'message:mark-read': (payload: { roomId: string; messageIds?: string[] }) => void;
   'messages:get': (payload: { roomId: string; before?: string; limit?: number }) => void;
