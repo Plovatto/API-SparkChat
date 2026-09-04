@@ -130,17 +130,21 @@ src/
 ├── app.ts             # Monta o Express app (usado em produção e nos testes)
 ├── config/            # Variáveis de ambiente, logger e caminhos de upload
 ├── database/          # Schema Drizzle, client Turso/libSQL e migrations
-├── docs/              # Registro OpenAPI e geração do documento servido em /docs
-├── middleware/        # Tratamento de erros e middlewares HTTP
+├── docs/              # Registro OpenAPI, registro de eventos Socket.IO e geração da página /docs
+├── lib/               # Utilitários compartilhados entre módulos (ex.: contador de janela deslizante)
+├── middleware/        # Autenticação, rate limit, wrapper async e tratamento de erros HTTP
 ├── modules/
-│   └── users/         # Model, types, repository, service, controller, routes e socket da entidade User
+│   ├── ai/            # Assistente SparkAI (identidade E2E, provider Gemini, limites e resposta)
+│   ├── link-preview/  # Preview de links (fetch com proteção SSRF, cache e proxy de imagem)
+│   ├── messages/      # Mensagens, uploads, presença, digitação e gravação
+│   ├── rooms/         # Salas privadas e grupos, chaves E2E de sala
+│   └── users/         # Contas, sessões, arquivo de recuperação e chaves E2E do usuário
 ├── routes/            # Monta as rotas de cada módulo sob /api
-├── sockets/           # Contratos e registro de conexões do Socket.IO
+├── sockets/           # Contratos, helpers e registro de conexões do Socket.IO
 └── server.ts          # Ponto de entrada: cria o app, o socket.io e sobe o servidor
 
 test/
-├── support/                 # Helpers de teste (ex.: app com storage isolado)
-├── health.test.ts           # Teste do health check
-└── users.routes.test.ts     # Testes da rota /api/users
+├── support/           # Helpers de teste (app e serviços com banco em memória isolado)
+└── *.test.ts          # Testes unitários e de rota de cada módulo
 ```
 

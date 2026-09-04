@@ -1,4 +1,3 @@
-
 export const downloadButtonScript = `
 (function () {
   window.addEventListener('load', function () {
