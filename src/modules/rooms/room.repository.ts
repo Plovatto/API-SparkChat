@@ -2,7 +2,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { Database } from '../../database/turso-client.js';
 import { roomParticipants, rooms } from '../../database/schema.js';
-import type { RoomRecord, RoomType } from './room.types.js';
+import type { RoomRecord } from './room.types.js';
 
 type RoomRow = typeof rooms.$inferSelect;
 type ParticipantRow = typeof roomParticipants.$inferSelect;
@@ -30,7 +30,7 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
 
   return {
     id: room.id,
-    type: room.type as RoomType,
+    type: room.type,
     name: room.name ?? undefined,
     roomCode: room.roomCode ?? undefined,
     participants: participants.map((participant) => participant.userId),
@@ -49,14 +49,6 @@ const rp2 = alias(roomParticipants, 'rp2');
 
 export class RoomRepository {
   constructor(private readonly db: Database) {}
-
-  async findAll(): Promise<RoomRecord[]> {
-    const [roomRows, participantRows] = await Promise.all([
-      this.db.select().from(rooms),
-      this.db.select().from(roomParticipants).orderBy(sql`rowid`),
-    ]);
-    return roomRows.map((room) => toRoomRecord(room, participantRows.filter((p) => p.roomId === room.id)));
-  }
 
   async findById(id: string): Promise<RoomRecord | null> {
     const [[room], participants] = await Promise.all([

@@ -11,47 +11,47 @@ export const linkPreviewRequestSchema = z
 export const linkPreviewResponseSchema = z
   .object({
     url: z.string().openapi({ example: 'https://example.com/article' }),
-    title: z.string().openapi({ example: 'TÌtulo do artigo' }),
+    title: z.string().openapi({ example: 'T√≠tulo do artigo' }),
     description: z.string().nullable().openapi({ example: 'Resumo do artigo.' }),
     imageUrl: z.string().nullable().openapi({ example: 'https://example.com/cover.jpg' }),
     siteName: z.string().nullable().openapi({ example: 'Example' }),
   })
   .openapi('LinkPreviewResponse');
 
-export const linkPreviewImageQuerySchema = z.object({ url: z.string().trim().url().max(2000) });
+const INVALID_URL_MESSAGE = 'URL inv√°lida.';
 
 export function createLinkPreviewController(service: LinkPreviewService) {
-  return {
-    async getPreview(req: Request, res: Response): Promise<void> {
-      const parsed = linkPreviewRequestSchema.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ message: 'URL inv·lida.' });
-        return;
-      }
+  const getPreview = async (req: Request, res: Response): Promise<void> => {
+    const parsed = linkPreviewRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ message: INVALID_URL_MESSAGE });
+      return;
+    }
 
-      const preview = await service.getPreview(parsed.data.url).catch(() => null);
-      if (!preview) {
-        res.status(422).json({ message: 'N„o foi possÌvel gerar um preview para essa URL.' });
-        return;
-      }
+    const preview = await service.getPreview(parsed.data.url).catch(() => null);
+    if (!preview) {
+      res.status(422).json({ message: 'N√£o foi poss√≠vel gerar um preview para essa URL.' });
+      return;
+    }
 
-      res.status(200).json(preview);
-    },
-
-    async getImage(req: Request, res: Response): Promise<void> {
-      const parsed = linkPreviewImageQuerySchema.safeParse(req.query);
-      if (!parsed.success) {
-        res.status(400).json({ message: 'URL inv·lida.' });
-        return;
-      }
-
-      const image = await fetchProxiedImage(parsed.data.url).catch(() => null);
-      if (!image) {
-        res.status(422).json({ message: 'N„o foi possÌvel carregar essa imagem.' });
-        return;
-      }
-
-      res.status(200).set('Content-Type', image.contentType).set('Cache-Control', 'public, max-age=86400').send(image.body);
-    },
+    res.status(200).json(preview);
   };
+
+  const getImage = async (req: Request, res: Response): Promise<void> => {
+    const parsed = linkPreviewRequestSchema.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ message: INVALID_URL_MESSAGE });
+      return;
+    }
+
+    const image = await fetchProxiedImage(parsed.data.url).catch(() => null);
+    if (!image) {
+      res.status(422).json({ message: 'N√£o foi poss√≠vel carregar essa imagem.' });
+      return;
+    }
+
+    res.status(200).set('Content-Type', image.contentType).set('Cache-Control', 'public, max-age=86400').send(image.body);
+  };
+
+  return { getPreview, getImage };
 }

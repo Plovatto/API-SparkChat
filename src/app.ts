@@ -1,7 +1,6 @@
 import path from 'node:path';
 import cors from 'cors';
 import express, { type Express } from 'express';
-import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 import swaggerUi from 'swagger-ui-express';
@@ -15,6 +14,7 @@ import { registry } from './docs/registry.js';
 import { listSocketEvents } from './docs/socket-registry.js';
 import { socketEventsPanelScript } from './docs/socket-events-panel.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { createRateLimiter } from './middleware/rate-limit.js';
 import { createApiRouter, type ApiRouterDeps } from './routes/index.js';
 
 const healthResponseSchema = z
@@ -26,13 +26,9 @@ const healthResponseSchema = z
 
 const INLINE_SAFE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.mov', '.avi']);
 
-const apiRateLimiter = rateLimit({
-  windowMs: 60 * 1000,
+const apiRateLimiter = createRateLimiter({
   limit: 300,
-  standardHeaders: true,
-  legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
-  message: { message: 'Muitas requisições em pouco tempo. Aguarde e tente novamente.' },
+  message: 'Muitas requisições em pouco tempo. Aguarde e tente novamente.',
 });
 
 registry.registerPath({

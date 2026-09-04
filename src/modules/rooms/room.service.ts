@@ -10,6 +10,18 @@ export interface JoinByCodeResult {
   joined: boolean;
 }
 
+function toParticipant(user: UserRecord, isAdmin: boolean): RoomParticipant {
+  return {
+    id: user.id,
+    nickname: user.nickname,
+    avatar: user.avatar,
+    status: user.status,
+    statusText: user.statusText,
+    lastSeen: user.lastSeen,
+    isAdmin,
+  };
+}
+
 export class RoomService {
   constructor(
     private readonly repository: RoomRepository,
@@ -241,12 +253,17 @@ export class RoomService {
     return Promise.all(rooms.map((room) => this.buildSummary(room, userId)));
   }
 
-  async buildSummary(room: RoomRecord, viewerId: string): Promise<RoomSummary> {
+  async buildParticipantViews(room: RoomRecord): Promise<RoomParticipant[]> {
     const participantRecords = await Promise.all(room.participants.map((id) => this.userService.getUser(id)));
     const admins = new Set(room.admins);
-    const participants = participantRecords
+
+    return participantRecords
       .filter((user): user is UserRecord => user !== null)
       .map((user) => toParticipant(user, admins.has(user.id)));
+  }
+
+  async buildSummary(room: RoomRecord, viewerId: string): Promise<RoomSummary> {
+    const participants = await this.buildParticipantViews(room);
 
     const creator = room.createdBy ? await this.userService.getUser(room.createdBy) : null;
     const isBlockedBy = Boolean(room.blockedBy[viewerId]);
@@ -277,10 +294,6 @@ export class RoomService {
     };
   }
 
-  toParticipantView(user: UserRecord, isAdmin: boolean): RoomParticipant {
-    return toParticipant(user, isAdmin);
-  }
-
   private async makeVisible(room: RoomRecord, userId: string): Promise<RoomRecord> {
     const visibleTo = room.visibleTo.includes(userId) ? room.visibleTo : [...room.visibleTo, userId];
     const reactivatedAt = { ...room.reactivatedAt, [userId]: new Date().toISOString() };
@@ -288,16 +301,4 @@ export class RoomService {
 
     return updated ?? room;
   }
-}
-
-function toParticipant(user: UserRecord, isAdmin: boolean): RoomParticipant {
-  return {
-    id: user.id,
-    nickname: user.nickname,
-    avatar: user.avatar,
-    status: user.status,
-    statusText: user.statusText,
-    lastSeen: user.lastSeen,
-    isAdmin,
-  };
 }

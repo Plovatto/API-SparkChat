@@ -5,6 +5,8 @@ import '../../docs/zod-extend.js';
 import { audioUrlPath, fileUrlPath, imageUrlPath } from '../../config/paths.js';
 import { verifyFileSignature } from './message.file-signature.js';
 
+const INVALID_CONTENT_MESSAGE = 'O conteúdo do arquivo não corresponde ao tipo declarado.';
+
 function decodeOriginalFilename(originalname: string): string {
   return Buffer.from(originalname, 'latin1').toString('utf8');
 }
@@ -34,68 +36,52 @@ export const fileUploadResponseSchema = z
   })
   .openapi('FileUploadResponse');
 
+interface UploadHandlerOptions<TResponse> {
+  missingFileMessage: string;
+  buildUrl: (filename: string) => string;
+  buildResponse: (file: Express.Multer.File, url: string) => TResponse;
+}
+
+function createUploadHandler<TResponse>({ missingFileMessage, buildUrl, buildResponse }: UploadHandlerOptions<TResponse>) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ message: missingFileMessage });
+      return;
+    }
+
+    const encrypted = isEncryptedUpload(req);
+    if (!encrypted && !(await verifyFileSignature(file.path, file.mimetype))) {
+      await rm(file.path, { force: true });
+      res.status(400).json({ message: INVALID_CONTENT_MESSAGE });
+      return;
+    }
+
+    res.status(201).json(buildResponse(file, withEncryptedMarker(buildUrl(file.filename), encrypted)));
+  };
+}
+
 export function createMessageController() {
   return {
-    async uploadImage(req: Request, res: Response): Promise<void> {
-      if (!req.file) {
-        res.status(400).json({ message: 'Nenhuma imagem enviada.' });
-        return;
-      }
-
-      const encrypted = isEncryptedUpload(req);
-      if (!encrypted) {
-        const isValid = await verifyFileSignature(req.file.path, req.file.mimetype);
-        if (!isValid) {
-          await rm(req.file.path, { force: true });
-          res.status(400).json({ message: 'O conteúdo do arquivo não corresponde ao tipo declarado.' });
-          return;
-        }
-      }
-
-      res.status(201).json({ url: withEncryptedMarker(imageUrlPath(req.file.filename), encrypted), mimeType: req.file.mimetype });
-    },
-
-    async uploadAudio(req: Request, res: Response): Promise<void> {
-      if (!req.file) {
-        res.status(400).json({ message: 'Nenhum áudio enviado.' });
-        return;
-      }
-
-      const encrypted = isEncryptedUpload(req);
-      if (!encrypted) {
-        const isValid = await verifyFileSignature(req.file.path, req.file.mimetype);
-        if (!isValid) {
-          await rm(req.file.path, { force: true });
-          res.status(400).json({ message: 'O conteúdo do arquivo não corresponde ao tipo declarado.' });
-          return;
-        }
-      }
-
-      res.status(201).json({ url: withEncryptedMarker(audioUrlPath(req.file.filename), encrypted), mimeType: req.file.mimetype });
-    },
-
-    async uploadFile(req: Request, res: Response): Promise<void> {
-      if (!req.file) {
-        res.status(400).json({ message: 'Nenhum arquivo enviado.' });
-        return;
-      }
-
-      const encrypted = isEncryptedUpload(req);
-      if (!encrypted) {
-        const isValid = await verifyFileSignature(req.file.path, req.file.mimetype);
-        if (!isValid) {
-          await rm(req.file.path, { force: true });
-          res.status(400).json({ message: 'O conteúdo do arquivo não corresponde ao tipo declarado.' });
-          return;
-        }
-      }
-
-      res.status(201).json({
-        url: withEncryptedMarker(fileUrlPath(req.file.filename), encrypted),
-        name: decodeOriginalFilename(req.file.originalname),
-        mimeType: req.file.mimetype,
-        size: req.file.size,
-      });
-    },
+    uploadImage: createUploadHandler({
+      missingFileMessage: 'Nenhuma imagem enviada.',
+      buildUrl: imageUrlPath,
+      buildResponse: (file, url) => ({ url, mimeType: file.mimetype }),
+    }),
+    uploadAudio: createUploadHandler({
+      missingFileMessage: 'Nenhum áudio enviado.',
+      buildUrl: audioUrlPath,
+      buildResponse: (file, url) => ({ url, mimeType: file.mimetype }),
+    }),
+    uploadFile: createUploadHandler({
+      missingFileMessage: 'Nenhum arquivo enviado.',
+      buildUrl: fileUrlPath,
+      buildResponse: (file, url) => ({
+        url,
+        name: decodeOriginalFilename(file.originalname),
+        mimeType: file.mimetype,
+        size: file.size,
+      }),
+    }),
   };
 }
