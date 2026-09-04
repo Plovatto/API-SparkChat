@@ -1,3 +1,5 @@
+export { RoomKeyRepository } from './room.e2e.js';
+export type { RoomKeyEntry } from './room.e2e.js';
 export { RoomRepository } from './room.repository.js';
 export { RoomService } from './room.service.js';
 export { registerRoomSocketHandlers } from './room.socket.js';

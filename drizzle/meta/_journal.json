@@ -57,6 +57,20 @@
       "when": 1788729600000,
       "tag": "0007_message_file_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1788816000000,
+      "tag": "0008_sweet_lord_tyger",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1788902400000,
+      "tag": "0009_lean_gauntlet",
+      "breakpoints": true
     }
   ]
 }
