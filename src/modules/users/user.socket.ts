@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import { registerSocketEvent } from '../../docs/socket-registry.js';
+import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
+import { extractErrorMessage } from '../../sockets/socket-errors.js';
+import { clearSocketSession, requireSocketUserId } from '../../sockets/socket-session.js';
 import type { MessageService } from '../messages/index.js';
 import type { RoomService } from '../rooms/index.js';
 import { describeDevice } from './user.device.js';
@@ -15,6 +16,13 @@ import {
   userThemeSchema,
 } from './user.model.js';
 import type { UserService } from './user.service.js';
+
+export interface UserSocketDeps {
+  userService: UserService;
+  roomService: RoomService;
+  messageService: MessageService;
+  loginRateLimiter: LoginRateLimiter;
+}
 
 const joinPayloadSchema = z.discriminatedUnion('mode', [
   z.object({
@@ -52,155 +60,94 @@ const revokeSessionPayloadSchema = z.object({
   sessionId: z.string().trim().min(1),
 });
 
-registerSocketEvent({
-  event: 'user:join',
-  direction: 'client-to-server',
-  module: 'users',
-  payloadSchema: zodToJsonSchema(joinPayloadSchema),
+registerClientEvents('users', {
+  'user:join': joinPayloadSchema,
+  'user:update-profile': updateProfilePayloadSchema,
+  'user:update-status-text': updateStatusTextPayloadSchema,
+  'user:update-theme': userThemeSchema,
+  'user:visibility': visibilityPayloadSchema,
+  'user:change-password': changePasswordPayloadSchema,
+  'user:regenerate-recovery-file': null,
+  'user:list-sessions': null,
+  'user:revoke-session': revokeSessionPayloadSchema,
+  'e2e:publish-keys': publishE2eKeysPayloadSchema,
+  'e2e:get-public-keys': getPublicKeysPayloadSchema,
+  'e2e:get-my-keys': null,
 });
-registerSocketEvent({
-  event: 'user:update-profile',
-  direction: 'client-to-server',
-  module: 'users',
-  payloadSchema: zodToJsonSchema(updateProfilePayloadSchema),
-});
-registerSocketEvent({
-  event: 'user:update-status-text',
-  direction: 'client-to-server',
-  module: 'users',
-  payloadSchema: zodToJsonSchema(updateStatusTextPayloadSchema),
-});
-registerSocketEvent({
-  event: 'user:update-theme',
-  direction: 'client-to-server',
-  module: 'users',
-  payloadSchema: zodToJsonSchema(userThemeSchema),
-});
-registerSocketEvent({
-  event: 'user:visibility',
-  direction: 'client-to-server',
-  module: 'users',
-  payloadSchema: zodToJsonSchema(visibilityPayloadSchema),
-});
-registerSocketEvent({
-  event: 'user:change-password',
-  direction: 'client-to-server',
-  module: 'users',
-  payloadSchema: zodToJsonSchema(changePasswordPayloadSchema),
-});
-registerSocketEvent({ event: 'user:regenerate-recovery-file', direction: 'client-to-server', module: 'users' });
-registerSocketEvent({ event: 'user:list-sessions', direction: 'client-to-server', module: 'users' });
-registerSocketEvent({
-  event: 'user:revoke-session',
-  direction: 'client-to-server',
-  module: 'users',
-  payloadSchema: zodToJsonSchema(revokeSessionPayloadSchema),
-});
-registerSocketEvent({ event: 'user:session-revoked', direction: 'server-to-client', module: 'users' });
-registerSocketEvent({
-  event: 'e2e:publish-keys',
-  direction: 'client-to-server',
-  module: 'users',
-  payloadSchema: zodToJsonSchema(publishE2eKeysPayloadSchema),
-});
-registerSocketEvent({
-  event: 'e2e:get-public-keys',
-  direction: 'client-to-server',
-  module: 'users',
-  payloadSchema: zodToJsonSchema(getPublicKeysPayloadSchema),
-});
-registerSocketEvent({ event: 'e2e:get-my-keys', direction: 'client-to-server', module: 'users' });
-registerSocketEvent({ event: 'e2e:public-keys', direction: 'server-to-client', module: 'users' });
-registerSocketEvent({ event: 'e2e:my-keys', direction: 'server-to-client', module: 'users' });
-registerSocketEvent({ event: 'user:registered', direction: 'server-to-client', module: 'users' });
-registerSocketEvent({ event: 'user:resumed', direction: 'server-to-client', module: 'users' });
-registerSocketEvent({ event: 'user:online', direction: 'server-to-client', module: 'users' });
-registerSocketEvent({ event: 'user:offline', direction: 'server-to-client', module: 'users' });
-registerSocketEvent({ event: 'user:profile-updated', direction: 'server-to-client', module: 'users' });
-registerSocketEvent({ event: 'user:profile-updated-success', direction: 'server-to-client', module: 'users' });
-registerSocketEvent({ event: 'user:password-changed', direction: 'server-to-client', module: 'users' });
-registerSocketEvent({ event: 'user:recovery-file-regenerated', direction: 'server-to-client', module: 'users' });
-registerSocketEvent({ event: 'user:sessions', direction: 'server-to-client', module: 'users' });
-registerSocketEvent({ event: 'error', direction: 'server-to-client', module: 'users' });
 
-function extractErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
+registerServerEvents('users', [
+  'user:registered',
+  'user:resumed',
+  'user:online',
+  'user:offline',
+  'user:profile-updated',
+  'user:profile-updated-success',
+  'user:password-changed',
+  'user:recovery-file-regenerated',
+  'user:sessions',
+  'user:session-revoked',
+  'e2e:public-keys',
+  'e2e:my-keys',
+  'error',
+]);
 
-  return 'Erro inesperado.';
-}
-
-export function registerUserSocketHandlers(
-  io: AppServer,
-  socket: AppSocket,
-  userService: UserService,
-  roomService: RoomService,
-  messageService: MessageService,
-  loginRateLimiter: LoginRateLimiter,
-): void {
+export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, deps: UserSocketDeps): void {
   socket.on('user:join', (payload) => {
-    void handleJoin(io, socket, userService, roomService, messageService, loginRateLimiter, payload);
+    void handleJoin(io, socket, deps, payload);
   });
 
   socket.on('user:update-profile', (payload) => {
-    void handleUpdateProfile(io, socket, userService, payload);
+    void handleUpdateProfile(io, socket, deps, payload);
   });
 
   socket.on('user:update-status-text', (payload) => {
-    void handleUpdateStatusText(io, socket, userService, payload);
+    void handleUpdateStatusText(io, socket, deps, payload);
   });
 
   socket.on('user:update-theme', (payload) => {
-    void handleUpdateTheme(socket, userService, payload);
+    void handleUpdateTheme(socket, deps, payload);
   });
 
   socket.on('user:visibility', (payload) => {
-    void handleVisibility(io, socket, userService, roomService, messageService, payload);
+    void handleVisibility(io, socket, deps, payload);
   });
 
   socket.on('user:change-password', (payload) => {
-    void handleChangePassword(socket, userService, payload);
+    void handleChangePassword(socket, deps, payload);
   });
 
   socket.on('user:regenerate-recovery-file', () => {
-    void handleRegenerateRecoveryFile(socket, userService);
+    void handleRegenerateRecoveryFile(socket, deps);
   });
 
   socket.on('user:list-sessions', () => {
-    void handleListSessions(socket, userService);
+    void handleListSessions(socket, deps);
   });
 
   socket.on('user:revoke-session', (payload) => {
-    void handleRevokeSession(io, socket, userService, payload);
+    void handleRevokeSession(io, socket, deps, payload);
   });
 
   socket.on('e2e:publish-keys', (payload) => {
-    void handlePublishE2eKeys(socket, userService, payload);
+    void handlePublishE2eKeys(socket, deps, payload);
   });
 
   socket.on('e2e:get-public-keys', (payload) => {
-    void handleGetPublicKeys(socket, userService, payload);
+    void handleGetPublicKeys(socket, deps, payload);
   });
 
   socket.on('e2e:get-my-keys', () => {
-    void handleGetMyKeys(socket, userService);
+    void handleGetMyKeys(socket, deps);
   });
 
   socket.on('disconnect', () => {
-    void handleDisconnect(io, socket, userService);
+    void handleDisconnect(io, socket, deps);
   });
 }
 
-async function handleJoin(
-  io: AppServer,
-  socket: AppSocket,
-  userService: UserService,
-  roomService: RoomService,
-  messageService: MessageService,
-  loginRateLimiter: LoginRateLimiter,
-  payload: unknown,
-): Promise<void> {
+async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+  const { userService, loginRateLimiter } = deps;
+
   try {
     const input = joinPayloadSchema.parse(payload);
 
@@ -231,7 +178,7 @@ async function handleJoin(
         authMethod: 'password',
       });
       socket.broadcast.emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
-      await deliverPendingMessages(io, roomService, messageService, user.id);
+      await deliverPendingMessages(io, deps, user.id);
       return;
     }
 
@@ -247,18 +194,14 @@ async function handleJoin(
     socket.data.sessionId = sessionId;
     socket.emit('user:resumed', { user: userService.toPublicUser(user), authMethod });
     socket.broadcast.emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
-    await deliverPendingMessages(io, roomService, messageService, user.id);
+    await deliverPendingMessages(io, deps, user.id);
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
 }
 
-async function deliverPendingMessages(
-  io: AppServer,
-  roomService: RoomService,
-  messageService: MessageService,
-  userId: string,
-): Promise<void> {
+async function deliverPendingMessages(io: AppServer, deps: UserSocketDeps, userId: string): Promise<void> {
+  const { roomService, messageService } = deps;
   const rooms = await roomService.getVisibleRoomsForUser(userId);
 
   for (const room of rooms) {
@@ -270,21 +213,15 @@ async function deliverPendingMessages(
   }
 }
 
-async function handleUpdateProfile(
-  io: AppServer,
-  socket: AppSocket,
-  userService: UserService,
-  payload: unknown,
-): Promise<void> {
-  const userId = socket.data.userId;
+async function handleUpdateProfile(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
   try {
     const { nickname, avatar } = updateProfilePayloadSchema.parse(payload);
-    const result = await userService.updateProfile(userId, { nickname, avatar });
+    const result = await deps.userService.updateProfile(userId, { nickname, avatar });
 
     if (!result) {
       socket.emit('error', { message: 'Usuário não encontrado.' });
@@ -298,7 +235,7 @@ async function handleUpdateProfile(
       statusText: result.user.statusText,
     });
     socket.emit('user:profile-updated-success', {
-      user: userService.toPublicUser(result.user),
+      user: deps.userService.toPublicUser(result.user),
       recoveryFile: result.recoveryFile ? result.recoveryFile.toString('base64') : null,
       recoveryToken: result.recoveryToken,
     });
@@ -307,21 +244,15 @@ async function handleUpdateProfile(
   }
 }
 
-async function handleUpdateStatusText(
-  io: AppServer,
-  socket: AppSocket,
-  userService: UserService,
-  payload: unknown,
-): Promise<void> {
-  const userId = socket.data.userId;
+async function handleUpdateStatusText(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
   try {
     const { statusText } = updateStatusTextPayloadSchema.parse(payload);
-    const updated = await userService.updateStatusText(userId, statusText);
+    const updated = await deps.userService.updateStatusText(userId, statusText);
 
     if (!updated) {
       socket.emit('error', { message: 'Usuário não encontrado.' });
@@ -339,88 +270,78 @@ async function handleUpdateStatusText(
   }
 }
 
-async function handleUpdateTheme(socket: AppSocket, userService: UserService, payload: unknown): Promise<void> {
+async function handleUpdateTheme(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
   const userId = socket.data.userId;
   if (!userId) {
     return;
   }
 
-  try {
-    const theme = userThemeSchema.parse(payload);
-    await userService.updateTheme(userId, theme);
-  } catch {
+  const parsed = userThemeSchema.safeParse(payload);
+  if (!parsed.success) {
     return;
+  }
+
+  await deps.userService.updateTheme(userId, parsed.data);
+}
+
+async function handleVisibility(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    return;
+  }
+
+  const parsed = visibilityPayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    return;
+  }
+
+  const { visible } = parsed.data;
+  const updated = await deps.userService.setStatus(userId, visible ? 'online' : 'offline');
+  if (!updated) {
+    return;
+  }
+
+  if (visible) {
+    socket.broadcast.emit('user:online', {
+      userId: updated.id,
+      nickname: updated.nickname,
+      avatar: updated.avatar,
+    });
+    await deliverPendingMessages(io, deps, updated.id);
+  } else {
+    socket.broadcast.emit('user:offline', {
+      userId: updated.id,
+      user: { id: updated.id, status: updated.status, lastSeen: updated.lastSeen },
+    });
   }
 }
 
-async function handleVisibility(
-  io: AppServer,
-  socket: AppSocket,
-  userService: UserService,
-  roomService: RoomService,
-  messageService: MessageService,
-  payload: unknown,
-): Promise<void> {
-  const userId = socket.data.userId;
+async function handleChangePassword(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    return;
-  }
-
-  try {
-    const { visible } = visibilityPayloadSchema.parse(payload);
-    const updated = await userService.setStatus(userId, visible ? 'online' : 'offline');
-    if (!updated) {
-      return;
-    }
-
-    if (visible) {
-      socket.broadcast.emit('user:online', {
-        userId: updated.id,
-        nickname: updated.nickname,
-        avatar: updated.avatar,
-      });
-      await deliverPendingMessages(io, roomService, messageService, updated.id);
-    } else {
-      socket.broadcast.emit('user:offline', {
-        userId: updated.id,
-        user: { id: updated.id, status: updated.status, lastSeen: updated.lastSeen },
-      });
-    }
-  } catch {
-    return;
-  }
-}
-
-async function handleChangePassword(socket: AppSocket, userService: UserService, payload: unknown): Promise<void> {
-  const userId = socket.data.userId;
-  if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
   try {
     const { currentPassword, newPassword } = changePasswordPayloadSchema.parse(payload);
     const authMethod = socket.data.authMethod ?? 'password';
-    const { recoveryFile, recoveryToken } = await userService.changePassword(userId, currentPassword, newPassword, authMethod);
+    const { recoveryFile, recoveryToken } = await deps.userService.changePassword(userId, currentPassword, newPassword, authMethod);
 
-    delete socket.data.userId;
-    delete socket.data.authMethod;
-    delete socket.data.sessionId;
+    clearSocketSession(socket);
     socket.emit('user:password-changed', { recoveryFile: recoveryFile.toString('base64'), recoveryToken });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
 }
 
-async function handleRegenerateRecoveryFile(socket: AppSocket, userService: UserService): Promise<void> {
-  const userId = socket.data.userId;
+async function handleRegenerateRecoveryFile(socket: AppSocket, deps: UserSocketDeps): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
   try {
-    const { recoveryFile, recoveryToken } = await userService.regenerateRecoveryFile(userId);
+    const { recoveryFile, recoveryToken } = await deps.userService.regenerateRecoveryFile(userId);
 
     socket.emit('user:recovery-file-regenerated', { recoveryFile: recoveryFile.toString('base64'), recoveryToken });
   } catch (error) {
@@ -428,14 +349,13 @@ async function handleRegenerateRecoveryFile(socket: AppSocket, userService: User
   }
 }
 
-async function handleListSessions(socket: AppSocket, userService: UserService): Promise<void> {
-  const userId = socket.data.userId;
+async function handleListSessions(socket: AppSocket, deps: UserSocketDeps): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
-  const sessions = await userService.listSessions(userId);
+  const sessions = await deps.userService.listSessions(userId);
   socket.emit('user:sessions', {
     sessions: sessions.map((session) => ({
       id: session.id,
@@ -448,22 +368,19 @@ async function handleListSessions(socket: AppSocket, userService: UserService): 
   });
 }
 
-async function handleRevokeSession(io: AppServer, socket: AppSocket, userService: UserService, payload: unknown): Promise<void> {
-  const userId = socket.data.userId;
+async function handleRevokeSession(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
   try {
     const { sessionId } = revokeSessionPayloadSchema.parse(payload);
-    await userService.revokeSession(userId, sessionId);
-    await handleListSessions(socket, userService);
+    await deps.userService.revokeSession(userId, sessionId);
+    await handleListSessions(socket, deps);
 
     if (sessionId === socket.data.sessionId) {
-      delete socket.data.userId;
-      delete socket.data.authMethod;
-      delete socket.data.sessionId;
+      clearSocketSession(socket);
     } else {
       disconnectRevokedSession(io, socket, userId, sessionId);
     }
@@ -484,17 +401,13 @@ function disconnectRevokedSession(io: AppServer, requester: AppSocket, userId: s
   }
 }
 
-async function handleDisconnect(
-  io: AppServer,
-  socket: AppSocket,
-  userService: UserService,
-): Promise<void> {
+async function handleDisconnect(io: AppServer, socket: AppSocket, deps: UserSocketDeps): Promise<void> {
   const userId = socket.data.userId;
   if (!userId) {
     return;
   }
 
-  const updated = await userService.setStatus(userId, 'offline');
+  const updated = await deps.userService.setStatus(userId, 'offline');
   if (!updated) {
     return;
   }
@@ -505,45 +418,42 @@ async function handleDisconnect(
   });
 }
 
-async function handlePublishE2eKeys(socket: AppSocket, userService: UserService, payload: unknown): Promise<void> {
-  const userId = socket.data.userId;
+async function handlePublishE2eKeys(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
   try {
     const input = publishE2eKeysPayloadSchema.parse(payload);
-    await userService.publishE2eKeys(userId, input);
+    await deps.userService.publishE2eKeys(userId, input);
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
 }
 
-async function handleGetPublicKeys(socket: AppSocket, userService: UserService, payload: unknown): Promise<void> {
-  const userId = socket.data.userId;
+async function handleGetPublicKeys(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
   try {
     const { userIds } = getPublicKeysPayloadSchema.parse(payload);
-    const keys = await userService.getPublicKeys(userIds);
+    const keys = await deps.userService.getPublicKeys(userIds);
     socket.emit('e2e:public-keys', { keys });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
 }
 
-async function handleGetMyKeys(socket: AppSocket, userService: UserService): Promise<void> {
-  const userId = socket.data.userId;
+async function handleGetMyKeys(socket: AppSocket, deps: UserSocketDeps): Promise<void> {
+  const userId = requireSocketUserId(socket);
   if (!userId) {
-    socket.emit('error', { message: 'Usuário não autenticado.' });
     return;
   }
 
-  const user = await userService.getUser(userId);
+  const user = await deps.userService.getUser(userId);
   if (!user) {
     socket.emit('error', { message: 'Usuário não encontrado.' });
     return;

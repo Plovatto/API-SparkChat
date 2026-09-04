@@ -1,8 +1,7 @@
 import type { Server, Socket } from 'socket.io';
-import type { MessageClientToServerEvents, MessageServerToClientEvents } from '../modules/messages/message.events.js';
-import type { RoomClientToServerEvents, RoomServerToClientEvents } from '../modules/rooms/room.events.js';
-import type { AuthMethod } from '../modules/users/user.model.js';
-import type { UserClientToServerEvents, UserServerToClientEvents } from '../modules/users/user.events.js';
+import type { MessageClientToServerEvents, MessageServerToClientEvents } from '../modules/messages/index.js';
+import type { RoomClientToServerEvents, RoomServerToClientEvents } from '../modules/rooms/index.js';
+import type { AuthMethod, UserClientToServerEvents, UserServerToClientEvents } from '../modules/users/index.js';
 
 export type ServerToClientEvents = UserServerToClientEvents & RoomServerToClientEvents & MessageServerToClientEvents;
 
@@ -16,16 +15,6 @@ export interface SocketData {
   sessionId?: string;
 }
 
-export type AppServer = Server<
-  ClientToServerEvents,
-  ServerToClientEvents,
-  InterServerEvents,
-  SocketData
->;
+export type AppServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
 
-export type AppSocket = Socket<
-  ClientToServerEvents,
-  ServerToClientEvents,
-  InterServerEvents,
-  SocketData
->;
+export type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

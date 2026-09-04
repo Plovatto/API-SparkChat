@@ -1,7 +1,5 @@
 import { RoomMembershipTracker, type RoomMembershipUpdate } from './room-membership-tracker.js';
 
-export type RecordingRoomUpdate = RoomMembershipUpdate;
-
 export class RecordingService {
   private readonly tracker = new RoomMembershipTracker();
 
@@ -13,7 +11,7 @@ export class RecordingService {
     return this.tracker.remove(roomId, userId);
   }
 
-  removeUserEverywhere(userId: string): RecordingRoomUpdate[] {
+  removeUserEverywhere(userId: string): RoomMembershipUpdate[] {
     return this.tracker.removeUserEverywhere(userId);
   }
 }
