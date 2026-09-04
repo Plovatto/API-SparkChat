@@ -17,13 +17,8 @@ export const publishE2eKeysPayloadSchema = z
     { message: 'Nenhuma chave informada.' },
   );
 
-export type PublishE2eKeysPayload = z.infer<typeof publishE2eKeysPayloadSchema>;
 
 export const getPublicKeysPayloadSchema = z.object({
   userIds: z.array(z.string().trim().min(1)).min(1).max(200),
 });
 
-export interface PublicKeyEntry {
-  userId: string;
-  publicKey: string;
-}

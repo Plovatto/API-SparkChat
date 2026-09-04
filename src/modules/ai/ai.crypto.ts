@@ -1,6 +1,6 @@
 import sodium from 'libsodium-wrappers-sumo';
 
-export const E2E_PREFIX = 'e2e:v1:';
+const E2E_PREFIX = 'e2e:v1:';
 
 let readyPromise: Promise<typeof sodium> | null = null;
 
