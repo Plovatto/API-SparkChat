@@ -13,6 +13,9 @@ export const users = sqliteTable('users', {
   lastSeen: text('last_seen').notNull(),
   themeBaseTheme: text('theme_base_theme'),
   themeColorTheme: text('theme_color_theme'),
+  e2ePublicKey: text('e2e_public_key'),
+  e2eEncryptedPrivateKeyByPassword: text('e2e_encrypted_private_key_by_password'),
+  e2eEncryptedPrivateKeyByRecovery: text('e2e_encrypted_private_key_by_recovery'),
 });
 
 export const sessions = sqliteTable(
@@ -60,6 +63,24 @@ export const roomParticipants = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.roomId, table.userId] }),
     index('room_participants_user_id_idx').on(table.userId),
+  ],
+);
+
+export const roomKeys = sqliteTable(
+  'room_keys',
+  {
+    roomId: text('room_id')
+      .notNull()
+      .references(() => rooms.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    sealedKey: text('sealed_key').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.roomId, table.userId] }),
+    index('room_keys_user_id_idx').on(table.userId),
   ],
 );
 

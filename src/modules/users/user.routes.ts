@@ -3,6 +3,7 @@ import { errorResponseSchema } from '../../docs/common-schemas.js';
 import { registry } from '../../docs/registry.js';
 import {
   createUserController,
+  keyfileLoginResponseSchema,
   loginBodySchema,
   loginResponseSchema,
   nicknameAvailabilityQuerySchema,
@@ -55,7 +56,7 @@ registry.registerPath({
   responses: {
     200: {
       description: 'Login realizado com sucesso',
-      content: { 'application/json': { schema: loginResponseSchema } },
+      content: { 'application/json': { schema: keyfileLoginResponseSchema } },
     },
     400: {
       description: 'Arquivo não enviado',

@@ -34,6 +34,9 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
     statusText: row.statusText ?? null,
     createdAt: row.createdAt,
     lastSeen: row.lastSeen,
+    e2ePublicKey: row.e2ePublicKey,
+    e2eEncryptedPrivateKeyByPassword: row.e2eEncryptedPrivateKeyByPassword,
+    e2eEncryptedPrivateKeyByRecovery: row.e2eEncryptedPrivateKeyByRecovery,
     ...(theme ? { theme } : {}),
   };
 

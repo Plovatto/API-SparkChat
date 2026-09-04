@@ -12,12 +12,13 @@ describe('UserService.registerAccount', () => {
   it('creates a user with a session token and a recovery file', async () => {
     const { userService } = await buildRoomService();
 
-    const { user, sessionToken, recoveryFile } = await registerAlice(userService);
+    const { user, sessionToken, recoveryFile, recoveryToken } = await registerAlice(userService);
 
     expect(user.nickname).toBe('Alice');
     expect(user.nicknameNormalized).toBe('alice');
     expect(sessionToken).toBeTruthy();
     expect(recoveryFile.length).toBeGreaterThan(0);
+    expect(recoveryToken).toBeTruthy();
   });
 
   it('rejects a nickname that is already taken, regardless of case', async () => {
@@ -140,12 +141,13 @@ describe('UserService.login', () => {
 describe('UserService.loginWithKeyfile', () => {
   it('logs in with a valid recovery file', async () => {
     const { userService } = await buildRoomService();
-    const { user, recoveryFile } = await registerAlice(userService);
+    const { user, recoveryFile, recoveryToken: originalRecoveryToken } = await registerAlice(userService);
 
     const result = await userService.loginWithKeyfile(recoveryFile);
 
     expect(result?.user.id).toBe(user.id);
     expect(result?.sessionToken).toBeTruthy();
+    expect(result?.recoveryToken).toBe(originalRecoveryToken);
   });
 
   it('rejects a corrupted recovery file', async () => {
@@ -295,6 +297,16 @@ describe('UserService.changePassword', () => {
     const newLogin = await userService.login('Alice', newPassword);
     expect(newLogin).not.toBeNull();
   });
+
+  it('returns a fresh recovery token different from the one issued at registration', async () => {
+    const { userService } = await buildRoomService();
+    const { user, recoveryToken: originalRecoveryToken } = await registerAlice(userService);
+
+    const { recoveryToken } = await userService.changePassword(user.id, PASSWORD, 'a-brand-new-password', 'password');
+
+    expect(recoveryToken).toBeTruthy();
+    expect(recoveryToken).not.toBe(originalRecoveryToken);
+  });
 });
 
 describe('UserService.regenerateRecoveryFile', () => {
@@ -442,5 +454,58 @@ describe('UserService.updateStatusText', () => {
     const updated = await userService.updateStatusText('unknown-id', 'oi');
 
     expect(updated).toBeNull();
+  });
+});
+
+describe('UserService.publishE2eKeys / getPublicKeys', () => {
+  it('publishes and stores the public key and both wrapped private key blobs', async () => {
+    const { userService } = await buildRoomService();
+    const { user } = await registerAlice(userService);
+
+    await userService.publishE2eKeys(user.id, {
+      publicKey: 'pub-key-alice',
+      encryptedPrivateKeyByPassword: 'wrapped-by-password',
+      encryptedPrivateKeyByRecovery: 'wrapped-by-recovery',
+    });
+
+    const stored = await userService.getUser(user.id);
+    expect(stored?.e2ePublicKey).toBe('pub-key-alice');
+    expect(stored?.e2eEncryptedPrivateKeyByPassword).toBe('wrapped-by-password');
+    expect(stored?.e2eEncryptedPrivateKeyByRecovery).toBe('wrapped-by-recovery');
+  });
+
+  it('updates only the fields provided, leaving the others untouched', async () => {
+    const { userService } = await buildRoomService();
+    const { user } = await registerAlice(userService);
+
+    await userService.publishE2eKeys(user.id, {
+      publicKey: 'pub-key-alice',
+      encryptedPrivateKeyByPassword: 'wrapped-by-password',
+      encryptedPrivateKeyByRecovery: 'wrapped-by-recovery',
+    });
+
+    await userService.publishE2eKeys(user.id, { encryptedPrivateKeyByRecovery: 'rewrapped-by-recovery' });
+
+    const stored = await userService.getUser(user.id);
+    expect(stored?.e2ePublicKey).toBe('pub-key-alice');
+    expect(stored?.e2eEncryptedPrivateKeyByPassword).toBe('wrapped-by-password');
+    expect(stored?.e2eEncryptedPrivateKeyByRecovery).toBe('rewrapped-by-recovery');
+  });
+
+  it('returns only the public keys of users who have published one', async () => {
+    const { userService } = await buildRoomService();
+    const { user: alice } = await registerAlice(userService);
+    const { user: bob } = await userService.registerAccount({
+      nickname: 'Bob',
+      avatar: 0,
+      password: PASSWORD,
+      socketId: 'socket-bob',
+    });
+
+    await userService.publishE2eKeys(alice.id, { publicKey: 'pub-key-alice' });
+
+    const keys = await userService.getPublicKeys([alice.id, bob.id, 'unknown-id']);
+
+    expect(keys).toEqual([{ userId: alice.id, publicKey: 'pub-key-alice' }]);
   });
 });

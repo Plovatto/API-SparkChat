@@ -95,6 +95,7 @@ describe('POST /api/users/login-with-keyfile', () => {
 
     expect(response.status).toBe(200);
     expect((response.body as { user: { id: string } }).user.id).toBe(user.id);
+    expect((response.body as { recoveryToken: string }).recoveryToken).toBeTruthy();
   });
 
   it('returns 429 after too many failed attempts from the same ip', async () => {

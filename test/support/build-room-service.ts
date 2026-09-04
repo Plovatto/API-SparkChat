@@ -1,5 +1,5 @@
 import { MessageRepository, MessageService } from '@/modules/messages/index.js';
-import { RoomRepository, RoomService } from '@/modules/rooms/index.js';
+import { RoomKeyRepository, RoomRepository, RoomService } from '@/modules/rooms/index.js';
 import { UserRepository, UserService, UserSessionRepository } from '@/modules/users/index.js';
 import { createTestDb } from './create-test-db.js';
 import { TEST_RECOVERY_FILE_SECRET } from './test-constants.js';
@@ -16,10 +16,12 @@ export async function buildRoomService() {
 
   const roomRepository = new RoomRepository(db);
   const roomService = new RoomService(roomRepository, userService, messageService);
+  const roomKeyRepository = new RoomKeyRepository(db);
 
   return {
     roomService,
     roomRepository,
+    roomKeyRepository,
     userService,
     userRepository,
     userSessionRepository,

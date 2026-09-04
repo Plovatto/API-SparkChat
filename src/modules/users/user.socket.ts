@@ -5,6 +5,7 @@ import type { AppServer, AppSocket } from '../../sockets/events.js';
 import type { MessageService } from '../messages/index.js';
 import type { RoomService } from '../rooms/index.js';
 import { describeDevice } from './user.device.js';
+import { getPublicKeysPayloadSchema, publishE2eKeysPayloadSchema } from './user.e2e-keys.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
 import {
   NICKNAME_MAX_LENGTH,
@@ -95,6 +96,21 @@ registerSocketEvent({
   module: 'users',
   payloadSchema: zodToJsonSchema(revokeSessionPayloadSchema),
 });
+registerSocketEvent({
+  event: 'e2e:publish-keys',
+  direction: 'client-to-server',
+  module: 'users',
+  payloadSchema: zodToJsonSchema(publishE2eKeysPayloadSchema),
+});
+registerSocketEvent({
+  event: 'e2e:get-public-keys',
+  direction: 'client-to-server',
+  module: 'users',
+  payloadSchema: zodToJsonSchema(getPublicKeysPayloadSchema),
+});
+registerSocketEvent({ event: 'e2e:get-my-keys', direction: 'client-to-server', module: 'users' });
+registerSocketEvent({ event: 'e2e:public-keys', direction: 'server-to-client', module: 'users' });
+registerSocketEvent({ event: 'e2e:my-keys', direction: 'server-to-client', module: 'users' });
 registerSocketEvent({ event: 'user:registered', direction: 'server-to-client', module: 'users' });
 registerSocketEvent({ event: 'user:resumed', direction: 'server-to-client', module: 'users' });
 registerSocketEvent({ event: 'user:online', direction: 'server-to-client', module: 'users' });
@@ -158,6 +174,18 @@ export function registerUserSocketHandlers(
     void handleRevokeSession(socket, userService, payload);
   });
 
+  socket.on('e2e:publish-keys', (payload) => {
+    void handlePublishE2eKeys(socket, userService, payload);
+  });
+
+  socket.on('e2e:get-public-keys', (payload) => {
+    void handleGetPublicKeys(socket, userService, payload);
+  });
+
+  socket.on('e2e:get-my-keys', () => {
+    void handleGetMyKeys(socket, userService);
+  });
+
   socket.on('disconnect', () => {
     void handleDisconnect(io, socket, userService);
   });
@@ -183,7 +211,7 @@ async function handleJoin(
       }
       loginRateLimiter.registerAttemptForRegistration(ip);
 
-      const { user, sessionId, sessionToken, recoveryFile } = await userService.registerAccount({
+      const { user, sessionId, sessionToken, recoveryFile, recoveryToken } = await userService.registerAccount({
         nickname: input.nickname,
         avatar: input.avatar,
         password: input.password,
@@ -198,6 +226,7 @@ async function handleJoin(
         user: userService.toPublicUser(user),
         sessionToken,
         recoveryFile: recoveryFile.toString('base64'),
+        recoveryToken,
         authMethod: 'password',
       });
       socket.broadcast.emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
@@ -270,6 +299,7 @@ async function handleUpdateProfile(
     socket.emit('user:profile-updated-success', {
       user: userService.toPublicUser(result.user),
       recoveryFile: result.recoveryFile ? result.recoveryFile.toString('base64') : null,
+      recoveryToken: result.recoveryToken,
     });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
@@ -370,12 +400,12 @@ async function handleChangePassword(socket: AppSocket, userService: UserService,
   try {
     const { currentPassword, newPassword } = changePasswordPayloadSchema.parse(payload);
     const authMethod = socket.data.authMethod ?? 'password';
-    const { recoveryFile } = await userService.changePassword(userId, currentPassword, newPassword, authMethod);
+    const { recoveryFile, recoveryToken } = await userService.changePassword(userId, currentPassword, newPassword, authMethod);
 
     delete socket.data.userId;
     delete socket.data.authMethod;
     delete socket.data.sessionId;
-    socket.emit('user:password-changed', { recoveryFile: recoveryFile.toString('base64') });
+    socket.emit('user:password-changed', { recoveryFile: recoveryFile.toString('base64'), recoveryToken });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
@@ -389,9 +419,9 @@ async function handleRegenerateRecoveryFile(socket: AppSocket, userService: User
   }
 
   try {
-    const { recoveryFile } = await userService.regenerateRecoveryFile(userId);
+    const { recoveryFile, recoveryToken } = await userService.regenerateRecoveryFile(userId);
 
-    socket.emit('user:recovery-file-regenerated', { recoveryFile: recoveryFile.toString('base64') });
+    socket.emit('user:recovery-file-regenerated', { recoveryFile: recoveryFile.toString('base64'), recoveryToken });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
@@ -457,5 +487,56 @@ async function handleDisconnect(
   io.emit('user:offline', {
     userId: updated.id,
     user: { id: updated.id, status: updated.status, lastSeen: updated.lastSeen },
+  });
+}
+
+async function handlePublishE2eKeys(socket: AppSocket, userService: UserService, payload: unknown): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const input = publishE2eKeysPayloadSchema.parse(payload);
+    await userService.publishE2eKeys(userId, input);
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleGetPublicKeys(socket: AppSocket, userService: UserService, payload: unknown): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { userIds } = getPublicKeysPayloadSchema.parse(payload);
+    const keys = await userService.getPublicKeys(userIds);
+    socket.emit('e2e:public-keys', { keys });
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleGetMyKeys(socket: AppSocket, userService: UserService): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  const user = await userService.getUser(userId);
+  if (!user) {
+    socket.emit('error', { message: 'Usuário não encontrado.' });
+    return;
+  }
+
+  socket.emit('e2e:my-keys', {
+    publicKey: user.e2ePublicKey ?? null,
+    encryptedPrivateKeyByPassword: user.e2eEncryptedPrivateKeyByPassword ?? null,
+    encryptedPrivateKeyByRecovery: user.e2eEncryptedPrivateKeyByRecovery ?? null,
   });
 }

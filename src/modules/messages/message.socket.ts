@@ -21,12 +21,13 @@ const fileMetaSchema = z.object({
 const sendMessagePayloadSchema = z
   .object({
     roomId: z.string().trim().min(1),
-    content: z.string().trim().min(1).max(5000),
+    content: z.string().trim().min(1).max(30000),
     type: z.enum(['text', 'image', 'audio', 'file']).default('text'),
     duration: z.number().int().positive().optional(),
     replyToMessageId: z.string().trim().min(1).optional(),
     clientTempId: z.string().trim().min(1).optional(),
     fileMeta: fileMetaSchema.optional(),
+    mentionedUserIds: z.array(z.string().trim().min(1)).max(50).optional(),
   })
   .refine((data) => data.type !== 'audio' || typeof data.duration === 'number', {
     message: 'duration é obrigatório para mensagens de áudio.',
@@ -291,7 +292,7 @@ async function handleSendMessage(
 
   try {
     const parsed = sendMessagePayloadSchema.parse(payload);
-    const { roomId, content, type, duration, replyToMessageId, fileMeta } = parsed;
+    const { roomId, content, type, duration, replyToMessageId, fileMeta, mentionedUserIds: clientMentionedUserIds } = parsed;
     clientTempId = parsed.clientTempId;
 
     if (type !== 'text' && !isUploadedMediaUrl(content)) {
@@ -317,12 +318,16 @@ async function handleSendMessage(
     const newlyVisibleUserIds = roomService.getNewlyVisibleParticipants(room, userId);
 
     let mentionedUserIds: string[] = [];
-    if (room.type === 'group' && type === 'text') {
-      const participantRecords = await Promise.all(room.participants.map((id) => userService.getUser(id)));
-      const participants = participantRecords
-        .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
-        .map((participant) => ({ id: participant.id, nickname: participant.nickname }));
-      mentionedUserIds = parseMentionedUserIds(content, participants);
+    if (room.type === 'group') {
+      if (clientMentionedUserIds) {
+        mentionedUserIds = clientMentionedUserIds.filter((id) => room.participants.includes(id));
+      } else if (type === 'text') {
+        const participantRecords = await Promise.all(room.participants.map((id) => userService.getUser(id)));
+        const participants = participantRecords
+          .filter((participant): participant is NonNullable<typeof participant> => participant !== null)
+          .map((participant) => ({ id: participant.id, nickname: participant.nickname }));
+        mentionedUserIds = parseMentionedUserIds(content, participants);
+      }
     }
 
     const message = await messageService.sendMessage({

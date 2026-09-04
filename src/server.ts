@@ -13,7 +13,7 @@ import {
   RoomPresenceService,
   TypingService,
 } from './modules/messages/index.js';
-import { RoomRepository, RoomService } from './modules/rooms/index.js';
+import { RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
 import { LoginRateLimiter, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import type {
@@ -35,6 +35,7 @@ const messageService = new MessageService(messageRepository, userService);
 
 const roomRepository = new RoomRepository(db);
 const roomService = new RoomService(roomRepository, userService, messageService);
+const roomKeyRepository = new RoomKeyRepository(db);
 
 const typingService = new TypingService();
 const recordingService = new RecordingService();
@@ -67,6 +68,7 @@ registerSocketHandlers(io, {
   presenceService,
   loginRateLimiter,
   messageRateLimiter,
+  roomKeyRepository,
 });
 
 httpServer.listen(env.PORT, () => {

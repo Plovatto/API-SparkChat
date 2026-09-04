@@ -4,6 +4,7 @@ import { registerSocketEvent } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import type { MessageService } from '../messages/index.js';
 import type { UserService } from '../users/index.js';
+import type { RoomKeyRepository } from './room.e2e.js';
 import type { RoomService } from './room.service.js';
 import type { RoomRecord } from './room.types.js';
 
@@ -36,9 +37,30 @@ const memberActionPayloadSchema = z.object({
   userId: z.string().trim().min(1),
 });
 
+const MAX_SEALED_KEY_LENGTH = 2000;
+
+const publishRoomKeyPayloadSchema = z.object({
+  roomId: z.string().trim().min(1),
+  keys: z
+    .array(
+      z.object({
+        userId: z.string().trim().min(1),
+        sealedKey: z.string().trim().min(1).max(MAX_SEALED_KEY_LENGTH),
+      }),
+    )
+    .min(1)
+    .max(50),
+});
+
+const getRoomKeysPayloadSchema = z.object({
+  roomIds: z.array(z.string().trim().min(1)).min(1).max(200),
+});
+
 const roomIdPayloadJsonSchema = zodToJsonSchema(roomIdPayloadSchema);
 const blockPayloadJsonSchema = zodToJsonSchema(blockPayloadSchema);
 const memberActionPayloadJsonSchema = zodToJsonSchema(memberActionPayloadSchema);
+const publishRoomKeyPayloadJsonSchema = zodToJsonSchema(publishRoomKeyPayloadSchema);
+const getRoomKeysPayloadJsonSchema = zodToJsonSchema(getRoomKeysPayloadSchema);
 
 registerSocketEvent({
   event: 'room:create-private',
@@ -66,6 +88,27 @@ registerSocketEvent({ event: 'group:remove-member', direction: 'client-to-server
 registerSocketEvent({ event: 'group:promote-admin', direction: 'client-to-server', module: 'rooms', payloadSchema: memberActionPayloadJsonSchema });
 registerSocketEvent({ event: 'user:block', direction: 'client-to-server', module: 'rooms', payloadSchema: blockPayloadJsonSchema });
 registerSocketEvent({ event: 'user:unblock', direction: 'client-to-server', module: 'rooms', payloadSchema: blockPayloadJsonSchema });
+registerSocketEvent({
+  event: 'e2e:publish-room-key',
+  direction: 'client-to-server',
+  module: 'rooms',
+  payloadSchema: publishRoomKeyPayloadJsonSchema,
+});
+registerSocketEvent({
+  event: 'e2e:get-room-keys',
+  direction: 'client-to-server',
+  module: 'rooms',
+  payloadSchema: getRoomKeysPayloadJsonSchema,
+});
+registerSocketEvent({
+  event: 'e2e:request-room-key',
+  direction: 'client-to-server',
+  module: 'rooms',
+  payloadSchema: roomIdPayloadJsonSchema,
+});
+registerSocketEvent({ event: 'e2e:room-keys', direction: 'server-to-client', module: 'rooms' });
+registerSocketEvent({ event: 'e2e:room-key', direction: 'server-to-client', module: 'rooms' });
+registerSocketEvent({ event: 'e2e:key-request', direction: 'server-to-client', module: 'rooms' });
 registerSocketEvent({ event: 'room:joined', direction: 'server-to-client', module: 'rooms' });
 registerSocketEvent({ event: 'room:new', direction: 'server-to-client', module: 'rooms' });
 registerSocketEvent({ event: 'room:created', direction: 'server-to-client', module: 'rooms' });
@@ -103,6 +146,7 @@ export function registerRoomSocketHandlers(
   roomService: RoomService,
   userService: UserService,
   messageService: MessageService,
+  roomKeyRepository: RoomKeyRepository,
 ): void {
   socket.on('room:create-private', (payload) => {
     void handleCreatePrivateRoom(io, socket, roomService, userService, messageService, payload);
@@ -146,6 +190,18 @@ export function registerRoomSocketHandlers(
 
   socket.on('user:unblock', (payload) => {
     void handleUnblockUser(io, socket, roomService, userService, payload);
+  });
+
+  socket.on('e2e:publish-room-key', (payload) => {
+    void handlePublishRoomKey(io, socket, roomService, userService, roomKeyRepository, payload);
+  });
+
+  socket.on('e2e:get-room-keys', (payload) => {
+    void handleGetRoomKeys(socket, roomService, roomKeyRepository, payload);
+  });
+
+  socket.on('e2e:request-room-key', (payload) => {
+    void handleRequestRoomKey(socket, roomService, payload);
   });
 }
 
@@ -546,6 +602,100 @@ async function handleUnblockUser(
         isBlocking: false,
       });
     }
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handlePublishRoomKey(
+  io: AppServer,
+  socket: AppSocket,
+  roomService: RoomService,
+  userService: UserService,
+  roomKeyRepository: RoomKeyRepository,
+  payload: unknown,
+): Promise<void> {
+  const actingUserId = socket.data.userId;
+  if (!actingUserId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { roomId, keys } = publishRoomKeyPayloadSchema.parse(payload);
+    const room = await roomService.getRoomById(roomId);
+    if (!room || !roomService.isParticipant(room, actingUserId)) {
+      return;
+    }
+
+    const validKeys = keys.filter((key) => roomService.isParticipant(room, key.userId));
+
+    await Promise.all(validKeys.map((key) => roomKeyRepository.publish(roomId, key.userId, key.sealedKey)));
+
+    for (const key of validKeys) {
+      if (key.userId === actingUserId) {
+        continue;
+      }
+
+      const recipient = await userService.getUser(key.userId);
+      if (recipient?.socketId) {
+        io.to(recipient.socketId).emit('e2e:room-key', { roomId, sealedKey: key.sealedKey });
+      }
+    }
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleGetRoomKeys(
+  socket: AppSocket,
+  roomService: RoomService,
+  roomKeyRepository: RoomKeyRepository,
+  payload: unknown,
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { roomIds } = getRoomKeysPayloadSchema.parse(payload);
+    const results: { roomId: string; sealedKey: string }[] = [];
+
+    for (const roomId of roomIds) {
+      const room = await roomService.getRoomById(roomId);
+      if (!room || !roomService.isParticipant(room, userId)) {
+        continue;
+      }
+
+      const sealedKey = await roomKeyRepository.findForUser(roomId, userId);
+      if (sealedKey) {
+        results.push({ roomId, sealedKey });
+      }
+    }
+
+    socket.emit('e2e:room-keys', { keys: results });
+  } catch (error) {
+    socket.emit('error', { message: extractErrorMessage(error) });
+  }
+}
+
+async function handleRequestRoomKey(socket: AppSocket, roomService: RoomService, payload: unknown): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    socket.emit('error', { message: 'Usuário não autenticado.' });
+    return;
+  }
+
+  try {
+    const { roomId } = roomIdPayloadSchema.parse(payload);
+    const room = await roomService.getRoomById(roomId);
+    if (!room || !roomService.isParticipant(room, userId)) {
+      return;
+    }
+
+    socket.to(roomId).emit('e2e:key-request', { roomId, requesterId: userId });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }

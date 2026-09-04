@@ -7,7 +7,7 @@ import {
   type RoomPresenceService,
   type TypingService,
 } from '../modules/messages/index.js';
-import { registerRoomSocketHandlers, type RoomService } from '../modules/rooms/index.js';
+import { registerRoomSocketHandlers, type RoomKeyRepository, type RoomService } from '../modules/rooms/index.js';
 import { registerUserSocketHandlers, type LoginRateLimiter, type UserService } from '../modules/users/index.js';
 import type { AppServer, AppSocket } from './events.js';
 
@@ -20,6 +20,7 @@ export interface SocketDeps {
   presenceService: RoomPresenceService;
   loginRateLimiter: LoginRateLimiter;
   messageRateLimiter: MessageRateLimiter;
+  roomKeyRepository: RoomKeyRepository;
 }
 
 export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
@@ -27,7 +28,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
     logger.info({ socketId: socket.id }, 'Client connected');
 
     registerUserSocketHandlers(io, socket, deps.userService, deps.roomService, deps.messageService, deps.loginRateLimiter);
-    registerRoomSocketHandlers(io, socket, deps.roomService, deps.userService, deps.messageService);
+    registerRoomSocketHandlers(io, socket, deps.roomService, deps.userService, deps.messageService, deps.roomKeyRepository);
     registerMessageSocketHandlers(
       io,
       socket,

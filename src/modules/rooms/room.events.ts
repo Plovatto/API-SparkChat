@@ -25,6 +25,9 @@ export interface RoomServerToClientEvents {
   'group:participants-updated': (payload: { roomId: string; participants: RoomParticipant[] }) => void;
   'user:blocked': (payload: BlockStatusPayload) => void;
   'user:unblocked': (payload: BlockStatusPayload) => void;
+  'e2e:room-keys': (payload: { keys: { roomId: string; sealedKey: string }[] }) => void;
+  'e2e:room-key': (payload: { roomId: string; sealedKey: string }) => void;
+  'e2e:key-request': (payload: { roomId: string; requesterId: string }) => void;
 }
 
 export interface RoomClientToServerEvents {
@@ -39,4 +42,7 @@ export interface RoomClientToServerEvents {
   'group:promote-admin': (payload: { roomId: string; userId: string }) => void;
   'user:block': (payload: { roomId: string; blockedUserId: string }) => void;
   'user:unblock': (payload: { roomId: string; blockedUserId: string }) => void;
+  'e2e:publish-room-key': (payload: { roomId: string; keys: { userId: string; sealedKey: string }[] }) => void;
+  'e2e:get-room-keys': (payload: { roomIds: string[] }) => void;
+  'e2e:request-room-key': (payload: { roomId: string }) => void;
 }
