@@ -28,6 +28,7 @@ function toRecord(row: typeof messages.$inferSelect): MessageRecord {
     mentionedUserIds: row.mentionedUserIds ?? [],
     fileMeta: row.fileMeta ?? null,
     caption: row.caption ?? null,
+    linkPreview: row.linkPreview ?? null,
   };
 }
 
@@ -66,6 +67,7 @@ export class MessageRepository {
       mentionedUserIds: message.mentionedUserIds,
       fileMeta: message.fileMeta,
       caption: message.caption,
+      linkPreview: message.linkPreview,
     });
 
     return message;
