@@ -9,6 +9,8 @@ const envSchema = z.object({
   TURSO_DATABASE_URL: z.string().optional(),
   TURSO_AUTH_TOKEN: z.string().optional(),
   RECOVERY_FILE_SECRET: z.string().min(32),
+  GEMINI_API_KEY: z.string().min(1),
+  AI_ASSISTANT_PRIVATE_KEY: z.string().min(1),
 });
 
 const parsed = envSchema.safeParse(process.env);

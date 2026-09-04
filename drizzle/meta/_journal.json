@@ -71,6 +71,13 @@
       "when": 1788902400000,
       "tag": "0009_lean_gauntlet",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1788902400001,
+      "tag": "0010_spicy_owl",
+      "breakpoints": true
     }
   ]
 }

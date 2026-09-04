@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
+  ASSISTANT_USER_ID,
   isValidNicknameFormat,
   NICKNAME_MAX_LENGTH,
   NICKNAME_MIN_LENGTH,
@@ -125,7 +126,7 @@ export class UserService {
 
   async login(nickname: string, password: string, userAgent = ''): Promise<AuthenticatedResult | null> {
     const user = await this.repository.findByNickname(normalizeNickname(nickname));
-    if (!user) {
+    if (!user || user.id === ASSISTANT_USER_ID) {
       await verifyPassword(password, await this.getDummyPasswordHash());
       return null;
     }

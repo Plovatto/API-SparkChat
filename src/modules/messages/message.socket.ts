@@ -3,18 +3,21 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import { uploadsUrlPrefix } from '../../config/paths.js';
 import { registerSocketEvent } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
-import type { RoomService } from '../rooms/index.js';
+import type { RoomRecord, RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
 import { parseMentionedUserIds } from './message.mentions.js';
 import type { MessageRateLimiter } from './message.rate-limiter.js';
 import type { MessageService } from './message.service.js';
+import type { MessageRecord } from './message.types.js';
 import type { RecordingService } from './recording.service.js';
 import type { RoomPresenceService } from './room-presence.service.js';
 import type { TypingService } from './typing.service.js';
 
+export type OnMessageSentHook = (context: { io: AppServer; room: RoomRecord; message: MessageRecord }) => void;
+
 const fileMetaSchema = z.object({
-  name: z.string().trim().min(1).max(255),
-  mimeType: z.string().trim().min(1),
+  name: z.string().trim().min(1).max(500),
+  mimeType: z.string().trim().min(1).max(200),
   size: z.number().int().positive(),
 });
 
@@ -28,6 +31,7 @@ const sendMessagePayloadSchema = z
     clientTempId: z.string().trim().min(1).optional(),
     fileMeta: fileMetaSchema.optional(),
     mentionedUserIds: z.array(z.string().trim().min(1)).max(50).optional(),
+    caption: z.string().trim().max(3000).optional(),
   })
   .refine((data) => data.type !== 'audio' || typeof data.duration === 'number', {
     message: 'duration é obrigatório para mensagens de áudio.',
@@ -165,9 +169,20 @@ export function registerMessageSocketHandlers(
   recordingService: RecordingService,
   presenceService: RoomPresenceService,
   messageRateLimiter: MessageRateLimiter,
+  onMessageSent?: OnMessageSentHook,
 ): void {
   socket.on('message:send', (payload) => {
-    void handleSendMessage(io, socket, messageService, roomService, userService, presenceService, messageRateLimiter, payload);
+    void handleSendMessage(
+      io,
+      socket,
+      messageService,
+      roomService,
+      userService,
+      presenceService,
+      messageRateLimiter,
+      payload,
+      onMessageSent,
+    );
   });
 
   socket.on('message:mark-read', (payload) => {
@@ -275,6 +290,7 @@ async function handleSendMessage(
   presenceService: RoomPresenceService,
   messageRateLimiter: MessageRateLimiter,
   payload: unknown,
+  onMessageSent?: OnMessageSentHook,
 ): Promise<void> {
   const userId = socket.data.userId;
   if (!userId) {
@@ -292,7 +308,7 @@ async function handleSendMessage(
 
   try {
     const parsed = sendMessagePayloadSchema.parse(payload);
-    const { roomId, content, type, duration, replyToMessageId, fileMeta, mentionedUserIds: clientMentionedUserIds } = parsed;
+    const { roomId, content, type, duration, replyToMessageId, fileMeta, caption, mentionedUserIds: clientMentionedUserIds } = parsed;
     clientTempId = parsed.clientTempId;
 
     if (type !== 'text' && !isUploadedMediaUrl(content)) {
@@ -341,12 +357,14 @@ async function handleSendMessage(
       viewingUserIds: presenceService.getViewers(roomId),
       mentionedUserIds,
       fileMeta,
+      caption,
     });
     const reactivatedBefore = new Date(new Date(message.timestamp).getTime() - 1000).toISOString();
     const updatedRoom = (await roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;
 
     const view = await messageService.toView(message);
     io.to(roomId).emit('message:new', clientTempId ? { ...view, clientTempId } : view);
+    onMessageSent?.({ io, room, message });
 
     if (newlyVisibleUserIds.length > 0) {
       const rawMessages = await messageService.getRoomMessages(roomId);

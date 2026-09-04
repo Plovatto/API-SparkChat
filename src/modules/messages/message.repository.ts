@@ -3,6 +3,13 @@ import type { Database } from '../../database/turso-client.js';
 import { messages } from '../../database/schema.js';
 import type { MessageRecord, MessageReplySnapshot, MessageStatus, MessageType } from './message.types.js';
 
+function normalizeReplySnapshot(snapshot: MessageReplySnapshot | null | undefined): MessageReplySnapshot | null {
+  if (!snapshot) {
+    return null;
+  }
+  return { ...snapshot, caption: snapshot.caption ?? null };
+}
+
 function toRecord(row: typeof messages.$inferSelect): MessageRecord {
   return {
     id: row.id,
@@ -17,9 +24,10 @@ function toRecord(row: typeof messages.$inferSelect): MessageRecord {
     deliveredTo: row.deliveredTo,
     readBy: row.readBy,
     playedBy: row.playedBy,
-    replyTo: (row.replyToSnapshot as MessageReplySnapshot | null) ?? null,
+    replyTo: normalizeReplySnapshot(row.replyToSnapshot as MessageReplySnapshot | null | undefined),
     mentionedUserIds: row.mentionedUserIds ?? [],
     fileMeta: row.fileMeta ?? null,
+    caption: row.caption ?? null,
   };
 }
 
@@ -57,6 +65,7 @@ export class MessageRepository {
       replyToSnapshot: message.replyTo,
       mentionedUserIds: message.mentionedUserIds,
       fileMeta: message.fileMeta,
+      caption: message.caption,
     });
 
     return message;

@@ -173,6 +173,7 @@ describe('MessageService', () => {
       type: 'text',
       duration: null,
       fileMeta: null,
+      caption: null,
       sender: { id: alice.id, nickname: 'Alice', avatar: 0 },
     });
   });

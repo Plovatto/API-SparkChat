@@ -102,6 +102,7 @@ export const messages = sqliteTable(
     replyToSnapshot: text('reply_to_snapshot', { mode: 'json' }),
     mentionedUserIds: text('mentioned_user_ids', { mode: 'json' }).$type<string[]>(),
     fileMeta: text('file_meta', { mode: 'json' }).$type<{ name: string; mimeType: string; size: number }>(),
+    caption: text('caption'),
   },
   (table) => [index('messages_room_id_timestamp_idx').on(table.roomId, table.timestamp)],
 );

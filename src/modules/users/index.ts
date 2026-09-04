@@ -14,6 +14,7 @@ export type { E2ePublicKeyEntry, UserClientToServerEvents, UserServerToClientEve
 export { keyfileUpload } from './user.keyfile-upload.js';
 export { LoginRateLimiter } from './user.login-rate-limiter.js';
 export {
+  ASSISTANT_USER_ID,
   authMethodSchema,
   isValidNicknameFormat,
   NICKNAME_MAX_LENGTH,

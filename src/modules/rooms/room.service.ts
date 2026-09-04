@@ -184,6 +184,15 @@ export class RoomService {
     return this.repository.findById(roomId);
   }
 
+  findPrivateRoomBetween(userId: string, targetUserId: string): Promise<RoomRecord | null> {
+    return this.repository.findPrivateRoomBetween(userId, targetUserId);
+  }
+
+  async resetVisibilityForUser(room: RoomRecord, userId: string): Promise<RoomRecord | null> {
+    const reactivatedAt = { ...room.reactivatedAt, [userId]: new Date().toISOString() };
+    return this.repository.update(room.id, { reactivatedAt });
+  }
+
   isBlocked(room: RoomRecord, userId: string): boolean {
     if (room.blockedBy[userId]) {
       return true;
