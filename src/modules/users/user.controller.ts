@@ -34,6 +34,12 @@ export const loginResponseSchema = z
   })
   .openapi('LoginResponse');
 
+export const keyfileLoginResponseSchema = loginResponseSchema
+  .extend({
+    recoveryToken: z.string().openapi({ example: 'a1b2c3...', description: 'Necessário para restaurar a chave de criptografia local do usuário' }),
+  })
+  .openapi('KeyfileLoginResponse');
+
 export function createUserController(userService: UserService, loginRateLimiter: LoginRateLimiter) {
   return {
     async login(req: Request, res: Response): Promise<void> {
@@ -97,6 +103,7 @@ export function createUserController(userService: UserService, loginRateLimiter:
           message: 'Login realizado com sucesso!',
           user: userService.toPublicUser(result.user),
           sessionToken: result.sessionToken,
+          recoveryToken: result.recoveryToken,
         });
       } catch (error) {
         logger.error({ err: error }, 'Failed to log in with keyfile');

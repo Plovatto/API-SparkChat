@@ -13,6 +13,9 @@ export interface UserRecord {
   createdAt: string;
   lastSeen: string;
   theme?: UserTheme;
+  e2ePublicKey?: string | null;
+  e2eEncryptedPrivateKeyByPassword?: string | null;
+  e2eEncryptedPrivateKeyByRecovery?: string | null;
 }
 
 export interface SessionRecord {

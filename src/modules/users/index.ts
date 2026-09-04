@@ -1,5 +1,6 @@
 export {
   createUserController,
+  keyfileLoginResponseSchema,
   loginBodySchema,
   loginResponseSchema,
   nicknameAvailabilityQuerySchema,
@@ -7,7 +8,9 @@ export {
 } from './user.controller.js';
 export type { LoginBody } from './user.controller.js';
 export { describeDevice } from './user.device.js';
-export type { UserClientToServerEvents, UserServerToClientEvents } from './user.events.js';
+export { getPublicKeysPayloadSchema, publishE2eKeysPayloadSchema } from './user.e2e-keys.js';
+export type { PublicKeyEntry, PublishE2eKeysPayload } from './user.e2e-keys.js';
+export type { E2ePublicKeyEntry, UserClientToServerEvents, UserServerToClientEvents } from './user.events.js';
 export { keyfileUpload } from './user.keyfile-upload.js';
 export { LoginRateLimiter } from './user.login-rate-limiter.js';
 export {
@@ -32,8 +35,10 @@ export { UserSessionRepository } from './user.session.repository.js';
 export { UserService } from './user.service.js';
 export type {
   AuthenticatedResult,
+  KeyfileAuthenticatedResult,
   PasswordChangeResult,
   ProfileUpdateResult,
+  PublishE2eKeysInput,
   RegisterAccountInput,
   RegisteredResult,
 } from './user.service.js';

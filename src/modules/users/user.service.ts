@@ -33,16 +33,29 @@ export interface AuthenticatedResult {
 
 export interface RegisteredResult extends AuthenticatedResult {
   recoveryFile: Buffer;
+  recoveryToken: string;
 }
 
 export interface ProfileUpdateResult {
   user: UserRecord;
   recoveryFile: Buffer | null;
+  recoveryToken: string | null;
 }
 
 export interface PasswordChangeResult {
   user: UserRecord;
   recoveryFile: Buffer;
+  recoveryToken: string;
+}
+
+export interface KeyfileAuthenticatedResult extends AuthenticatedResult {
+  recoveryToken: string;
+}
+
+export interface PublishE2eKeysInput {
+  publicKey?: string | undefined;
+  encryptedPrivateKeyByPassword?: string | undefined;
+  encryptedPrivateKeyByRecovery?: string | undefined;
 }
 
 const DEFAULT_THEME = { baseTheme: 'dark', colorTheme: 'standard' };
@@ -107,7 +120,7 @@ export class UserService {
     const { sessionId, sessionToken } = await this.createSession(created.id, 'password', input.userAgent ?? '');
     const recoveryFile = this.buildRecoveryFile(created.id, recoveryToken);
 
-    return { user: created, sessionId, sessionToken, recoveryFile };
+    return { user: created, sessionId, sessionToken, recoveryFile, recoveryToken };
   }
 
   async login(nickname: string, password: string, userAgent = ''): Promise<AuthenticatedResult | null> {
@@ -126,7 +139,7 @@ export class UserService {
     return { user, sessionId, sessionToken };
   }
 
-  async loginWithKeyfile(fileBuffer: Buffer, userAgent = ''): Promise<AuthenticatedResult | null> {
+  async loginWithKeyfile(fileBuffer: Buffer, userAgent = ''): Promise<KeyfileAuthenticatedResult | null> {
     let payload;
     try {
       payload = decodeRecoveryFile(fileBuffer, this.recoveryFileSecret);
@@ -144,7 +157,7 @@ export class UserService {
     }
 
     const { sessionId, sessionToken } = await this.createSession(user.id, 'keyfile', userAgent);
-    return { user, sessionId, sessionToken };
+    return { user, sessionId, sessionToken, recoveryToken: payload.recoveryToken };
   }
 
   async verifySession(userId: string, sessionToken: string): Promise<UserRecord | null> {
@@ -215,7 +228,7 @@ export class UserService {
 
     await this.sessions.deleteAllForUser(userId);
 
-    return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken) };
+    return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken), recoveryToken };
   }
 
   async regenerateRecoveryFile(userId: string): Promise<PasswordChangeResult> {
@@ -230,7 +243,7 @@ export class UserService {
       throw new Error('Usuário não encontrado.');
     }
 
-    return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken) };
+    return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken), recoveryToken };
   }
 
   async updateProfile(userId: string, input: { nickname: string; avatar: number }): Promise<ProfileUpdateResult | null> {
@@ -256,7 +269,7 @@ export class UserService {
         nickname: input.nickname.trim(),
         avatar: input.avatar,
       });
-      return updated ? { user: updated, recoveryFile: null } : null;
+      return updated ? { user: updated, recoveryFile: null, recoveryToken: null } : null;
     }
 
     const recoveryToken = generateToken();
@@ -271,7 +284,7 @@ export class UserService {
       return null;
     }
 
-    return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken) };
+    return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken), recoveryToken };
   }
 
   getUser(userId: string): Promise<UserRecord | null> {
@@ -315,6 +328,34 @@ export class UserService {
 
   revokeSession(userId: string, sessionId: string): Promise<void> {
     return this.sessions.deleteByIdForUser(userId, sessionId);
+  }
+
+  async publishE2eKeys(userId: string, input: PublishE2eKeysInput): Promise<void> {
+    const patch: Partial<UserRecord> = {};
+    if (input.publicKey !== undefined) {
+      patch.e2ePublicKey = input.publicKey;
+    }
+    if (input.encryptedPrivateKeyByPassword !== undefined) {
+      patch.e2eEncryptedPrivateKeyByPassword = input.encryptedPrivateKeyByPassword;
+    }
+    if (input.encryptedPrivateKeyByRecovery !== undefined) {
+      patch.e2eEncryptedPrivateKeyByRecovery = input.encryptedPrivateKeyByRecovery;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      return;
+    }
+
+    await this.repository.update(userId, patch);
+  }
+
+  async getPublicKeys(userIds: string[]): Promise<{ userId: string; publicKey: string }[]> {
+    const unique = [...new Set(userIds)];
+    const users = await Promise.all(unique.map((id) => this.repository.findById(id)));
+
+    return users
+      .filter((user): user is UserRecord => user !== null && Boolean(user.e2ePublicKey))
+      .map((user) => ({ userId: user.id, publicKey: user.e2ePublicKey as string }));
   }
 
   toPublicUser(user: UserRecord): PublicUser {
