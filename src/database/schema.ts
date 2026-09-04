@@ -103,6 +103,23 @@ export const messages = sqliteTable(
     mentionedUserIds: text('mentioned_user_ids', { mode: 'json' }).$type<string[]>(),
     fileMeta: text('file_meta', { mode: 'json' }).$type<{ name: string; mimeType: string; size: number }>(),
     caption: text('caption'),
+    linkPreview: text('link_preview', { mode: 'json' }).$type<{
+      url: string;
+      title: string;
+      description: string | null;
+      imageUrl: string | null;
+      siteName: string | null;
+    }>(),
   },
   (table) => [index('messages_room_id_timestamp_idx').on(table.roomId, table.timestamp)],
 );
+
+export const linkPreviews = sqliteTable('link_previews', {
+  url: text('url').primaryKey(),
+  status: text('status').notNull(),
+  title: text('title'),
+  description: text('description'),
+  imageUrl: text('image_url'),
+  siteName: text('site_name'),
+  fetchedAt: text('fetched_at').notNull(),
+});

@@ -21,6 +21,14 @@ const fileMetaSchema = z.object({
   size: z.number().int().positive(),
 });
 
+const linkPreviewSchema = z.object({
+  url: z.string().trim().min(1).max(4000),
+  title: z.string().trim().min(1).max(4000),
+  description: z.string().trim().max(8000).nullable(),
+  imageUrl: z.string().trim().max(4000).nullable(),
+  siteName: z.string().trim().max(1000).nullable(),
+});
+
 const sendMessagePayloadSchema = z
   .object({
     roomId: z.string().trim().min(1),
@@ -32,6 +40,7 @@ const sendMessagePayloadSchema = z
     fileMeta: fileMetaSchema.optional(),
     mentionedUserIds: z.array(z.string().trim().min(1)).max(50).optional(),
     caption: z.string().trim().max(3000).optional(),
+    linkPreview: linkPreviewSchema.optional(),
   })
   .refine((data) => data.type !== 'audio' || typeof data.duration === 'number', {
     message: 'duration é obrigatório para mensagens de áudio.',
@@ -308,7 +317,17 @@ async function handleSendMessage(
 
   try {
     const parsed = sendMessagePayloadSchema.parse(payload);
-    const { roomId, content, type, duration, replyToMessageId, fileMeta, caption, mentionedUserIds: clientMentionedUserIds } = parsed;
+    const {
+      roomId,
+      content,
+      type,
+      duration,
+      replyToMessageId,
+      fileMeta,
+      caption,
+      linkPreview,
+      mentionedUserIds: clientMentionedUserIds,
+    } = parsed;
     clientTempId = parsed.clientTempId;
 
     if (type !== 'text' && !isUploadedMediaUrl(content)) {
@@ -358,6 +377,7 @@ async function handleSendMessage(
       mentionedUserIds,
       fileMeta,
       caption,
+      linkPreview,
     });
     const reactivatedBefore = new Date(new Date(message.timestamp).getTime() - 1000).toISOString();
     const updatedRoom = (await roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;

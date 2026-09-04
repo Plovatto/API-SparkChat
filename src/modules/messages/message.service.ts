@@ -4,6 +4,7 @@ import { nextTimestamp } from './message.clock.js';
 import type { MessageRepository } from './message.repository.js';
 import type {
   MessageFileMeta,
+  MessageLinkPreview,
   MessageRecord,
   MessageReplySnapshot,
   MessageSender,
@@ -23,6 +24,7 @@ export interface SendMessageInput {
   mentionedUserIds?: string[] | undefined;
   fileMeta?: MessageFileMeta | null | undefined;
   caption?: string | null | undefined;
+  linkPreview?: MessageLinkPreview | null | undefined;
 }
 
 export class MessageService {
@@ -54,6 +56,7 @@ export class MessageService {
       mentionedUserIds: input.mentionedUserIds ?? [],
       fileMeta: input.fileMeta ?? null,
       caption: input.type && input.type !== 'text' ? (input.caption ?? null) : null,
+      linkPreview: input.linkPreview ?? null,
     };
 
     return this.repository.insert(message);
@@ -85,6 +88,7 @@ export class MessageService {
       mentionedUserIds: [],
       fileMeta: null,
       caption: null,
+      linkPreview: null,
     };
 
     return this.repository.insert(message);
@@ -224,6 +228,7 @@ export class MessageService {
       mentionedUserIds: message.mentionedUserIds,
       fileMeta: message.deletedForEveryone ? null : message.fileMeta,
       caption: message.deletedForEveryone ? null : message.caption,
+      linkPreview: message.deletedForEveryone ? null : message.linkPreview,
     };
   }
 

@@ -8,6 +8,14 @@ export interface MessageFileMeta {
   size: number;
 }
 
+export interface MessageLinkPreview {
+  url: string;
+  title: string;
+  description: string | null;
+  imageUrl: string | null;
+  siteName: string | null;
+}
+
 export interface MessageSender {
   id: string;
   nickname: string;
@@ -41,6 +49,7 @@ export interface MessageRecord {
   mentionedUserIds: string[];
   fileMeta: MessageFileMeta | null;
   caption: string | null;
+  linkPreview: MessageLinkPreview | null;
 }
 
 export interface MessageView {
@@ -60,4 +69,5 @@ export interface MessageView {
   mentionedUserIds: string[];
   fileMeta: MessageFileMeta | null;
   caption: string | null;
+  linkPreview: MessageLinkPreview | null;
 }
