@@ -5,6 +5,7 @@ import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { db } from './database/turso-client.js';
 import { runMigrations } from './database/migrate.js';
+import { AiService, AiUsageLimiter, createGeminiRouter, ensureAssistantUser, loadAssistantIdentity } from './modules/ai/index.js';
 import {
   MessageRateLimiter,
   MessageRepository,
@@ -42,6 +43,20 @@ const recordingService = new RecordingService();
 const presenceService = new RoomPresenceService();
 const messageRateLimiter = new MessageRateLimiter();
 
+const assistantIdentity = await loadAssistantIdentity(env.AI_ASSISTANT_PRIVATE_KEY);
+await ensureAssistantUser(userRepository, assistantIdentity);
+const aiRouter = createGeminiRouter(env.GEMINI_API_KEY);
+const aiUsageLimiter = new AiUsageLimiter();
+const aiService = new AiService(
+  assistantIdentity,
+  roomKeyRepository,
+  messageService,
+  typingService,
+  presenceService,
+  aiRouter,
+  aiUsageLimiter,
+);
+
 const app = createApp({ userService, loginRateLimiter });
 const httpServer = createServer(app);
 
@@ -69,6 +84,7 @@ registerSocketHandlers(io, {
   loginRateLimiter,
   messageRateLimiter,
   roomKeyRepository,
+  aiService,
 });
 
 httpServer.listen(env.PORT, () => {

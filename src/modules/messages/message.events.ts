@@ -21,6 +21,7 @@ export interface MessageClientToServerEvents {
     clientTempId?: string | undefined;
     fileMeta?: MessageFileMeta;
     mentionedUserIds?: string[];
+    caption?: string;
   }) => void;
   'message:mark-read': (payload: { roomId: string; messageIds?: string[] }) => void;
   'messages:get': (payload: { roomId: string; before?: string; limit?: number }) => void;

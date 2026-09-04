@@ -22,6 +22,7 @@ export interface SendMessageInput {
   viewingUserIds?: string[] | undefined;
   mentionedUserIds?: string[] | undefined;
   fileMeta?: MessageFileMeta | null | undefined;
+  caption?: string | null | undefined;
 }
 
 export class MessageService {
@@ -52,18 +53,27 @@ export class MessageService {
       replyTo: input.replyToMessageId ? await this.buildReplySnapshot(input.replyToMessageId) : null,
       mentionedUserIds: input.mentionedUserIds ?? [],
       fileMeta: input.fileMeta ?? null,
+      caption: input.type && input.type !== 'text' ? (input.caption ?? null) : null,
     };
 
     return this.repository.insert(message);
   }
 
-  async createSystemMessage(roomId: string, content: string): Promise<MessageRecord> {
+  createSystemMessage(roomId: string, content: string): Promise<MessageRecord> {
+    return this.createSystemLikeMessage(roomId, content, 'system');
+  }
+
+  createErrorMessage(roomId: string, content: string): Promise<MessageRecord> {
+    return this.createSystemLikeMessage(roomId, content, 'error');
+  }
+
+  private createSystemLikeMessage(roomId: string, content: string, type: Extract<MessageType, 'system' | 'error'>): Promise<MessageRecord> {
     const message: MessageRecord = {
       id: randomUUID(),
       roomId,
       senderId: 'system',
       content,
-      type: 'system',
+      type,
       duration: null,
       timestamp: nextTimestamp(roomId),
       deletedForEveryone: false,
@@ -74,6 +84,7 @@ export class MessageService {
       replyTo: null,
       mentionedUserIds: [],
       fileMeta: null,
+      caption: null,
     };
 
     return this.repository.insert(message);
@@ -212,6 +223,7 @@ export class MessageService {
       replyTo: message.replyTo,
       mentionedUserIds: message.mentionedUserIds,
       fileMeta: message.deletedForEveryone ? null : message.fileMeta,
+      caption: message.deletedForEveryone ? null : message.caption,
     };
   }
 
@@ -244,6 +256,7 @@ export class MessageService {
       type: original.type,
       duration: original.duration,
       fileMeta: original.fileMeta,
+      caption: original.caption,
       sender: await this.resolveSender(original.senderId),
     };
   }

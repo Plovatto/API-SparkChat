@@ -1,4 +1,5 @@
 import { logger } from '../config/logger.js';
+import type { AiService } from '../modules/ai/index.js';
 import {
   registerMessageSocketHandlers,
   type MessageRateLimiter,
@@ -21,6 +22,7 @@ export interface SocketDeps {
   loginRateLimiter: LoginRateLimiter;
   messageRateLimiter: MessageRateLimiter;
   roomKeyRepository: RoomKeyRepository;
+  aiService: AiService;
 }
 
 export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
@@ -28,7 +30,20 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
     logger.info({ socketId: socket.id }, 'Client connected');
 
     registerUserSocketHandlers(io, socket, deps.userService, deps.roomService, deps.messageService, deps.loginRateLimiter);
-    registerRoomSocketHandlers(io, socket, deps.roomService, deps.userService, deps.messageService, deps.roomKeyRepository);
+    registerRoomSocketHandlers(
+      io,
+      socket,
+      deps.roomService,
+      deps.userService,
+      deps.messageService,
+      deps.roomKeyRepository,
+      ({ io: server, room }) => {
+        if (deps.aiService.isAssistantRoom(room)) {
+          void deps.aiService.sendWelcomeMessage(server, room);
+        }
+      },
+      (room) => deps.aiService.isAssistantRoom(room),
+    );
     registerMessageSocketHandlers(
       io,
       socket,
@@ -39,6 +54,11 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       deps.recordingService,
       deps.presenceService,
       deps.messageRateLimiter,
+      ({ io: server, room, message }) => {
+        if (message.type !== 'system' && deps.aiService.isAssistantRoom(room)) {
+          deps.aiService.handleIncomingMessage(server, room, message);
+        }
+      },
     );
 
     socket.on('disconnect', (reason) => {

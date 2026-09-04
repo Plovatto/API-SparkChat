@@ -8,6 +8,9 @@ import type { RoomKeyRepository } from './room.e2e.js';
 import type { RoomService } from './room.service.js';
 import type { RoomRecord } from './room.types.js';
 
+export type OnRoomCreatedHook = (context: { io: AppServer; room: RoomRecord }) => void;
+export type ShouldResetInsteadOfDeleteHook = (room: RoomRecord) => boolean;
+
 const ROOM_CODE_MIN_LENGTH = 4;
 const INITIAL_MESSAGES_LIMIT = 20;
 
@@ -147,9 +150,11 @@ export function registerRoomSocketHandlers(
   userService: UserService,
   messageService: MessageService,
   roomKeyRepository: RoomKeyRepository,
+  onRoomCreated?: OnRoomCreatedHook,
+  shouldResetInsteadOfDelete?: ShouldResetInsteadOfDeleteHook,
 ): void {
   socket.on('room:create-private', (payload) => {
-    void handleCreatePrivateRoom(io, socket, roomService, userService, messageService, payload);
+    void handleCreatePrivateRoom(io, socket, roomService, userService, messageService, payload, onRoomCreated);
   });
 
   socket.on('room:create-group', (payload) => {
@@ -169,7 +174,7 @@ export function registerRoomSocketHandlers(
   });
 
   socket.on('room:delete', (payload) => {
-    void handleDeleteRoom(socket, roomService, payload);
+    void handleDeleteRoom(io, socket, roomService, payload, onRoomCreated, shouldResetInsteadOfDelete);
   });
 
   socket.on('group:leave', (payload) => {
@@ -212,6 +217,7 @@ async function handleCreatePrivateRoom(
   userService: UserService,
   messageService: MessageService,
   payload: unknown,
+  onRoomCreated?: OnRoomCreatedHook,
 ): Promise<void> {
   const userId = socket.data.userId;
   if (!userId) {
@@ -233,6 +239,7 @@ async function handleCreatePrivateRoom(
       return;
     }
 
+    const existingRoom = await roomService.findPrivateRoomBetween(userId, targetUser.id);
     const room = await roomService.createPrivateRoom(userId, targetUser.id);
     await socket.join(room.id);
 
@@ -244,6 +251,10 @@ async function handleCreatePrivateRoom(
 
     const summaryForViewer = await roomService.buildSummary(room, userId);
     socket.emit('room:joined', { room: summaryForViewer, messages: messageViews });
+
+    if (!existingRoom) {
+      onRoomCreated?.({ io, room });
+    }
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }
@@ -375,7 +386,14 @@ async function handleJoinRoom(socket: AppSocket, roomService: RoomService, paylo
   }
 }
 
-async function handleDeleteRoom(socket: AppSocket, roomService: RoomService, payload: unknown): Promise<void> {
+async function handleDeleteRoom(
+  io: AppServer,
+  socket: AppSocket,
+  roomService: RoomService,
+  payload: unknown,
+  onRoomCreated?: OnRoomCreatedHook,
+  shouldResetInsteadOfDelete?: ShouldResetInsteadOfDeleteHook,
+): Promise<void> {
   const userId = socket.data.userId;
   if (!userId) {
     socket.emit('error', { message: 'Usuário não autenticado.' });
@@ -384,6 +402,20 @@ async function handleDeleteRoom(socket: AppSocket, roomService: RoomService, pay
 
   try {
     const { roomId } = roomIdPayloadSchema.parse(payload);
+    const room = await roomService.getRoomById(roomId);
+    if (!room || !roomService.isParticipant(room, userId)) {
+      socket.emit('error', { message: 'Sala não encontrada.' });
+      return;
+    }
+
+    if (shouldResetInsteadOfDelete?.(room)) {
+      await roomService.resetVisibilityForUser(room, userId);
+      const summary = await roomService.buildSummary(room, userId);
+      socket.emit('room:new', { room: summary, messages: [] });
+      onRoomCreated?.({ io, room });
+      return;
+    }
+
     await roomService.deleteForUser(roomId, userId);
     socket.emit('room:deleted', { roomId });
     await socket.leave(roomId);
