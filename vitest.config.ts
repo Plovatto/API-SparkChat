@@ -9,7 +9,14 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    env: { LOG_LEVEL: 'silent' },
+    env: {
+      LOG_LEVEL: 'silent',
+      R2_ACCOUNT_ID: 'test',
+      R2_ACCESS_KEY_ID: 'test',
+      R2_SECRET_ACCESS_KEY: 'test',
+      R2_BUCKET_NAME: 'test',
+      R2_PUBLIC_BASE_URL: 'https://fake-object-storage.test',
+    },
     include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
     coverage: {
       provider: 'v8',

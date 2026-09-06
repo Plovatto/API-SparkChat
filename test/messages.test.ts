@@ -1,7 +1,5 @@
-import { rm } from 'node:fs/promises';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
-import { uploadsDir } from '../src/config/paths.js';
 import { buildTestApp } from './support/build-test-app.js';
 
 const { app, userService } = await buildTestApp();
@@ -16,10 +14,6 @@ beforeAll(async () => {
     socketId: 'socket-uploader',
   });
   authHeader = `Bearer ${user.id}:${sessionToken}`;
-});
-
-afterAll(async () => {
-  await rm(uploadsDir, { recursive: true, force: true });
 });
 
 describe('Upload authentication', () => {
@@ -59,7 +53,7 @@ describe('POST /api/messages/upload-image', () => {
 
     const body = response.body as { url: string };
     expect(response.status).toBe(201);
-    expect(body.url).toMatch(/^\/uploads\/images\/.+\.png$/);
+    expect(body.url).toMatch(/^https:\/\/fake-object-storage\.test\/uploads\/images\/.+\.png$/);
   });
 
   it('rejects a request with no file', async () => {
@@ -110,7 +104,7 @@ describe('POST /api/messages/upload-image', () => {
 
     const body = response.body as { url: string };
     expect(response.status).toBe(201);
-    expect(body.url).toMatch(/^\/uploads\/images\/.+\.png\?e2e=1$/);
+    expect(body.url).toMatch(/^https:\/\/fake-object-storage\.test\/uploads\/images\/.+\.png\?e2e=1$/);
   });
 
   it('still enforces the mimetype and extension allowlist for encrypted uploads', async () => {
@@ -133,7 +127,7 @@ describe('POST /api/messages/upload-audio', () => {
 
     const body = response.body as { url: string };
     expect(response.status).toBe(201);
-    expect(body.url).toMatch(/^\/uploads\/audio\/.+\.webm$/);
+    expect(body.url).toMatch(/^https:\/\/fake-object-storage\.test\/uploads\/audio\/.+\.webm$/);
   });
 
   it('rejects a request with no file', async () => {
@@ -173,7 +167,7 @@ describe('POST /api/messages/upload-file', () => {
 
     const body = response.body as { url: string; name: string; mimeType: string; size: number };
     expect(response.status).toBe(201);
-    expect(body.url).toMatch(/^\/uploads\/files\/.+\.pdf$/);
+    expect(body.url).toMatch(/^https:\/\/fake-object-storage\.test\/uploads\/files\/.+\.pdf$/);
     expect(body.name).toBe('relatorio.pdf');
     expect(body.mimeType).toBe('application/pdf');
     expect(body.size).toBeGreaterThan(0);

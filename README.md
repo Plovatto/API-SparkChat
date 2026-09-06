@@ -85,7 +85,17 @@ FRONTEND_URL=http://localhost:5173
 LOG_LEVEL=info
 TURSO_DATABASE_URL=
 TURSO_AUTH_TOKEN=
+RECOVERY_FILE_SECRET=
+GEMINI_API_KEY=
+AI_ASSISTANT_PRIVATE_KEY=
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET_NAME=
+R2_PUBLIC_BASE_URL=
 ```
+
+`R2_*` configura o armazenamento de arquivos enviados (imagem, áudio, arquivo) no Cloudflare R2, usado no lugar de disco local para funcionar em hospedagens sem disco persistente.
 
 ## Documentação da API
 

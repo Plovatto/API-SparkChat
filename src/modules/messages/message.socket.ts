@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { uploadsUrlPrefix } from '../../config/paths.js';
+import { uploadedMediaKeyPrefix } from '../../config/paths.js';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { roomIdPayloadSchema } from '../../sockets/payloads.js';
@@ -36,6 +36,7 @@ const fileMetaSchema = z.object({
   name: z.string().trim().min(1).max(500),
   mimeType: z.string().trim().min(1).max(200),
   size: z.number().int().positive(),
+  thumbnailUrl: z.string().trim().min(1).max(4000).optional(),
 });
 
 const linkPreviewSchema = z.object({
@@ -108,7 +109,7 @@ registerServerEvents('messages', [
   'recording:update',
 ]);
 
-const uploadedMediaPathPattern = new RegExp(`^${uploadsUrlPrefix}/(images|audio|files)/[^/]+$`);
+const uploadedMediaPathPattern = new RegExp(`^/${uploadedMediaKeyPrefix}/(images|audio|files)/[^/]+$`);
 
 function isUploadedMediaUrl(content: string): boolean {
   try {
@@ -232,6 +233,11 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
     clientTempId = parsed.clientTempId;
 
     if (type !== 'text' && !isUploadedMediaUrl(content)) {
+      socket.emit('error', { message: 'Conteúdo de mídia inválido.', clientTempId });
+      return;
+    }
+
+    if (fileMeta?.thumbnailUrl && !isUploadedMediaUrl(fileMeta.thumbnailUrl)) {
       socket.emit('error', { message: 'Conteúdo de mídia inválido.', clientTempId });
       return;
     }

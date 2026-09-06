@@ -7,6 +7,8 @@ import { registry } from '../../docs/registry.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { createRequireAuth } from '../../middleware/auth.js';
 import { createRateLimiter } from '../../middleware/rate-limit.js';
+import type { ObjectStorage } from '../../storage/object-storage.js';
+import type { StorageQuota } from '../../storage/storage-quota.js';
 import type { UserService } from '../users/index.js';
 import {
   createMessageController,
@@ -113,9 +115,9 @@ const handleFileUploadError = createUploadErrorHandler(
   'PDF, vídeo (MP4, WEBM, MOV, AVI), documento do Office, ZIP, TXT ou CSV',
 );
 
-export function createMessageRouter(userService: UserService): Router {
+export function createMessageRouter(userService: UserService, objectStorage: ObjectStorage, storageQuota: StorageQuota): Router {
   const router = Router();
-  const controller = createMessageController();
+  const controller = createMessageController(objectStorage, storageQuota);
   const requireAuth = createRequireAuth(userService);
 
   router.post(

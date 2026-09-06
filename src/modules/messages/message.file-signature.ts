@@ -1,5 +1,3 @@
-import { open } from 'node:fs/promises';
-
 interface SignatureRule {
   offset: number;
   bytes: number[];
@@ -51,26 +49,15 @@ const SIGNATURES: Record<string, SignatureRule[][]> = {
 const NO_SIGNATURE_MIME_TYPES = new Set(['text/plain', 'text/csv']);
 const SNIFF_LENGTH = 32;
 
-async function readLeadingBytes(filePath: string, length: number): Promise<Buffer> {
-  const handle = await open(filePath, 'r');
-  try {
-    const buffer = Buffer.alloc(length);
-    const { bytesRead } = await handle.read(buffer, 0, length, 0);
-    return buffer.subarray(0, bytesRead);
-  } finally {
-    await handle.close();
-  }
-}
-
 function matchesRuleSet(buffer: Buffer, rules: SignatureRule[]): boolean {
   return rules.every((rule) => rule.bytes.every((byte, index) => buffer[rule.offset + index] === byte));
 }
 
-export async function verifyFileSignature(filePath: string, mimeType: string): Promise<boolean> {
-  const buffer = await readLeadingBytes(filePath, SNIFF_LENGTH);
+export function verifyFileSignature(buffer: Buffer, mimeType: string): boolean {
+  const leading = buffer.subarray(0, SNIFF_LENGTH);
 
   if (NO_SIGNATURE_MIME_TYPES.has(mimeType)) {
-    return !buffer.includes(0);
+    return !leading.includes(0);
   }
 
   const ruleSets = SIGNATURES[mimeType];
@@ -78,5 +65,5 @@ export async function verifyFileSignature(filePath: string, mimeType: string): P
     return false;
   }
 
-  return ruleSets.some((rules) => matchesRuleSet(buffer, rules));
+  return ruleSets.some((rules) => matchesRuleSet(leading, rules));
 }

@@ -118,6 +118,11 @@ export const messages = sqliteTable(
   (table) => [index('messages_room_id_timestamp_idx').on(table.roomId, table.timestamp)],
 );
 
+export const storageUsage = sqliteTable('storage_usage', {
+  id: text('id').primaryKey(),
+  bytesUsed: integer('bytes_used').notNull().default(0),
+});
+
 export const linkPreviews = sqliteTable('link_previews', {
   url: text('url').primaryKey(),
   status: text('status').$type<LinkPreviewCacheRecord['status']>().notNull(),

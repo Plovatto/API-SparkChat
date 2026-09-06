@@ -1,46 +1,38 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { getSodium } from '@/modules/ai/ai.crypto.js';
-import { guessMimeTypeFromUrl, loadDecryptedAttachment, resolveDiskPath } from '@/modules/ai/ai.attachments.js';
-
-let uploadsRoot: string;
-
-beforeEach(async () => {
-  uploadsRoot = await mkdtemp(path.join(tmpdir(), 'sparkchat-ai-uploads-'));
-  await mkdir(path.join(uploadsRoot, 'images'), { recursive: true });
-});
-
-afterEach(async () => {
-  await rm(uploadsRoot, { recursive: true, force: true });
-});
+import { guessMimeTypeFromUrl, loadDecryptedAttachment, resolveObjectKey } from '@/modules/ai/ai.attachments.js';
+import { InMemoryObjectStorage } from '@/storage/object-storage.js';
 
 describe('guessMimeTypeFromUrl', () => {
   it('maps known image and audio extensions', () => {
-    expect(guessMimeTypeFromUrl('/uploads/images/abc.png')).toBe('image/png');
-    expect(guessMimeTypeFromUrl('/uploads/audio/abc.webm?e2e=1')).toBe('audio/webm');
-    expect(guessMimeTypeFromUrl('/uploads/files/abc.zip')).toBeNull();
+    expect(guessMimeTypeFromUrl('https://cdn.test/uploads/images/abc.png')).toBe('image/png');
+    expect(guessMimeTypeFromUrl('https://cdn.test/uploads/audio/abc.webm?e2e=1')).toBe('audio/webm');
+    expect(guessMimeTypeFromUrl('https://cdn.test/uploads/files/abc.zip')).toBeNull();
   });
 });
 
-describe('resolveDiskPath', () => {
-  it('resolves a normal uploads url to a path inside the uploads root', () => {
-    const resolved = resolveDiskPath('/uploads/images/abc.png', uploadsRoot);
-    expect(resolved).toBe(path.join(uploadsRoot, 'images', 'abc.png'));
+describe('resolveObjectKey', () => {
+  it('resolves an uploaded media url to its object key', () => {
+    expect(resolveObjectKey('https://cdn.test/uploads/images/abc.png')).toBe('uploads/images/abc.png');
+    expect(resolveObjectKey('https://cdn.test/uploads/audio/abc.webm?e2e=1')).toBe('uploads/audio/abc.webm');
+  });
+
+  it('rejects a url outside the uploaded-media namespace', () => {
+    expect(resolveObjectKey('https://cdn.test/secrets.env')).toBeNull();
   });
 
   it('rejects a path traversal attempt', () => {
-    expect(resolveDiskPath('/uploads/../../secrets.env', uploadsRoot)).toBeNull();
+    expect(resolveObjectKey('https://cdn.test/uploads/../../secrets.env')).toBeNull();
   });
 
-  it('rejects a url outside the uploads prefix', () => {
-    expect(resolveDiskPath('/etc/passwd', uploadsRoot)).toBeNull();
+  it('rejects a value that does not point into the uploads namespace', () => {
+    expect(resolveObjectKey('/etc/passwd')).toBeNull();
   });
 });
 
 describe('loadDecryptedAttachment', () => {
   it('decrypts a sealed attachment written with the room key', async () => {
+    const objectStorage = new InMemoryObjectStorage();
     const sodium = await getSodium();
     const roomKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
     const plaintext = Buffer.from('fake image bytes');
@@ -49,13 +41,15 @@ describe('loadDecryptedAttachment', () => {
     const ciphertext = sodium.crypto_secretbox_easy(plaintext, nonce, roomKey);
     const combined = Buffer.concat([Buffer.from(nonce), Buffer.from(ciphertext)]);
 
-    await writeFile(path.join(uploadsRoot, 'images', 'photo.png'), combined);
+    await objectStorage.putObject('uploads/images/photo.png', combined, { contentType: 'image/png' });
+    const url = `${objectStorage.publicUrl('uploads/images/photo.png')}?e2e=1`;
 
-    const result = await loadDecryptedAttachment('/uploads/images/photo.png?e2e=1', roomKey, uploadsRoot);
+    const result = await loadDecryptedAttachment(url, roomKey, objectStorage);
     expect(result?.toString('utf8')).toBe('fake image bytes');
   });
 
   it('returns null when the room key does not match', async () => {
+    const objectStorage = new InMemoryObjectStorage();
     const sodium = await getSodium();
     const roomKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
     const otherKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
@@ -65,16 +59,20 @@ describe('loadDecryptedAttachment', () => {
     const ciphertext = sodium.crypto_secretbox_easy(plaintext, nonce, roomKey);
     const combined = Buffer.concat([Buffer.from(nonce), Buffer.from(ciphertext)]);
 
-    await writeFile(path.join(uploadsRoot, 'images', 'photo.png'), combined);
+    await objectStorage.putObject('uploads/images/photo.png', combined, { contentType: 'image/png' });
+    const url = `${objectStorage.publicUrl('uploads/images/photo.png')}?e2e=1`;
 
-    const result = await loadDecryptedAttachment('/uploads/images/photo.png?e2e=1', otherKey, uploadsRoot);
+    const result = await loadDecryptedAttachment(url, otherKey, objectStorage);
     expect(result).toBeNull();
   });
 
-  it('returns null for a file that does not exist', async () => {
+  it('returns null for a key that does not exist', async () => {
+    const objectStorage = new InMemoryObjectStorage();
     const sodium = await getSodium();
     const roomKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
-    const result = await loadDecryptedAttachment('/uploads/images/missing.png?e2e=1', roomKey, uploadsRoot);
+    const url = `${objectStorage.publicUrl('uploads/images/missing.png')}?e2e=1`;
+
+    const result = await loadDecryptedAttachment(url, roomKey, objectStorage);
     expect(result).toBeNull();
   });
 });
