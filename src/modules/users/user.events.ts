@@ -14,6 +14,7 @@ export interface UserServerToClientEvents {
     authMethod: AuthMethod;
   }) => void;
   'user:resumed': (payload: { user: PublicUser; authMethod: AuthMethod }) => void;
+  'user:auth-failed': (payload: { mode: 'register' | 'resume'; reason: 'invalid' | 'temporary'; message: string }) => void;
   'user:online': (payload: { userId: string; nickname: string; avatar: number }) => void;
   'user:offline': (payload: {
     userId: string;
@@ -43,7 +44,7 @@ export interface UserClientToServerEvents {
   'user:update-profile': (payload: { nickname: string; avatar: number }) => void;
   'user:update-status-text': (payload: { statusText: string }) => void;
   'user:update-theme': (payload: UserTheme) => void;
-  'user:visibility': (payload: { visible: boolean }) => void;
+  'user:visibility': (payload: { visible: boolean }, ack?: () => void) => void;
   'user:change-password': (payload: { currentPassword?: string; newPassword: string }) => void;
   'user:regenerate-recovery-file': () => void;
   'user:list-sessions': () => void;

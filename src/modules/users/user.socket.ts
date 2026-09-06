@@ -78,6 +78,7 @@ registerClientEvents('users', {
 registerServerEvents('users', [
   'user:registered',
   'user:resumed',
+  'user:auth-failed',
   'user:online',
   'user:offline',
   'user:profile-updated',
@@ -108,7 +109,8 @@ export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, dep
     void handleUpdateTheme(socket, deps, payload);
   });
 
-  socket.on('user:visibility', (payload) => {
+  socket.on('user:visibility', (payload, ack) => {
+    ack?.();
     void handleVisibility(io, socket, deps, payload);
   });
 
@@ -145,8 +147,14 @@ export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, dep
   });
 }
 
+function readJoinMode(payload: unknown): 'register' | 'resume' {
+  const mode = typeof payload === 'object' && payload !== null ? (payload as { mode?: unknown }).mode : undefined;
+  return mode === 'register' ? 'register' : 'resume';
+}
+
 async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
   const { userService, loginRateLimiter } = deps;
+  const joinMode = readJoinMode(payload);
 
   try {
     const input = joinPayloadSchema.parse(payload);
@@ -154,7 +162,11 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
     if (input.mode === 'register') {
       const ip = socket.handshake.address;
       if (loginRateLimiter.isBlockedForRegistration(ip)) {
-        socket.emit('error', { message: 'Muitas contas criadas a partir deste endereço. Tente novamente mais tarde.' });
+        socket.emit('user:auth-failed', {
+          mode: 'register',
+          reason: 'invalid',
+          message: 'Muitas contas criadas a partir deste endereço. Tente novamente mais tarde.',
+        });
         return;
       }
       loginRateLimiter.registerAttemptForRegistration(ip);
@@ -184,7 +196,11 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
 
     const resumed = await userService.resumeSession(input.userId, input.sessionToken, socket.id);
     if (!resumed) {
-      socket.emit('error', { message: 'Sessão inválida ou expirada. Faça login novamente.' });
+      socket.emit('user:auth-failed', {
+        mode: 'resume',
+        reason: 'invalid',
+        message: 'Sessão inválida ou expirada. Faça login novamente.',
+      });
       return;
     }
 
@@ -196,7 +212,12 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
     socket.broadcast.emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
     await deliverPendingMessages(io, deps, user.id);
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    const isPayloadError = error instanceof z.ZodError;
+    socket.emit('user:auth-failed', {
+      mode: joinMode,
+      reason: joinMode === 'resume' && !isPayloadError ? 'temporary' : 'invalid',
+      message: extractErrorMessage(error),
+    });
   }
 }
 
