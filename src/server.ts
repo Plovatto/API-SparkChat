@@ -90,6 +90,12 @@ const io = new Server<
     credentials: true,
   },
   transports: ['websocket', 'polling'],
+  pingInterval: 20000,
+  pingTimeout: 25000,
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 5 * 60 * 1000,
+    skipMiddlewares: true,
+  },
 });
 
 registerSocketHandlers(io, {
