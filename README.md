@@ -6,7 +6,9 @@ API backend do SparkChat, desenvolvida com Node.js, TypeScript, Express e Socket
 ## Funcionalidades
 
 - Comunicação em tempo real com Socket.IO
-- Registro de conexão e desconexão de clientes
+- Recuperação de sessão do socket em reconexões, preservando autenticação e salas
+- Upload de imagens, áudios e arquivos no Cloudflare R2, com verificação de assinatura de bytes
+- Limite de armazenamento aplicado no próprio serviço, independente do provedor
 - Configuração centralizada por variáveis de ambiente
 - Tratamento de rotas não encontradas e erros da aplicação
 - Tipagem dos eventos emitidos entre cliente e servidor
@@ -114,6 +116,16 @@ Configuração atual:
 - Origem permitida definida por `FRONTEND_URL`
 - Transportes habilitados: `websocket` e `polling`
 - Credenciais habilitadas para CORS
+- `connectionStateRecovery` com janela de 5 minutos: numa reconexão rápida (celular saindo do segundo plano, por exemplo) o servidor restaura a sessão e as salas do socket anterior
+- Ping a cada 20s com tolerância de 25s, para manter a conexão viva sem derrubá-la em oscilações de rede
+
+## Deploy
+
+O projeto inclui um `Dockerfile` multi-stage (build + runtime enxuto, sem dependências de desenvolvimento), o que permite subir em qualquer plataforma compatível com Docker sem depender de detecção automática de linguagem.
+
+A imagem expõe a porta `8080`, mas o servidor escuta na porta definida por `PORT` — configure a plataforma para que as duas coincidam. Todas as variáveis de ambiente listadas acima precisam estar definidas no ambiente de execução.
+
+As migrations do banco rodam automaticamente ao iniciar o servidor.
 
 ## Testes
 
@@ -138,7 +150,7 @@ Os testes ficam em `test/`, usando **Vitest** + **Supertest** contra o app Expre
 ```text
 src/
 ├── app.ts             # Monta o Express app (usado em produção e nos testes)
-├── config/            # Variáveis de ambiente, logger e caminhos de upload
+├── config/            # Variáveis de ambiente, logger e chaves dos objetos enviados
 ├── database/          # Schema Drizzle, client Turso/libSQL e migrations
 ├── docs/              # Registro OpenAPI, registro de eventos Socket.IO e geração da página /docs
 ├── lib/               # Utilitários compartilhados entre módulos (ex.: contador de janela deslizante)
@@ -151,6 +163,7 @@ src/
 │   └── users/         # Contas, sessões, arquivo de recuperação e chaves E2E do usuário
 ├── routes/            # Monta as rotas de cada módulo sob /api
 ├── sockets/           # Contratos, helpers e registro de conexões do Socket.IO
+├── storage/           # Armazenamento de objetos (Cloudflare R2), cota de uso e resolução de chaves
 └── server.ts          # Ponto de entrada: cria o app, o socket.io e sobe o servidor
 
 test/
