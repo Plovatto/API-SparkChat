@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { UserService } from '../users/index.js';
 import { nextTimestamp } from './message.clock.js';
-import type { MessageRepository } from './message.repository.js';
+import type { MessageRepository, RoomDigest, RoomDigestRequest, UnreadCounts } from './message.repository.js';
 import type {
   MessageFileMeta,
   MessageLinkPreview,
@@ -26,6 +26,9 @@ export interface SendMessageInput {
   caption?: string | null | undefined;
   linkPreview?: MessageLinkPreview | null | undefined;
 }
+
+const SYSTEM_SENDER_ID = 'system';
+const SYSTEM_SENDER: MessageSender = { id: SYSTEM_SENDER_ID, nickname: 'Sistema', avatar: null };
 
 export class MessageService {
   constructor(
@@ -74,7 +77,7 @@ export class MessageService {
     const message: MessageRecord = {
       id: randomUUID(),
       roomId,
-      senderId: 'system',
+      senderId: SYSTEM_SENDER_ID,
       content,
       type,
       duration: null,
@@ -105,6 +108,14 @@ export class MessageService {
     return this.repository.findPageByRoomId(roomId, options);
   }
 
+  getRoomDigests(requests: RoomDigestRequest[], userId: string): Promise<Map<string, RoomDigest>> {
+    return this.repository.findRoomDigests(requests, userId);
+  }
+
+  countUnreadForUser(roomId: string, userId: string): Promise<UnreadCounts> {
+    return this.repository.countUnread(roomId, userId);
+  }
+
   async deleteMessage(messageId: string, requesterId: string): Promise<MessageRecord> {
     const message = await this.repository.findById(messageId);
     if (!message) {
@@ -127,7 +138,7 @@ export class MessageService {
     const messages =
       messageIds && messageIds.length > 0
         ? await this.repository.findByRoomIdAndIds(roomId, messageIds)
-        : await this.repository.findByRoomId(roomId);
+        : await this.repository.findUnreadByRoomId(roomId, userId);
     let changed = false;
 
     const updated = messages.map((message) => {
@@ -157,27 +168,22 @@ export class MessageService {
   }
 
   async markPendingMessagesDelivered(roomId: string, userId: string): Promise<MessageRecord[]> {
-    const messages = await this.repository.findByRoomId(roomId);
-    const pending = messages.filter(
-      (message) =>
-        message.senderId !== userId &&
-        !message.deletedForEveryone &&
-        !message.deliveredTo.includes(userId) &&
-        !message.readBy.includes(userId),
-    );
+    const deliveredByRoom = await this.markPendingMessagesDeliveredInRooms([roomId], userId);
+    return deliveredByRoom.get(roomId) ?? [];
+  }
 
+  async markPendingMessagesDeliveredInRooms(roomIds: string[], userId: string): Promise<Map<string, MessageRecord[]>> {
+    const deliveredByRoom = new Map<string, MessageRecord[]>();
+    const pending = await this.repository.findUndeliveredInRooms(roomIds, userId);
     if (pending.length === 0) {
-      return [];
+      return deliveredByRoom;
     }
 
-    const pendingIds = new Set(pending.map((message) => message.id));
-    const updated = messages
-      .filter((message) => pendingIds.has(message.id))
-      .map((message) => ({
-        ...message,
-        deliveredTo: [...message.deliveredTo, userId],
-        status: message.status === 'read' ? message.status : ('delivered' as const),
-      }));
+    const updated = pending.map((message) => ({
+      ...message,
+      deliveredTo: [...message.deliveredTo, userId],
+      status: message.status === 'read' ? message.status : ('delivered' as const),
+    }));
 
     await this.repository.updateMany(
       updated.map((message) => ({
@@ -186,7 +192,16 @@ export class MessageService {
       })),
     );
 
-    return updated;
+    for (const message of updated) {
+      const bucket = deliveredByRoom.get(message.roomId);
+      if (bucket) {
+        bucket.push(message);
+      } else {
+        deliveredByRoom.set(message.roomId, [message]);
+      }
+    }
+
+    return deliveredByRoom;
   }
 
   countUnread(messages: MessageRecord[], userId: string): number {
@@ -227,7 +242,8 @@ export class MessageService {
     };
   }
 
-  toViews(messages: MessageRecord[]): Promise<MessageView[]> {
+  async toViews(messages: MessageRecord[]): Promise<MessageView[]> {
+    await this.warmSenderProfiles(messages.map((message) => message.senderId));
     return Promise.all(messages.map((message) => this.toView(message)));
   }
 
@@ -238,6 +254,19 @@ export class MessageService {
     }
 
     return this.repository.update(messageId, { playedBy: [...message.playedBy, userId] });
+  }
+
+  private async warmSenderProfiles(senderIds: string[]): Promise<void> {
+    const missing = new Set<string>();
+    for (const senderId of senderIds) {
+      if (senderId !== SYSTEM_SENDER_ID && !this.userService.getCachedProfile(senderId)) {
+        missing.add(senderId);
+      }
+    }
+
+    if (missing.size > 0) {
+      await this.userService.getUsersByIds([...missing]);
+    }
   }
 
   private resolveOnlineRecipients(participantIds: string[], senderId: string): string[] {
@@ -262,8 +291,8 @@ export class MessageService {
   }
 
   private async resolveSender(senderId: string): Promise<MessageSender> {
-    if (senderId === 'system') {
-      return { id: 'system', nickname: 'Sistema', avatar: null };
+    if (senderId === SYSTEM_SENDER_ID) {
+      return SYSTEM_SENDER;
     }
 
     const cached = this.userService.getCachedProfile(senderId);

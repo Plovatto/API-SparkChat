@@ -1,6 +1,11 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
-import { roomKeys } from '../../database/schema.js';
+import { roomKeys, roomParticipants } from '../../database/schema.js';
+
+export interface SealedRoomKey {
+  roomId: string;
+  sealedKey: string;
+}
 
 export class RoomKeyRepository {
   constructor(private readonly db: Database) {}
@@ -19,5 +24,20 @@ export class RoomKeyRepository {
       .where(and(eq(roomKeys.roomId, roomId), eq(roomKeys.userId, userId)));
 
     return row?.sealedKey ?? null;
+  }
+
+  async findForParticipantInRooms(roomIds: string[], userId: string): Promise<SealedRoomKey[]> {
+    if (roomIds.length === 0) {
+      return [];
+    }
+
+    const rows = await this.db
+      .select({ roomId: roomKeys.roomId, sealedKey: roomKeys.sealedKey })
+      .from(roomKeys)
+      .innerJoin(roomParticipants, and(eq(roomParticipants.roomId, roomKeys.roomId), eq(roomParticipants.userId, roomKeys.userId)))
+      .where(and(eq(roomKeys.userId, userId), inArray(roomKeys.roomId, roomIds)));
+
+    const byRoomId = new Map(rows.map((row) => [row.roomId, row]));
+    return roomIds.map((roomId) => byRoomId.get(roomId)).filter((row): row is SealedRoomKey => row !== undefined);
   }
 }

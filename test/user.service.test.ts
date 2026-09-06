@@ -509,3 +509,24 @@ describe('UserService.publishE2eKeys / getPublicKeys', () => {
     expect(keys).toEqual([{ userId: alice.id, publicKey: 'pub-key-alice' }]);
   });
 });
+
+describe('UserService.getUsersByIds', () => {
+  it('returns every existing user keyed by id and keeps getPublicKeys in request order', async () => {
+    const { userService } = await buildRoomService();
+    const { user: alice } = await registerAlice(userService);
+    const { user: bob } = await userService.registerAccount({ nickname: 'Bob', avatar: 2, password: PASSWORD, socketId: 'socket-bob' });
+    await userService.publishE2eKeys(alice.id, { publicKey: 'pub-key-alice' });
+    await userService.publishE2eKeys(bob.id, { publicKey: 'pub-key-bob' });
+
+    const usersById = await userService.getUsersByIds([bob.id, alice.id, 'unknown-id', bob.id]);
+    expect([...usersById.keys()].sort()).toEqual([alice.id, bob.id].sort());
+    expect(usersById.get(bob.id)?.avatar).toBe(2);
+    expect((await userService.getUsersByIds([])).size).toBe(0);
+
+    const keys = await userService.getPublicKeys([bob.id, alice.id, bob.id]);
+    expect(keys).toEqual([
+      { userId: bob.id, publicKey: 'pub-key-bob' },
+      { userId: alice.id, publicKey: 'pub-key-alice' },
+    ]);
+  });
+});

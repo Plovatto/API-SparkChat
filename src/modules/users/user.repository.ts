@@ -1,7 +1,9 @@
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { users } from '../../database/schema.js';
 import type { UserRecord } from './user.types.js';
+
+const MAX_IN_CLAUSE_IDS = 500;
 
 const socketIdsByUserId = new Map<string, string>();
 const onlineUserIds = new Set<string>();
@@ -44,12 +46,33 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
   return record;
 }
 
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
 export class UserRepository {
   constructor(private readonly db: Database) {}
 
   async findById(id: string): Promise<UserRecord | null> {
     const [row] = await this.db.select().from(users).where(eq(users.id, id));
     return row ? toRecord(row) : null;
+  }
+
+  async findByIds(ids: string[]): Promise<UserRecord[]> {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) {
+      return [];
+    }
+
+    const pages = await Promise.all(
+      chunk(unique, MAX_IN_CLAUSE_IDS).map((batch) => this.db.select().from(users).where(inArray(users.id, batch))),
+    );
+
+    return pages.flat().map(toRecord);
   }
 
   async insert(user: UserRecord): Promise<UserRecord> {

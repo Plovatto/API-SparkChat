@@ -203,11 +203,19 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
 async function deliverPendingMessages(io: AppServer, deps: UserSocketDeps, userId: string): Promise<void> {
   const { roomService, messageService } = deps;
   const rooms = await roomService.getVisibleRoomsForUser(userId);
+  const deliveredByRoom = await messageService.markPendingMessagesDeliveredInRooms(
+    rooms.map((room) => room.id),
+    userId,
+  );
 
   for (const room of rooms) {
-    const delivered = await messageService.markPendingMessagesDelivered(room.id, userId);
-    for (const message of delivered) {
-      const view = await messageService.toView(message);
+    const delivered = deliveredByRoom.get(room.id);
+    if (!delivered) {
+      continue;
+    }
+
+    const views = await messageService.toViews(delivered);
+    for (const view of views) {
       io.to(room.id).emit('message:updated', view);
     }
   }

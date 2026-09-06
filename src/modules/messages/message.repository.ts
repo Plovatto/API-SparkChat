@@ -1,9 +1,29 @@
-import { and, asc, desc, eq, gt, inArray, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, lt, ne, not, sql, type SQL } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { messages } from '../../database/schema.js';
 import type { MessageRecord, MessageReplySnapshot } from './message.types.js';
 
 type MessageColumns = Partial<typeof messages.$inferInsert>;
+type MessageRow = typeof messages.$inferSelect;
+type JsonArrayColumn = typeof messages.readBy | typeof messages.deliveredTo | typeof messages.mentionedUserIds;
+
+export interface RoomDigestRequest {
+  roomId: string;
+  after?: string | undefined;
+}
+
+export interface RoomDigest {
+  lastMessage: MessageRecord | null;
+  unreadCount: number;
+  mentionCount: number;
+}
+
+export interface UnreadCounts {
+  unreadCount: number;
+  mentionCount: number;
+}
+
+const MAX_IN_CLAUSE_IDS = 500;
 
 function normalizeReplySnapshot(snapshot: MessageReplySnapshot | null | undefined): MessageReplySnapshot | null {
   if (!snapshot) {
@@ -12,7 +32,7 @@ function normalizeReplySnapshot(snapshot: MessageReplySnapshot | null | undefine
   return { ...snapshot, caption: snapshot.caption ?? null };
 }
 
-function toRecord(row: typeof messages.$inferSelect): MessageRecord {
+function toRecord(row: MessageRow): MessageRecord {
   return {
     id: row.id,
     roomId: row.roomId,
@@ -41,6 +61,18 @@ function toColumns(patch: Partial<MessageRecord>): MessageColumns {
     columns.replyToSnapshot = replyTo;
   }
   return columns;
+}
+
+function jsonArrayContains(column: JsonArrayColumn, value: string): SQL {
+  return sql`exists (select 1 from json_each(${column}) where json_each.value = ${value})`;
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }
 
 export class MessageRepository {
@@ -129,6 +161,81 @@ export class MessageRepository {
     return rows.map(toRecord);
   }
 
+  async findUnreadByRoomId(roomId: string, userId: string): Promise<MessageRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.roomId, roomId), ne(messages.senderId, userId), not(jsonArrayContains(messages.readBy, userId))))
+      .orderBy(asc(messages.timestamp));
+
+    return rows.map(toRecord);
+  }
+
+  async findUndeliveredInRooms(roomIds: string[], userId: string): Promise<MessageRecord[]> {
+    if (roomIds.length === 0) {
+      return [];
+    }
+
+    const pages = await Promise.all(
+      chunk(roomIds, MAX_IN_CLAUSE_IDS).map((ids) =>
+        this.db
+          .select()
+          .from(messages)
+          .where(
+            and(
+              inArray(messages.roomId, ids),
+              ne(messages.senderId, userId),
+              eq(messages.deletedForEveryone, false),
+              not(jsonArrayContains(messages.deliveredTo, userId)),
+              not(jsonArrayContains(messages.readBy, userId)),
+            ),
+          )
+          .orderBy(asc(messages.timestamp)),
+      ),
+    );
+
+    return pages.flat().map(toRecord);
+  }
+
+  async countUnread(roomId: string, userId: string, after?: string): Promise<UnreadCounts> {
+    const [row] = await this.buildUnreadCountQuery(roomId, userId, after);
+    return { unreadCount: row?.unreadCount ?? 0, mentionCount: row?.mentionCount ?? 0 };
+  }
+
+  async findRoomDigests(requests: RoomDigestRequest[], userId: string): Promise<Map<string, RoomDigest>> {
+    const digests = new Map<string, RoomDigest>();
+    if (requests.length === 0) {
+      return digests;
+    }
+
+    const lastMessageQueries = requests.map(({ roomId, after }) =>
+      this.db
+        .select()
+        .from(messages)
+        .where(and(eq(messages.roomId, roomId), after ? gt(messages.timestamp, after) : undefined))
+        .orderBy(desc(messages.timestamp))
+        .limit(1),
+    );
+    const countQueries = requests.map(({ roomId, after }) => this.buildUnreadCountQuery(roomId, userId, after));
+
+    const [lastMessageRows, countRows] = await Promise.all([
+      this.db.batch(lastMessageQueries as [(typeof lastMessageQueries)[number], ...(typeof lastMessageQueries)[number][]]),
+      this.db.batch(countQueries as [(typeof countQueries)[number], ...(typeof countQueries)[number][]]),
+    ]);
+
+    requests.forEach(({ roomId }, index) => {
+      const lastRow = lastMessageRows[index]?.[0];
+      const counts = countRows[index]?.[0];
+      digests.set(roomId, {
+        lastMessage: lastRow ? toRecord(lastRow) : null,
+        unreadCount: counts?.unreadCount ?? 0,
+        mentionCount: counts?.mentionCount ?? 0,
+      });
+    });
+
+    return digests;
+  }
+
   async findPageByRoomId(
     roomId: string,
     options: { after?: string | undefined; before?: string | undefined; limit: number },
@@ -152,5 +259,23 @@ export class MessageRepository {
     const page = rows.slice(0, options.limit).reverse().map(toRecord);
 
     return { messages: page, hasMore };
+  }
+
+  private buildUnreadCountQuery(roomId: string, userId: string, after?: string) {
+    return this.db
+      .select({
+        unreadCount: sql<number>`count(*)`.mapWith(Number),
+        mentionCount: sql<number>`coalesce(sum(case when ${jsonArrayContains(messages.mentionedUserIds, userId)} then 1 else 0 end), 0)`.mapWith(Number),
+      })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.roomId, roomId),
+          after ? gt(messages.timestamp, after) : undefined,
+          ne(messages.senderId, userId),
+          eq(messages.deletedForEveryone, false),
+          not(jsonArrayContains(messages.readBy, userId)),
+        ),
+      );
   }
 }

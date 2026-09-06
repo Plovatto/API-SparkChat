@@ -156,12 +156,17 @@ export class RoomRepository {
       .where(inArray(roomParticipants.roomId, roomIds))
       .orderBy(sql`rowid`);
 
-    return visibleRooms.map(({ room }) =>
-      toRoomRecord(
-        room,
-        participantRows.filter((participant) => participant.roomId === room.id),
-      ),
-    );
+    const participantsByRoom = new Map<string, ParticipantRow[]>();
+    for (const participant of participantRows) {
+      const bucket = participantsByRoom.get(participant.roomId);
+      if (bucket) {
+        bucket.push(participant);
+      } else {
+        participantsByRoom.set(participant.roomId, [participant]);
+      }
+    }
+
+    return visibleRooms.map(({ room }) => toRoomRecord(room, participantsByRoom.get(room.id) ?? []));
   }
 
   private async syncParticipants(room: RoomRecord): Promise<void> {
@@ -206,6 +211,15 @@ export class RoomRepository {
         : this.db.insert(roomParticipants).values(values);
     });
 
-    await Promise.all([...deletions, ...upserts]);
+    const statements = [...deletions, ...upserts];
+    if (statements.length === 0) {
+      return;
+    }
+    if (statements.length === 1) {
+      await statements[0];
+      return;
+    }
+
+    await this.db.batch(statements as [(typeof statements)[number], ...(typeof statements)[number][]]);
   }
 }
