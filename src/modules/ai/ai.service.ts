@@ -2,6 +2,7 @@ import { logger } from '../../config/logger.js';
 import type { AppServer } from '../../sockets/events.js';
 import type { MessageRecord, MessageService, RoomPresenceService, TypingService } from '../messages/index.js';
 import type { RoomKeyRepository, RoomRecord } from '../rooms/index.js';
+import type { ObjectStorage } from '../../storage/object-storage.js';
 import { guessMimeTypeFromUrl, loadDecryptedAttachment } from './ai.attachments.js';
 import { decryptContent, encryptContent, unsealRoomKey } from './ai.crypto.js';
 import type { AssistantIdentity } from './ai.identity.js';
@@ -41,6 +42,7 @@ export class AiService {
     private readonly presenceService: RoomPresenceService,
     private readonly router: AiRouter,
     private readonly usageLimiter: AiUsageLimiter,
+    private readonly objectStorage: ObjectStorage,
   ) {}
 
   isAssistantRoom(room: RoomRecord): boolean {
@@ -280,7 +282,7 @@ export class AiService {
     }
 
     if (message.type === 'image') {
-      const raw = await loadDecryptedAttachment(message.content, roomKey);
+      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage);
       if (!raw) {
         return { role, text: captionText ?? '[o usuário enviou uma imagem, mas não foi possível carregá-la]' };
       }
@@ -292,7 +294,7 @@ export class AiService {
       if ((message.duration ?? 0) > AI_MAX_AUDIO_SECONDS) {
         return { role, text: `[o usuário enviou um áudio de ${message.duration}s, longo demais para eu ouvir agora]` };
       }
-      const raw = await loadDecryptedAttachment(message.content, roomKey);
+      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage);
       const mimeType = guessMimeTypeFromUrl(message.content);
       if (!raw || !mimeType) {
         return { role, text: captionText ?? '[o usuário enviou um áudio, mas não foi possível carregá-lo]' };
@@ -309,7 +311,7 @@ export class AiService {
       if ((message.fileMeta?.size ?? 0) > AI_MAX_PDF_BYTES) {
         return { role, text: `[o usuário enviou o arquivo ${name}, grande demais para eu ler agora]` };
       }
-      const raw = await loadDecryptedAttachment(message.content, roomKey);
+      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage);
       if (!raw) {
         return { role, text: captionText ?? `[o usuário enviou o arquivo ${name}, mas não foi possível carregá-lo]` };
       }
@@ -317,7 +319,7 @@ export class AiService {
     }
 
     if (mimeType === 'text/plain' || mimeType === 'text/csv') {
-      const raw = await loadDecryptedAttachment(message.content, roomKey);
+      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage);
       if (!raw) {
         return { role, text: captionText ?? `[o usuário enviou o arquivo ${name}, mas não foi possível carregá-lo]` };
       }

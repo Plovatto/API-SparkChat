@@ -1,27 +1,9 @@
-import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import multer from 'multer';
-import { audioUploadDir, filesUploadDir, imagesUploadDir } from '../../config/paths.js';
 
-function createMediaUpload(
-  destination: string,
-  allowedMimeTypes: Set<string>,
-  allowedExtensions: Set<string>,
-  maxFileSizeBytes: number,
-) {
-  const storage = multer.diskStorage({
-    destination(_req, _file, callback) {
-      mkdirSync(destination, { recursive: true });
-      callback(null, destination);
-    },
-    filename(_req, file, callback) {
-      callback(null, `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`);
-    },
-  });
-
+function createMediaUpload(allowedMimeTypes: Set<string>, allowedExtensions: Set<string>, maxFileSizeBytes: number) {
   return multer({
-    storage,
+    storage: multer.memoryStorage(),
     limits: { fileSize: maxFileSizeBytes },
     fileFilter(_req, file, callback) {
       if (!allowedMimeTypes.has(file.mimetype)) {
@@ -93,6 +75,6 @@ const maxImageSizeBytes = 5 * 1024 * 1024;
 const maxAudioSizeBytes = 8 * 1024 * 1024;
 const maxFileSizeBytes = 50 * 1024 * 1024;
 
-export const imageUpload = createMediaUpload(imagesUploadDir, allowedImageMimeTypes, allowedImageExtensions, maxImageSizeBytes);
-export const audioUpload = createMediaUpload(audioUploadDir, allowedAudioMimeTypes, allowedAudioExtensions, maxAudioSizeBytes);
-export const fileUpload = createMediaUpload(filesUploadDir, allowedFileMimeTypes, allowedFileExtensions, maxFileSizeBytes);
+export const imageUpload = createMediaUpload(allowedImageMimeTypes, allowedImageExtensions, maxImageSizeBytes);
+export const audioUpload = createMediaUpload(allowedAudioMimeTypes, allowedAudioExtensions, maxAudioSizeBytes);
+export const fileUpload = createMediaUpload(allowedFileMimeTypes, allowedFileExtensions, maxFileSizeBytes);

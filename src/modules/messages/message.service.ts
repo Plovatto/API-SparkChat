@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { logger } from '../../config/logger.js';
+import { resolveObjectKey } from '../../storage/object-storage-url.js';
+import type { ObjectStorage } from '../../storage/object-storage.js';
+import type { StorageQuota } from '../../storage/storage-quota.js';
 import type { UserService } from '../users/index.js';
 import { nextTimestamp } from './message.clock.js';
 import type { MessageRepository, RoomDigest, RoomDigestRequest, UnreadCounts } from './message.repository.js';
@@ -34,6 +38,8 @@ export class MessageService {
   constructor(
     private readonly repository: MessageRepository,
     private readonly userService: UserService,
+    private readonly objectStorage: ObjectStorage,
+    private readonly storageQuota: StorageQuota,
   ) {}
 
   async sendMessage(input: SendMessageInput): Promise<MessageRecord> {
@@ -131,7 +137,37 @@ export class MessageService {
       throw new Error('Mensagem não encontrada.');
     }
 
+    await this.deleteAttachmentObjects(message);
+
     return updated;
+  }
+
+  private async deleteAttachmentObjects(message: MessageRecord): Promise<void> {
+    if (message.type !== 'image' && message.type !== 'audio' && message.type !== 'file') {
+      return;
+    }
+
+    const urls = [message.content, message.fileMeta?.thumbnailUrl].filter((url): url is string => Boolean(url));
+    let releasedBytes = 0;
+
+    for (const url of urls) {
+      const key = resolveObjectKey(url);
+      if (!key) {
+        continue;
+      }
+      try {
+        await this.objectStorage.deleteObject(key);
+        if (url === message.content) {
+          releasedBytes += message.fileMeta?.size ?? 0;
+        }
+      } catch (error) {
+        logger.error({ err: error, key }, 'Failed to delete attachment object from storage');
+      }
+    }
+
+    if (releasedBytes > 0) {
+      await this.storageQuota.releaseUsage(releasedBytes);
+    }
   }
 
   async markRoomAsRead(roomId: string, userId: string, messageIds?: string[]): Promise<MessageRecord[]> {
