@@ -8,7 +8,7 @@ import type {
   MessageType,
 } from '../modules/messages/message.types.js';
 import type { RoomType } from '../modules/rooms/room.types.js';
-import type { AuthMethod, UserStatus } from '../modules/users/user.model.js';
+import type { AuthMethod, UserChatSettings, UserStatus } from '../modules/users/user.model.js';
 
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
@@ -23,6 +23,7 @@ export const users = sqliteTable('users', {
   lastSeen: text('last_seen').notNull(),
   themeBaseTheme: text('theme_base_theme'),
   themeColorTheme: text('theme_color_theme'),
+  chatSettings: text('chat_settings', { mode: 'json' }).$type<UserChatSettings>(),
   e2ePublicKey: text('e2e_public_key'),
   e2eEncryptedPrivateKeyByPassword: text('e2e_encrypted_private_key_by_password'),
   e2eEncryptedPrivateKeyByRecovery: text('e2e_encrypted_private_key_by_recovery'),

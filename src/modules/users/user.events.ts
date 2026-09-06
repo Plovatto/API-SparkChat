@@ -1,4 +1,4 @@
-import type { AuthMethod, PublicUser, SessionSummary, UserStatus, UserTheme } from './user.model.js';
+import type { AuthMethod, PublicUser, SessionSummary, UserChatSettings, UserStatus, UserTheme } from './user.model.js';
 
 export interface E2ePublicKeyEntry {
   userId: string;
@@ -26,6 +26,7 @@ export interface UserServerToClientEvents {
   'user:recovery-file-regenerated': (payload: { recoveryFile: string; recoveryToken: string }) => void;
   'user:sessions': (payload: { sessions: SessionSummary[] }) => void;
   'user:session-revoked': () => void;
+  'user:chat-settings-updated': (payload: { chatSettings: UserChatSettings }) => void;
   'e2e:public-keys': (payload: { keys: E2ePublicKeyEntry[] }) => void;
   'e2e:my-keys': (payload: {
     publicKey: string | null;
@@ -44,6 +45,8 @@ export interface UserClientToServerEvents {
   'user:update-profile': (payload: { nickname: string; avatar: number }) => void;
   'user:update-status-text': (payload: { statusText: string }) => void;
   'user:update-theme': (payload: UserTheme) => void;
+  'user:update-chat-settings': (payload: UserChatSettings) => void;
+  'user:logout': () => void;
   'user:visibility': (payload: { visible: boolean }, ack?: () => void) => void;
   'user:change-password': (payload: { currentPassword?: string; newPassword: string }) => void;
   'user:regenerate-recovery-file': () => void;

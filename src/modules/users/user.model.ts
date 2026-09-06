@@ -42,6 +42,31 @@ export const userThemeSchema = z
 
 export type UserTheme = z.infer<typeof userThemeSchema>;
 
+const chatAppearanceSchema = z
+  .object({
+    overlayOpacity: z.number(),
+    overlayBlur: z.number(),
+    ownBubbleColor: z.string().nullable(),
+    ownBubbleOpacity: z.number(),
+    ownTextIntensity: z.number().nullable(),
+    otherBubbleColor: z.string().nullable(),
+    otherBubbleOpacity: z.number(),
+    otherTextIntensity: z.number().nullable(),
+    bubbleBlur: z.number(),
+  })
+  .openapi('ChatAppearance');
+
+export const userChatSettingsSchema = z
+  .object({
+    roomWallpapers: z.record(z.string()).default({}),
+    globalWallpaper: z.string().nullable().default(null),
+    roomAppearance: z.record(chatAppearanceSchema).default({}),
+    globalAppearance: chatAppearanceSchema.nullable().default(null),
+  })
+  .openapi('UserChatSettings');
+
+export type UserChatSettings = z.infer<typeof userChatSettingsSchema>;
+
 export const publicUserSchema = z
   .object({
     id: z.string().openapi({ example: '3e3f4a1e-3b7a-4f7b-8f2a-2b7a7b9b2b2a' }),
@@ -50,6 +75,7 @@ export const publicUserSchema = z
     status: userStatusSchema,
     statusText: z.string().nullable().openapi({ example: 'no trampo' }),
     theme: userThemeSchema,
+    chatSettings: userChatSettingsSchema.nullable(),
   })
   .openapi('PublicUser');
 
