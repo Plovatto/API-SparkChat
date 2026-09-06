@@ -13,6 +13,7 @@ import {
   NICKNAME_MIN_LENGTH,
   PASSWORD_MIN_LENGTH,
   STATUS_TEXT_MAX_LENGTH,
+  userChatSettingsSchema,
   userThemeSchema,
 } from './user.model.js';
 import type { UserService } from './user.service.js';
@@ -65,9 +66,11 @@ registerClientEvents('users', {
   'user:update-profile': updateProfilePayloadSchema,
   'user:update-status-text': updateStatusTextPayloadSchema,
   'user:update-theme': userThemeSchema,
+  'user:update-chat-settings': userChatSettingsSchema,
   'user:visibility': visibilityPayloadSchema,
   'user:change-password': changePasswordPayloadSchema,
   'user:regenerate-recovery-file': null,
+  'user:logout': null,
   'user:list-sessions': null,
   'user:revoke-session': revokeSessionPayloadSchema,
   'e2e:publish-keys': publishE2eKeysPayloadSchema,
@@ -87,6 +90,7 @@ registerServerEvents('users', [
   'user:recovery-file-regenerated',
   'user:sessions',
   'user:session-revoked',
+  'user:chat-settings-updated',
   'e2e:public-keys',
   'e2e:my-keys',
   'error',
@@ -109,6 +113,10 @@ export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, dep
     void handleUpdateTheme(socket, deps, payload);
   });
 
+  socket.on('user:update-chat-settings', (payload) => {
+    void handleUpdateChatSettings(io, socket, deps, payload);
+  });
+
   socket.on('user:visibility', (payload, ack) => {
     ack?.();
     void handleVisibility(io, socket, deps, payload);
@@ -120,6 +128,10 @@ export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, dep
 
   socket.on('user:regenerate-recovery-file', () => {
     void handleRegenerateRecoveryFile(socket, deps);
+  });
+
+  socket.on('user:logout', () => {
+    void handleLogout(socket, deps);
   });
 
   socket.on('user:list-sessions', () => {
@@ -311,6 +323,41 @@ async function handleUpdateTheme(socket: AppSocket, deps: UserSocketDeps, payloa
   }
 
   await deps.userService.updateTheme(userId, parsed.data);
+}
+
+async function handleLogout(socket: AppSocket, deps: UserSocketDeps): Promise<void> {
+  const { userId, sessionId } = socket.data;
+  if (!userId || !sessionId) {
+    return;
+  }
+
+  await deps.userService.revokeSession(userId, sessionId);
+  clearSocketSession(socket);
+}
+
+async function handleUpdateChatSettings(
+  io: AppServer,
+  socket: AppSocket,
+  deps: UserSocketDeps,
+  payload: unknown,
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    return;
+  }
+
+  const parsed = userChatSettingsSchema.safeParse(payload);
+  if (!parsed.success) {
+    return;
+  }
+
+  await deps.userService.updateChatSettings(userId, parsed.data);
+
+  for (const target of io.sockets.sockets.values()) {
+    if (target.id !== socket.id && target.data.userId === userId) {
+      target.emit('user:chat-settings-updated', { chatSettings: parsed.data });
+    }
+  }
 }
 
 async function handleVisibility(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {

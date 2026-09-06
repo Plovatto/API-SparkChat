@@ -92,6 +92,13 @@
       "when": 1788902400003,
       "tag": "0012_smooth_iron_patriot",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1788902400004,
+      "tag": "0013_acoustic_loki",
+      "breakpoints": true
     }
   ]
 }

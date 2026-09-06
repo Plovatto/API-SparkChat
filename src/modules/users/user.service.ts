@@ -9,6 +9,7 @@ import {
   type AuthMethod,
   type PublicUser,
   type UserStatus,
+  type UserChatSettings,
   type UserTheme,
 } from './user.model.js';
 import { hashPassword, verifyPassword } from './user.password.js';
@@ -320,6 +321,10 @@ export class UserService {
     return this.repository.update(userId, { theme });
   }
 
+  updateChatSettings(userId: string, chatSettings: UserChatSettings): Promise<UserRecord | null> {
+    return this.repository.update(userId, { chatSettings });
+  }
+
   updateStatusText(userId: string, statusText: string): Promise<UserRecord | null> {
     const trimmed = statusText.trim();
     return this.repository.update(userId, { statusText: trimmed.length > 0 ? trimmed : null });
@@ -373,6 +378,7 @@ export class UserService {
       status: user.status,
       statusText: user.statusText,
       theme: user.theme ?? DEFAULT_THEME,
+      chatSettings: user.chatSettings ?? null,
     };
   }
 
