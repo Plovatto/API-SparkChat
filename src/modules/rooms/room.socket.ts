@@ -236,11 +236,9 @@ async function handleRoomsGet(socket: AppSocket, deps: RoomSocketDeps): Promise<
 
   try {
     const rooms = await deps.roomService.getVisibleRoomsForUser(userId);
-    const summaries = await Promise.all(rooms.map((room) => deps.roomService.buildSummary(room, userId)));
+    const summaries = await deps.roomService.buildSummaries(rooms, userId);
 
-    for (const room of rooms) {
-      await socket.join(room.id);
-    }
+    await socket.join(rooms.map((room) => room.id));
 
     socket.emit('rooms:list', { rooms: summaries });
   } catch (error) {
@@ -553,25 +551,11 @@ async function handleGetRoomKeys(socket: AppSocket, deps: RoomSocketDeps, payloa
     return;
   }
 
-  const { roomService, roomKeyRepository } = deps;
-
   try {
     const { roomIds } = getRoomKeysPayloadSchema.parse(payload);
-    const results: { roomId: string; sealedKey: string }[] = [];
+    const keys = await deps.roomKeyRepository.findForParticipantInRooms(roomIds, userId);
 
-    for (const roomId of roomIds) {
-      const room = await roomService.getRoomById(roomId);
-      if (!room || !roomService.isParticipant(room, userId)) {
-        continue;
-      }
-
-      const sealedKey = await roomKeyRepository.findForUser(roomId, userId);
-      if (sealedKey) {
-        results.push({ roomId, sealedKey });
-      }
-    }
-
-    socket.emit('e2e:room-keys', { keys: results });
+    socket.emit('e2e:room-keys', { keys });
   } catch (error) {
     socket.emit('error', { message: extractErrorMessage(error) });
   }

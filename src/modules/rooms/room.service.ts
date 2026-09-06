@@ -22,6 +22,14 @@ function toParticipant(user: UserRecord, isAdmin: boolean): RoomParticipant {
   };
 }
 
+function toParticipants(room: RoomRecord, usersById: Map<string, UserRecord>): RoomParticipant[] {
+  const admins = new Set(room.admins);
+  return room.participants
+    .map((id) => usersById.get(id))
+    .filter((user): user is UserRecord => user !== undefined)
+    .map((user) => toParticipant(user, admins.has(user.id)));
+}
+
 export class RoomService {
   constructor(
     private readonly repository: RoomRepository,
@@ -250,48 +258,76 @@ export class RoomService {
 
   async listSummariesForUser(userId: string): Promise<RoomSummary[]> {
     const rooms = await this.getVisibleRoomsForUser(userId);
-    return Promise.all(rooms.map((room) => this.buildSummary(room, userId)));
+    return this.buildSummaries(rooms, userId);
   }
 
   async buildParticipantViews(room: RoomRecord): Promise<RoomParticipant[]> {
-    const participantRecords = await Promise.all(room.participants.map((id) => this.userService.getUser(id)));
-    const admins = new Set(room.admins);
-
-    return participantRecords
-      .filter((user): user is UserRecord => user !== null)
-      .map((user) => toParticipant(user, admins.has(user.id)));
+    const usersById = await this.userService.getUsersByIds(room.participants);
+    return toParticipants(room, usersById);
   }
 
   async buildSummary(room: RoomRecord, viewerId: string): Promise<RoomSummary> {
-    const participants = await this.buildParticipantViews(room);
+    const [summary] = await this.buildSummaries([room], viewerId);
+    if (!summary) {
+      throw new Error('Sala não encontrada.');
+    }
+    return summary;
+  }
 
-    const creator = room.createdBy ? await this.userService.getUser(room.createdBy) : null;
-    const isBlockedBy = Boolean(room.blockedBy[viewerId]);
-    const userBlocked = Object.values(room.blockedBy).includes(viewerId);
+  async buildSummaries(rooms: RoomRecord[], viewerId: string): Promise<RoomSummary[]> {
+    if (rooms.length === 0) {
+      return [];
+    }
 
-    const rawMessages = await this.messageService.getRoomMessages(room.id);
-    const messages = this.filterMessagesForUser(room, rawMessages, viewerId);
-    const lastMessageRecord = messages.length > 0 ? (messages[messages.length - 1] ?? null) : null;
-    const lastMessage = lastMessageRecord ? await this.messageService.toView(lastMessageRecord) : null;
-    const unreadCount = this.messageService.countUnread(messages, viewerId);
-    const mentionCount = this.messageService.countUnreadMentions(messages, viewerId);
+    const userIds = new Set<string>();
+    for (const room of rooms) {
+      for (const participantId of room.participants) {
+        userIds.add(participantId);
+      }
+      if (room.createdBy) {
+        userIds.add(room.createdBy);
+      }
+    }
 
-    return {
-      id: room.id,
-      type: room.type,
-      name: room.name,
-      roomCode: room.roomCode,
-      createdBy: creator?.nickname,
-      creatorId: room.createdBy,
-      participants,
-      lastMessage,
-      unreadCount,
-      mentionCount,
-      blockedBy: room.blockedBy,
-      isBlockedBy,
-      userBlocked,
-      isMutuallyBlocked: isBlockedBy && userBlocked,
-    };
+    const [usersById, digests] = await Promise.all([
+      this.userService.getUsersByIds([...userIds]),
+      this.messageService.getRoomDigests(
+        rooms.map((room) => ({ roomId: room.id, after: this.getVisibilityCutoff(room, viewerId) })),
+        viewerId,
+      ),
+    ]);
+
+    const lastMessageRecords = rooms.flatMap((room) => {
+      const lastMessage = digests.get(room.id)?.lastMessage;
+      return lastMessage ? [lastMessage] : [];
+    });
+    const lastMessageViews = await this.messageService.toViews(lastMessageRecords);
+    const lastMessageViewById = new Map(lastMessageViews.map((view) => [view.id, view]));
+
+    return rooms.map((room) => {
+      const digest = digests.get(room.id);
+      const creator = room.createdBy ? usersById.get(room.createdBy) : undefined;
+      const isBlockedBy = Boolean(room.blockedBy[viewerId]);
+      const userBlocked = Object.values(room.blockedBy).includes(viewerId);
+      const lastMessage = digest?.lastMessage ? (lastMessageViewById.get(digest.lastMessage.id) ?? null) : null;
+
+      return {
+        id: room.id,
+        type: room.type,
+        name: room.name,
+        roomCode: room.roomCode,
+        createdBy: creator?.nickname,
+        creatorId: room.createdBy,
+        participants: toParticipants(room, usersById),
+        lastMessage,
+        unreadCount: digest?.unreadCount ?? 0,
+        mentionCount: digest?.mentionCount ?? 0,
+        blockedBy: room.blockedBy,
+        isBlockedBy,
+        userBlocked,
+        isMutuallyBlocked: isBlockedBy && userBlocked,
+      };
+    });
   }
 
   private async makeVisible(room: RoomRecord, userId: string): Promise<RoomRecord> {
