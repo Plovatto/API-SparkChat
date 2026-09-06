@@ -11,6 +11,9 @@ export default defineConfig({
     environment: 'node',
     env: {
       LOG_LEVEL: 'silent',
+      RECOVERY_FILE_SECRET: '0000000000000000000000000000000000000000000000000000000000000000',
+      GEMINI_API_KEY: 'test',
+      AI_ASSISTANT_PRIVATE_KEY: 'test',
       R2_ACCOUNT_ID: 'test',
       R2_ACCESS_KEY_ID: 'test',
       R2_SECRET_ACCESS_KEY: 'test',

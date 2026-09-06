@@ -1,6 +1,12 @@
 # SparkChat API
 
+[![CI](https://github.com/Plovatto/API-SparkChat/actions/workflows/ci.yml/badge.svg)](https://github.com/Plovatto/API-SparkChat/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+
 API backend do SparkChat, desenvolvida com Node.js, TypeScript, Express e Socket.IO para uma aplicação de chat em tempo real.
+
+**Documentação interativa no ar:** https://p01--sparkchat--pgj2h2jjxzb4.code.run/docs/ · **App:** https://plovatto.github.io/SparkChat/
 
 
 ## Funcionalidades
