@@ -292,6 +292,11 @@ export class UserService {
     return this.repository.findById(userId);
   }
 
+  async getUsersByIds(userIds: string[]): Promise<Map<string, UserRecord>> {
+    const records = await this.repository.findByIds(userIds);
+    return new Map(records.map((user) => [user.id, user]));
+  }
+
   getUserByNickname(nickname: string): Promise<UserRecord | null> {
     return this.repository.findByNickname(normalizeNickname(nickname));
   }
@@ -352,9 +357,10 @@ export class UserService {
 
   async getPublicKeys(userIds: string[]): Promise<{ userId: string; publicKey: string }[]> {
     const unique = [...new Set(userIds)];
-    const users = await Promise.all(unique.map((id) => this.repository.findById(id)));
+    const usersById = await this.getUsersByIds(unique);
 
-    return users
+    return unique
+      .map((id) => usersById.get(id))
       .filter((user): user is UserRecord & { e2ePublicKey: string } => Boolean(user?.e2ePublicKey))
       .map((user) => ({ userId: user.id, publicKey: user.e2ePublicKey }));
   }

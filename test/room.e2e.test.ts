@@ -61,3 +61,28 @@ describe('RoomKeyRepository', () => {
     expect(await roomKeyRepository.findForUser(roomWithCarol.id, alice.id)).toBe('key-for-carol-room');
   });
 });
+
+describe('RoomKeyRepository.findForParticipantInRooms', () => {
+  it('returns keys only for rooms where the user is a participant, in the requested order', async () => {
+    const { roomService, roomKeyRepository, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const carol = await createUser(userService, 'Carol');
+
+    const aliceBob = await roomService.createPrivateRoom(alice.id, bob.id);
+    const bobCarol = await roomService.createPrivateRoom(bob.id, carol.id);
+    const aliceCarol = await roomService.createPrivateRoom(alice.id, carol.id);
+
+    await roomKeyRepository.publish(aliceBob.id, alice.id, 'key-alice-bob');
+    await roomKeyRepository.publish(bobCarol.id, alice.id, 'leaked-key');
+    await roomKeyRepository.publish(aliceCarol.id, alice.id, 'key-alice-carol');
+
+    const keys = await roomKeyRepository.findForParticipantInRooms([aliceCarol.id, bobCarol.id, 'unknown-room', aliceBob.id], alice.id);
+
+    expect(keys).toEqual([
+      { roomId: aliceCarol.id, sealedKey: 'key-alice-carol' },
+      { roomId: aliceBob.id, sealedKey: 'key-alice-bob' },
+    ]);
+    expect(await roomKeyRepository.findForParticipantInRooms([], alice.id)).toEqual([]);
+  });
+});
