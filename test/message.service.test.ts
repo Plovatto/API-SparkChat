@@ -154,6 +154,40 @@ describe('MessageService', () => {
     await expect(messageService.deleteMessage('unknown-id', alice.id)).rejects.toThrow('Mensagem não encontrada.');
   });
 
+  it('deletes the underlying image and thumbnail objects from storage when the message is deleted', async () => {
+    const { messageService, userService, objectStorage, storageQuota, storageUsageRepository } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+
+    const imageKey = 'uploads/images/photo.png';
+    const thumbnailKey = 'uploads/images/photo-thumb.webp';
+    await objectStorage.putObject(imageKey, Buffer.from('fake image bytes'), { contentType: 'image/png' });
+    await objectStorage.putObject(thumbnailKey, Buffer.from('fake thumb bytes'), { contentType: 'image/webp' });
+    await storageQuota.recordUsage(17);
+
+    const message = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: imageKey,
+      type: 'image',
+      fileMeta: { name: 'photo.png', mimeType: 'image/png', size: 17, thumbnailUrl: thumbnailKey },
+    });
+
+    await messageService.deleteMessage(message.id, alice.id);
+
+    expect(await objectStorage.getObject(imageKey)).toBeNull();
+    expect(await objectStorage.getObject(thumbnailKey)).toBeNull();
+    expect(await storageUsageRepository.getBytesUsed()).toBe(0);
+  });
+
+  it('does not fail deleting a text message that has no attachments', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+
+    const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'sem anexo' });
+
+    await expect(messageService.deleteMessage(message.id, alice.id)).resolves.toMatchObject({ deletedForEveryone: true });
+  });
+
   it('attaches a resolved snapshot of the original message when replying', async () => {
     const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
