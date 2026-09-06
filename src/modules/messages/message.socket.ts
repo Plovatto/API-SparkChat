@@ -285,17 +285,19 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
     deps.onMessageSent?.({ io, room, message });
 
     if (newlyVisibleUserIds.length > 0) {
-      const rawMessages = await messageService.getRoomMessages(roomId);
+      const recipients = await userService.getUsersByIds(newlyVisibleUserIds);
 
       for (const newlyVisibleUserId of newlyVisibleUserIds) {
-        const recipient = await userService.getUser(newlyVisibleUserId);
+        const recipient = recipients.get(newlyVisibleUserId);
         if (!recipient?.socketId) {
           continue;
         }
 
-        const summary = await roomService.buildSummary(updatedRoom, newlyVisibleUserId);
-        const visibleMessages = roomService.filterMessagesForUser(updatedRoom, rawMessages, newlyVisibleUserId);
-        const page = visibleMessages.slice(-INITIAL_MESSAGES_LIMIT);
+        const after = roomService.getVisibilityCutoff(updatedRoom, newlyVisibleUserId);
+        const [summary, { messages: page }] = await Promise.all([
+          roomService.buildSummary(updatedRoom, newlyVisibleUserId),
+          messageService.getRoomMessagesPage(roomId, { after, limit: INITIAL_MESSAGES_LIMIT }),
+        ]);
         const messages = await messageService.toViews(page);
         io.to(recipient.socketId).emit('room:new', { room: summary, messages });
       }
@@ -408,10 +410,8 @@ async function handleMarkRead(socket: AppSocket, deps: MessageSocketDeps, payloa
 
   try {
     const { roomId, messageIds } = markReadPayloadSchema.parse(payload);
-    const messages = await messageService.markRoomAsRead(roomId, userId, messageIds);
-    const messagesForCount = messageIds && messageIds.length > 0 ? await messageService.getRoomMessages(roomId) : messages;
-    const unreadCount = messageService.countUnread(messagesForCount, userId);
-    const mentionCount = messageService.countUnreadMentions(messagesForCount, userId);
+    await messageService.markRoomAsRead(roomId, userId, messageIds);
+    const { unreadCount, mentionCount } = await messageService.countUnreadForUser(roomId, userId);
 
     socket.emit('message:mark-read-done', { roomId, unreadCount, mentionCount });
     socket.to(roomId).emit('message:read-receipt', { roomId, userId });
