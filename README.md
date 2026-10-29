@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/Plovatto/API-SparkChat/actions/workflows/ci.yml/badge.svg)](https://github.com/Plovatto/API-SparkChat/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/Plovatto/API-SparkChat/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/Plovatto/API-SparkChat/security/code-scanning)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Plovatto/API-SparkChat/badge)](https://scorecard.dev/viewer/?uri=github.com/Plovatto/API-SparkChat)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 
