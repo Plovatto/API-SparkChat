@@ -58,9 +58,9 @@ const chatAppearanceSchema = z
 
 export const userChatSettingsSchema = z
   .object({
-    roomWallpapers: z.record(z.string()).default({}),
+    roomWallpapers: z.record(z.string(), z.string()).default({}),
     globalWallpaper: z.string().nullable().default(null),
-    roomAppearance: z.record(chatAppearanceSchema).default({}),
+    roomAppearance: z.record(z.string(), chatAppearanceSchema).default({}),
     globalAppearance: chatAppearanceSchema.nullable().default(null),
   })
   .openapi('UserChatSettings');
