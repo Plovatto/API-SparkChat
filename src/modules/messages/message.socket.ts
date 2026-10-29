@@ -111,11 +111,12 @@ registerServerEvents('messages', [
 
 const uploadedMediaPathPattern = new RegExp(`^/${uploadedMediaKeyPrefix}/(images|audio|files)/[^/]+$`);
 
-function isUploadedMediaUrl(content: string): boolean {
+export function isUploadedMediaUrl(content: string): boolean {
   try {
-    return uploadedMediaPathPattern.test(new URL(content).pathname);
+    const url = new URL(content);
+    return url.protocol === 'https:' && uploadedMediaPathPattern.test(url.pathname);
   } catch {
-    return uploadedMediaPathPattern.test(content);
+    return false;
   }
 }
 

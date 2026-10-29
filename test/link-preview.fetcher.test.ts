@@ -31,6 +31,15 @@ describe('httpLinkPreviewFetcher', () => {
     });
   });
 
+  it('decodes escaped entities only once', async () => {
+    const html = '<!doctype html><html><head><meta property="og:title" content="Use &amp;lt;div&amp;gt; &amp;amp; CSS" /></head></html>';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(html)));
+
+    const result = await httpLinkPreviewFetcher.fetchMetadata('https://93.184.216.34/entities');
+
+    expect(result?.title).toBe('Use &lt;div&gt; &amp; CSS');
+  });
+
   it('falls back to the <title> tag when there is no og:title', async () => {
     const html = '<!doctype html><html><head><title>Fallback title</title></head><body></body></html>';
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(html)));
