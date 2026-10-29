@@ -1,5 +1,4 @@
-import type { ZodType } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import { z, type ZodType } from 'zod';
 
 export type SocketEventDirection = 'client-to-server' | 'server-to-client';
 
@@ -18,7 +17,7 @@ export function registerClientEvents(module: string, definitions: Record<string,
       event,
       direction: 'client-to-server',
       module,
-      ...(schema ? { payloadSchema: zodToJsonSchema(schema) } : {}),
+      ...(schema ? { payloadSchema: z.toJSONSchema(schema, { target: 'draft-7', io: 'input', unrepresentable: 'any' }) } : {}),
     });
   }
 }
