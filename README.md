@@ -32,6 +32,7 @@ API backend do SparkChat, desenvolvida com Node.js, TypeScript, Express e Socket
 - [zod-to-openapi](https://github.com/asteasolutions/zod-to-openapi) + [Swagger UI](https://github.com/scottie1984/swagger-ui-express) - documentação da API
 - [Pino](https://getpino.io/) - logging estruturado
 - [Vitest](https://vitest.dev/) - testes automatizados
+- [fast-check](https://fast-check.dev/) - testes baseados em propriedades
 - ESLint - análise e padronização do código
 
 ## Como Executar
