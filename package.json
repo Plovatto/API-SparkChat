@@ -41,7 +41,10 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "overrides": {
-    "qs": "6.16.0"
+    "qs": "6.17.1",
+    "@esbuild-kit/core-utils": {
+      "esbuild": "0.25.12"
+    }
   },
   "devDependencies": {
     "@eslint/js": "^9.19.0",
@@ -58,6 +61,6 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.21.0",
-    "vitest": "^3.0.4"
+    "vitest": "^5.0.5"
   }
 }
