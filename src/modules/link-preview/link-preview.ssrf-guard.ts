@@ -1,58 +1,54 @@
 import dns from 'node:dns/promises';
-import { isIP } from 'node:net';
+import { BlockList, isIP } from 'node:net';
 
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 
-function isPrivateIPv4(address: string): boolean {
-  const parts = address.split('.').map(Number);
-  if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) {
-    return true;
-  }
+// IPv4 rules also match the same address written as IPv4-mapped IPv6 (::ffff:7f00:1),
+// so every spelling of a private IPv4 address is caught by one list.
+const BLOCKED_IPV4_SUBNETS: [string, number][] = [
+  ['0.0.0.0', 8],
+  ['10.0.0.0', 8],
+  ['100.64.0.0', 10],
+  ['127.0.0.0', 8],
+  ['169.254.0.0', 16],
+  ['172.16.0.0', 12],
+  ['192.0.0.0', 24],
+  ['192.0.2.0', 24],
+  ['192.168.0.0', 16],
+  ['198.18.0.0', 15],
+  ['198.51.100.0', 24],
+  ['203.0.113.0', 24],
+  ['224.0.0.0', 3],
+];
 
-  const [a, b] = parts as [number, number, number, number];
-  if (a === 10 || a === 127 || a === 0) {
-    return true;
-  }
-  if (a === 169 && b === 254) {
-    return true;
-  }
-  if (a === 172 && b >= 16 && b <= 31) {
-    return true;
-  }
-  if (a === 192 && b === 168) {
-    return true;
-  }
-  if (a === 100 && b >= 64 && b <= 127) {
-    return true;
-  }
-  return a >= 224;
+const BLOCKED_IPV6_SUBNETS: [string, number][] = [
+  ['::', 96],
+  ['64:ff9b::', 96],
+  ['64:ff9b:1::', 48],
+  ['100::', 64],
+  ['2001::', 32],
+  ['2001:db8::', 32],
+  ['2002::', 16],
+  ['fc00::', 7],
+  ['fe80::', 10],
+  ['fec0::', 10],
+  ['ff00::', 8],
+];
+
+const blockedAddresses = new BlockList();
+for (const [network, prefix] of BLOCKED_IPV4_SUBNETS) {
+  blockedAddresses.addSubnet(network, prefix, 'ipv4');
+}
+for (const [network, prefix] of BLOCKED_IPV6_SUBNETS) {
+  blockedAddresses.addSubnet(network, prefix, 'ipv6');
 }
 
-function isPrivateIPv6(address: string): boolean {
-  const normalized = address.toLowerCase();
-  if (normalized === '::1' || normalized === '::') {
-    return true;
-  }
-  if (normalized.startsWith('fc') || normalized.startsWith('fd')) {
-    return true;
-  }
-  if (/^fe[89ab]/.test(normalized)) {
-    return true;
-  }
-
-  const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  return mapped ? isPrivateIPv4(mapped[1] as string) : false;
-}
-
-function isPrivateAddress(address: string): boolean {
+export function isPrivateAddress(address: string): boolean {
   const version = isIP(address);
-  if (version === 4) {
-    return isPrivateIPv4(address);
+  if (version === 0) {
+    return true;
   }
-  if (version === 6) {
-    return isPrivateIPv6(address);
-  }
-  return true;
+  return blockedAddresses.check(address, version === 4 ? 'ipv4' : 'ipv6');
 }
 
 export async function assertPublicHttpUrl(rawUrl: string): Promise<URL> {
