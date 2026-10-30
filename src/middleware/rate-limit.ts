@@ -14,7 +14,6 @@ export function createRateLimiter({ limit, message, windowMs = DEFAULT_WINDOW_MS
     limit,
     standardHeaders: true,
     legacyHeaders: false,
-    validate: { xForwardedForHeader: false },
     message: { message },
   });
 }
