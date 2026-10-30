@@ -42,6 +42,7 @@ registry.registerPath({
 
 export function createApp(deps: ApiRouterDeps): Express {
   const app = express();
+  app.set('trust proxy', env.TRUST_PROXY_HOPS);
 
   app.use(
     helmet({

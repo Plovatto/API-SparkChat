@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { getClientIp } from '../../config/client-ip.js';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { extractErrorMessage } from '../../sockets/socket-errors.js';
@@ -172,7 +173,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
     const input = joinPayloadSchema.parse(payload);
 
     if (input.mode === 'register') {
-      const ip = socket.handshake.address;
+      const ip = getClientIp(socket.request);
       if (loginRateLimiter.isBlockedForRegistration(ip)) {
         socket.emit('user:auth-failed', {
           mode: 'register',

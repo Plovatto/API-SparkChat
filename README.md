@@ -95,6 +95,7 @@ NODE_ENV=development
 PORT=3001
 FRONTEND_URL=http://localhost:5173
 LOG_LEVEL=info
+TRUST_PROXY_HOPS=0
 TURSO_DATABASE_URL=
 TURSO_AUTH_TOKEN=
 RECOVERY_FILE_SECRET=
@@ -108,6 +109,8 @@ R2_PUBLIC_BASE_URL=
 ```
 
 `R2_*` configura o armazenamento de arquivos enviados (imagem, áudio, arquivo) no Cloudflare R2, usado no lugar de disco local para funcionar em hospedagens sem disco persistente.
+
+`TRUST_PROXY_HOPS` é o número de proxies reversos na frente da API (por exemplo, `1` atrás de um balanceador da hospedagem). Com o valor certo, os limites de requisição e de cadastro usam o IP de cada usuário em vez do IP do proxy. Mantenha `0` quando a API recebe as conexões diretamente.
 
 ## Documentação da API
 
