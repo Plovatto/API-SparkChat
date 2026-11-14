@@ -9,7 +9,7 @@
 
 API backend do SparkChat, desenvolvida com Node.js, TypeScript, Express e Socket.IO para uma aplicação de chat em tempo real.
 
-**Documentação interativa no ar:** https://sparkchat-api.plovatto.dev/docs/ · **App:** https://plovatto.github.io/SparkChat/
+**Documentação interativa no ar:** https://sparkchat-api.plovatto.dev/docs/ · **App:** https://sparkchat.plovatto.dev/
 
 
 ## Funcionalidades
