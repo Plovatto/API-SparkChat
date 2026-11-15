@@ -9,6 +9,7 @@ import {
   type TypingService,
 } from '../messages/index.js';
 import type { RoomKeyRepository, RoomRecord } from '../rooms/index.js';
+import type { Locale } from '../../sockets/socket-locale.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import { guessMimeTypeFromUrl, loadDecryptedAttachment } from './ai.attachments.js';
 import { decryptContent, encryptContent, unsealRoomKey } from './ai.crypto.js';
@@ -20,7 +21,7 @@ import {
   AI_MAX_PDF_BYTES,
   AI_MAX_TEXT_CHARS,
   AI_MAX_TEXT_FILE_CHARS,
-  AI_WELCOME_MESSAGE,
+  AI_WELCOME_MESSAGES,
 } from './ai.model.js';
 import { compressImageForModel } from './ai.media.js';
 import type { AiConversationMessage, AiRouter } from './ai.provider.js';
@@ -35,6 +36,7 @@ function delay(ms: number): Promise<void> {
 interface PendingBatch {
   messageIds: string[];
   senderId: string;
+  locale: Locale;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -56,14 +58,14 @@ export class AiService {
     return room.type === 'private' && room.participants.includes(this.identity.userId);
   }
 
-  async sendWelcomeMessage(io: AppServer, room: RoomRecord): Promise<void> {
+  async sendWelcomeMessage(io: AppServer, room: RoomRecord, locale: Locale): Promise<void> {
     const roomKey = await this.resolveRoomKey(room.id);
     if (!roomKey) {
       logger.warn({ roomId: room.id }, 'Não foi possível enviar a mensagem de boas-vindas do SparkAI: chave da sala indisponível');
       return;
     }
 
-    const encrypted = await encryptContent(AI_WELCOME_MESSAGE, roomKey);
+    const encrypted = await encryptContent(AI_WELCOME_MESSAGES[locale], roomKey);
     const message = await this.messageService.sendMessage({
       roomId: room.id,
       senderId: this.identity.userId,
@@ -76,7 +78,7 @@ export class AiService {
     io.to(room.id).emit('message:new', await this.messageService.toView(message));
   }
 
-  handleIncomingMessage(io: AppServer, room: RoomRecord, message: MessageRecord): void {
+  handleIncomingMessage(io: AppServer, room: RoomRecord, message: MessageRecord, locale: Locale): void {
     void this.markAsReadByAssistant(io, room, [message.id]);
 
     const existing = this.pendingBatchByRoom.get(room.id);
@@ -84,6 +86,7 @@ export class AiService {
     if (existing) {
       clearTimeout(existing.timer);
       existing.messageIds.push(message.id);
+      existing.locale = locale;
       existing.timer = setTimeout(() => this.flushBatch(io, room), AI_BATCH_DEBOUNCE_MS);
       return;
     }
@@ -97,6 +100,7 @@ export class AiService {
     this.pendingBatchByRoom.set(room.id, {
       messageIds: [message.id],
       senderId: message.senderId,
+      locale,
       timer: setTimeout(() => this.flushBatch(io, room), AI_BATCH_DEBOUNCE_MS),
     });
   }
@@ -129,7 +133,7 @@ export class AiService {
       }
 
       const history = await this.buildConversation(room.id, roomKey, new Set(batch.messageIds));
-      const replyText = await this.router.generateReply(history);
+      const replyText = await this.router.generateReply(history, { locale: batch.locale });
       const encryptedReply = await encryptContent(replyText, roomKey);
 
       const reply = await this.messageService.sendMessage({

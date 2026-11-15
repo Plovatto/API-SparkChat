@@ -2,6 +2,7 @@ import type { Server, Socket } from 'socket.io';
 import type { MessageClientToServerEvents, MessageServerToClientEvents } from '../modules/messages/index.js';
 import type { RoomClientToServerEvents, RoomServerToClientEvents } from '../modules/rooms/index.js';
 import type { AuthMethod, UserClientToServerEvents, UserServerToClientEvents } from '../modules/users/index.js';
+import type { Locale } from './socket-locale.js';
 
 export type ServerToClientEvents = UserServerToClientEvents & RoomServerToClientEvents & MessageServerToClientEvents;
 
@@ -13,6 +14,7 @@ export interface SocketData {
   userId?: string;
   authMethod?: AuthMethod;
   sessionId?: string;
+  locale?: Locale;
 }
 
 export type AppServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;

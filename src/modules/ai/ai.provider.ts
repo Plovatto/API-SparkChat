@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
-import { AI_FALLBACK_MODEL, AI_MAX_OUTPUT_TOKENS, AI_PRIMARY_MODEL, AI_SYSTEM_INSTRUCTION } from './ai.model.js';
+import type { Locale } from '../../sockets/socket-locale.js';
+import { AI_FALLBACK_MODEL, AI_MAX_OUTPUT_TOKENS, AI_PRIMARY_MODEL, buildSystemInstruction } from './ai.model.js';
 
 export interface AiInlineData {
   mimeType: string;
@@ -12,8 +13,12 @@ export interface AiConversationMessage {
   inlineData?: AiInlineData[];
 }
 
+export interface AiReplyOptions {
+  locale: Locale;
+}
+
 export interface AiProvider {
-  generateReply(messages: AiConversationMessage[]): Promise<string>;
+  generateReply(messages: AiConversationMessage[], options: AiReplyOptions): Promise<string>;
 }
 
 function toGeminiParts(message: AiConversationMessage) {
@@ -33,12 +38,12 @@ class GeminiModelProvider implements AiProvider {
     private readonly model: string,
   ) {}
 
-  async generateReply(messages: AiConversationMessage[]): Promise<string> {
+  async generateReply(messages: AiConversationMessage[], options: AiReplyOptions): Promise<string> {
     const response = await this.client.models.generateContent({
       model: this.model,
       contents: messages.map((message) => ({ role: message.role, parts: toGeminiParts(message) })),
       config: {
-        systemInstruction: AI_SYSTEM_INSTRUCTION,
+        systemInstruction: buildSystemInstruction(options.locale),
         maxOutputTokens: AI_MAX_OUTPUT_TOKENS,
       },
     });
@@ -55,12 +60,12 @@ class GeminiModelProvider implements AiProvider {
 export class AiRouter implements AiProvider {
   constructor(private readonly providers: AiProvider[]) {}
 
-  async generateReply(messages: AiConversationMessage[]): Promise<string> {
+  async generateReply(messages: AiConversationMessage[], options: AiReplyOptions): Promise<string> {
     let lastError: unknown;
 
     for (const provider of this.providers) {
       try {
-        return await provider.generateReply(messages);
+        return await provider.generateReply(messages, options);
       } catch (error) {
         lastError = error;
       }

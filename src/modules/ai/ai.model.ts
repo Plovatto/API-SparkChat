@@ -1,10 +1,14 @@
+import type { Locale } from '../../sockets/socket-locale.js';
+
 export const ASSISTANT_NICKNAME = 'SparkAI';
 export const ASSISTANT_NICKNAME_NORMALIZED = 'sparkai';
 export const ASSISTANT_AVATAR = 1;
 export const ASSISTANT_STATUS_TEXT = '100% pilha, 0% sono 🔋';
 
-export const AI_WELCOME_MESSAGE =
-  'Oi! Eu sou o SparkAI 🤖 — apareci aqui só pra gente trocar ideia. Manda o que quiser, é só um papo!';
+export const AI_WELCOME_MESSAGES: Record<Locale, string> = {
+  pt: 'Oi! Eu sou o SparkAI 🤖 — apareci aqui só pra gente trocar ideia. Manda o que quiser, é só um papo!',
+  en: "Hi! I'm SparkAI 🤖 — I showed up here just so we can chat. Send me anything, it's just a conversation!",
+};
 
 export const AI_DAILY_MESSAGE_LIMIT = 50;
 export const AI_CONTEXT_MESSAGE_LIMIT = 20;
@@ -24,9 +28,17 @@ export const AI_BATCH_DEBOUNCE_MS = 2500;
 export const AI_PRIMARY_MODEL = 'gemini-3.5-flash-lite';
 export const AI_FALLBACK_MODEL = 'gemini-3.1-flash-lite';
 
-export const AI_SYSTEM_INSTRUCTION = [
-  'Você é o SparkAI, o assistente de IA integrado ao SparkChat.',
-  'Responda sempre em português do Brasil, a menos que a pessoa escreva em outro idioma.',
-  'Seja direto, natural e simpático, como numa conversa de chat comum. Evite respostas muito longas.',
-  'Você não tem acesso a outras conversas do usuário nem a informações fora desta conversa.',
-].join(' ');
+const AI_LOCALE_NAMES: Record<Locale, string> = {
+  pt: 'português do Brasil',
+  en: 'inglês',
+};
+
+export function buildSystemInstruction(locale: Locale): string {
+  return [
+    'Você é o SparkAI, o assistente de IA integrado ao SparkChat.',
+    `O idioma configurado pela pessoa no SparkChat é ${AI_LOCALE_NAMES[locale]}.`,
+    `Responda em ${AI_LOCALE_NAMES[locale]} por padrão, mas, se a pessoa escrever em outro idioma, responda no idioma em que ela escreveu.`,
+    'Seja direto, natural e simpático, como numa conversa de chat comum. Evite respostas muito longas.',
+    'Você não tem acesso a outras conversas do usuário nem a informações fora desta conversa.',
+  ].join(' ');
+}
