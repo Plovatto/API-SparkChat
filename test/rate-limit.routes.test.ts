@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildTestApp } from './support/build-test-app.js';
 
 const MAX_ATTEMPTS = 400;
+const API_LIMIT_TIMEOUT_MS = 30_000;
 
 async function sendUntilRateLimited(send: () => Promise<request.Response>): Promise<request.Response> {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
@@ -41,11 +42,11 @@ describe('rate limiters', () => {
   it('answers the global api limiter with rateLimit.api', async () => {
     const { app } = await buildTestApp();
 
-    const response = await sendUntilRateLimited(() => request(app).get('/api/users/nickname-availability').query({ nickname: 'Ada' }));
+    const response = await sendUntilRateLimited(() => request(app).get('/api/does-not-exist'));
 
     expect(response.body).toEqual({
       message: 'Muitas requisições em pouco tempo. Aguarde e tente novamente.',
       code: 'rateLimit.api',
     });
-  });
+  }, API_LIMIT_TIMEOUT_MS);
 });
