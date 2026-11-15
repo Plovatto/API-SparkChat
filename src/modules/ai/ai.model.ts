@@ -1,4 +1,4 @@
-import type { Locale } from '../../sockets/socket-locale.js';
+import type { Locale } from '../../lib/locale.js';
 
 export const ASSISTANT_NICKNAME = 'SparkAI';
 export const ASSISTANT_NICKNAME_NORMALIZED = 'sparkai';
@@ -7,7 +7,7 @@ export const ASSISTANT_STATUS_TEXT = '100% pilha, 0% sono 🔋';
 
 export const AI_WELCOME_MESSAGES: Record<Locale, string> = {
   pt: 'Oi! Eu sou o SparkAI 🤖 — apareci aqui só pra gente trocar ideia. Manda o que quiser, é só um papo!',
-  en: "Hi! I'm SparkAI 🤖 — I showed up here just so we can chat. Send me anything, it's just a conversation!",
+  en: "Hi! I'm SparkAI 🤖 — I'm here just to chat. Send me anything, no pressure!",
 };
 
 export const AI_DAILY_MESSAGE_LIMIT = 50;

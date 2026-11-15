@@ -1,11 +1,6 @@
 import { z } from 'zod';
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES, type Locale } from '../lib/locale.js';
 import type { AppSocket } from './events.js';
-
-export const SUPPORTED_LOCALES = ['pt', 'en'] as const;
-
-export type Locale = (typeof SUPPORTED_LOCALES)[number];
-
-export const DEFAULT_LOCALE: Locale = 'pt';
 
 export const handshakeAuthSchema = z.object({
   locale: z.enum(SUPPORTED_LOCALES).optional(),

@@ -1,4 +1,5 @@
 import { logger } from '../../config/logger.js';
+import type { Locale } from '../../lib/locale.js';
 import type { AppServer } from '../../sockets/events.js';
 import {
   systemEvent,
@@ -9,7 +10,6 @@ import {
   type TypingService,
 } from '../messages/index.js';
 import type { RoomKeyRepository, RoomRecord } from '../rooms/index.js';
-import type { Locale } from '../../sockets/socket-locale.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import { guessMimeTypeFromUrl, loadDecryptedAttachment } from './ai.attachments.js';
 import { decryptContent, encryptContent, unsealRoomKey } from './ai.crypto.js';

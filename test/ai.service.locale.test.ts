@@ -86,4 +86,20 @@ describe('AiService locale', () => {
       expect(receivedOptions).toEqual([{ locale: 'en' }]);
     });
   });
+
+  it('uses the locale of the latest message when a batch mixes connections', async () => {
+    const { aiService, messageService, room, alice, receivedOptions } = await setup();
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const io = createFakeServer();
+
+    const first = await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'oi' });
+    aiService.handleIncomingMessage(io, room, first, 'pt');
+    const second = await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'hello' });
+    aiService.handleIncomingMessage(io, room, second, 'en');
+    await vi.advanceTimersByTimeAsync(3000);
+
+    await vi.waitFor(() => {
+      expect(receivedOptions).toEqual([{ locale: 'en' }]);
+    });
+  });
 });

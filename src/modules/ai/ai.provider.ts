@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-import type { Locale } from '../../sockets/socket-locale.js';
+import type { Locale } from '../../lib/locale.js';
 import { AI_FALLBACK_MODEL, AI_MAX_OUTPUT_TOKENS, AI_PRIMARY_MODEL, buildSystemInstruction } from './ai.model.js';
 
 export interface AiInlineData {
