@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { logger } from '../../config/logger.js';
+import { errorPayload } from '../../lib/app-error.js';
 import { isValidNicknameFormat, nicknameAvailabilityStatusSchema, publicUserSchema } from './user.model.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
 import type { UserService } from './user.service.js';
@@ -38,14 +39,11 @@ export const keyfileLoginResponseSchema = loginResponseSchema
   })
   .openapi('KeyfileLoginResponse');
 
-const TOO_MANY_ATTEMPTS_MESSAGE = 'Muitas tentativas de login. Tente novamente mais tarde.';
-const LOGIN_FAILED_MESSAGE = 'Erro ao entrar. Tente novamente!';
-
 export function createUserController(userService: UserService, loginRateLimiter: LoginRateLimiter) {
   const login = async (req: Request, res: Response): Promise<void> => {
     const parsed = loginBodySchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ message: 'Nickname e senha são obrigatórios!' });
+      res.status(400).json(errorPayload('auth.missingCredentials'));
       return;
     }
 
@@ -53,7 +51,7 @@ export function createUserController(userService: UserService, loginRateLimiter:
     const ip = req.ip ?? 'unknown';
 
     if (loginRateLimiter.isBlocked(nickname, ip)) {
-      res.status(429).json({ message: TOO_MANY_ATTEMPTS_MESSAGE });
+      res.status(429).json(errorPayload('rateLimit.loginAttempts'));
       return;
     }
 
@@ -61,7 +59,7 @@ export function createUserController(userService: UserService, loginRateLimiter:
       const result = await userService.login(nickname, password, req.headers['user-agent'] ?? '');
       if (!result) {
         loginRateLimiter.registerFailure(nickname, ip);
-        res.status(401).json({ message: 'Nickname ou senha inválidos.' });
+        res.status(401).json(errorPayload('auth.invalidCredentials'));
         return;
       }
 
@@ -73,20 +71,20 @@ export function createUserController(userService: UserService, loginRateLimiter:
       });
     } catch (error) {
       logger.error({ err: error }, 'Failed to log in');
-      res.status(500).json({ message: LOGIN_FAILED_MESSAGE });
+      res.status(500).json(errorPayload('auth.loginFailed'));
     }
   };
 
   const loginWithKeyfile = async (req: Request, res: Response): Promise<void> => {
     if (!req.file) {
-      res.status(400).json({ message: 'Arquivo de recuperação é obrigatório!' });
+      res.status(400).json(errorPayload('auth.keyfileRequired'));
       return;
     }
 
     const ip = req.ip ?? 'unknown';
 
     if (loginRateLimiter.isBlockedByIp(ip)) {
-      res.status(429).json({ message: TOO_MANY_ATTEMPTS_MESSAGE });
+      res.status(429).json(errorPayload('rateLimit.loginAttempts'));
       return;
     }
 
@@ -94,7 +92,7 @@ export function createUserController(userService: UserService, loginRateLimiter:
       const result = await userService.loginWithKeyfile(req.file.buffer, req.headers['user-agent'] ?? '');
       if (!result) {
         loginRateLimiter.registerFailureByIp(ip);
-        res.status(401).json({ message: 'Arquivo de recuperação inválido.' });
+        res.status(401).json(errorPayload('auth.keyfileInvalid'));
         return;
       }
 
@@ -107,14 +105,14 @@ export function createUserController(userService: UserService, loginRateLimiter:
       });
     } catch (error) {
       logger.error({ err: error }, 'Failed to log in with keyfile');
-      res.status(500).json({ message: LOGIN_FAILED_MESSAGE });
+      res.status(500).json(errorPayload('auth.loginFailed'));
     }
   };
 
   const checkNicknameAvailability = async (req: Request, res: Response): Promise<void> => {
     const parsed = nicknameAvailabilityQuerySchema.safeParse(req.query);
     if (!parsed.success) {
-      res.status(400).json({ message: 'Nickname é obrigatório!' });
+      res.status(400).json(errorPayload('user.nicknameRequired'));
       return;
     }
 
@@ -130,7 +128,7 @@ export function createUserController(userService: UserService, loginRateLimiter:
       res.status(200).json({ status: existing ? 'taken' : 'available' });
     } catch (error) {
       logger.error({ err: error }, 'Failed to check nickname availability');
-      res.status(500).json({ message: 'Erro ao verificar nickname. Tente novamente!' });
+      res.status(500).json(errorPayload('user.nicknameCheckFailed'));
     }
   };
 

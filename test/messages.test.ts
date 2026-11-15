@@ -26,6 +26,7 @@ describe('Upload authentication', () => {
       });
 
     expect(response.status).toBe(401);
+    expect(response.body).toEqual({ message: 'Autenticação necessária.', code: 'auth.required' });
   });
 
   it('rejects an upload with an invalid session token', async () => {
@@ -38,6 +39,7 @@ describe('Upload authentication', () => {
       });
 
     expect(response.status).toBe(401);
+    expect(response.body).toEqual({ message: 'Sessão inválida ou expirada.', code: 'auth.sessionInvalid' });
   });
 });
 
@@ -60,6 +62,7 @@ describe('POST /api/messages/upload-image', () => {
     const response = await request(app).post('/api/messages/upload-image').set('Authorization', authHeader);
 
     expect(response.status).toBe(400);
+    expect(response.body).toEqual({ message: 'Nenhuma imagem enviada.', code: 'upload.missingFile', params: { kind: 'image' } });
   });
 
   it('rejects a non-image file', async () => {
@@ -69,6 +72,11 @@ describe('POST /api/messages/upload-image', () => {
       .attach('image', Buffer.from('not an image'), { filename: 'notes.txt', contentType: 'text/plain' });
 
     expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      message: 'Tipo de arquivo inválido. Envie imagem JPEG, PNG, GIF ou WEBP.',
+      code: 'upload.invalidType',
+      params: { kind: 'image' },
+    });
   });
 
   it('rejects an image whose declared mimetype does not match its real content', async () => {
@@ -78,6 +86,7 @@ describe('POST /api/messages/upload-image', () => {
       .attach('image', Buffer.from('this is not really a png'), { filename: 'fake.png', contentType: 'image/png' });
 
     expect(response.status).toBe(400);
+    expect(response.body).toEqual({ message: 'O conteúdo do arquivo não corresponde ao tipo declarado.', code: 'upload.contentMismatch' });
   });
 
   it('rejects an image with a disguised extension even when the mimetype is spoofed to look allowed', async () => {
@@ -90,6 +99,7 @@ describe('POST /api/messages/upload-image', () => {
       });
 
     expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: 'upload.invalidType', params: { kind: 'image' } });
   });
 
   it('skips the content-signature check and marks the url when the upload is end-to-end encrypted', async () => {
@@ -115,6 +125,7 @@ describe('POST /api/messages/upload-image', () => {
       .attach('image', Buffer.from('ciphertext'), { filename: 'evil.exe', contentType: 'application/x-msdownload' });
 
     expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: 'upload.invalidType' });
   });
 });
 
@@ -134,6 +145,21 @@ describe('POST /api/messages/upload-audio', () => {
     const response = await request(app).post('/api/messages/upload-audio').set('Authorization', authHeader);
 
     expect(response.status).toBe(400);
+    expect(response.body).toEqual({ message: 'Nenhum áudio enviado.', code: 'upload.missingFile', params: { kind: 'audio' } });
+  });
+
+  it('rejects an audio file larger than the limit with upload.tooLarge', async () => {
+    const response = await request(app)
+      .post('/api/messages/upload-audio')
+      .set('Authorization', authHeader)
+      .attach('audio', Buffer.alloc(8 * 1024 * 1024 + 1), { filename: 'long.webm', contentType: 'audio/webm' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      message: 'O áudio excede o tamanho máximo permitido de 8MB.',
+      code: 'upload.tooLarge',
+      params: { kind: 'audio', maxSize: '8MB' },
+    });
   });
 
   it('rejects a non-audio file', async () => {
@@ -143,6 +169,11 @@ describe('POST /api/messages/upload-audio', () => {
       .attach('audio', Buffer.from('not audio'), { filename: 'notes.txt', contentType: 'text/plain' });
 
     expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      message: 'Tipo de arquivo inválido. Envie áudio WEBM, OGG, MP4, AAC, MPEG ou WAV.',
+      code: 'upload.invalidType',
+      params: { kind: 'audio' },
+    });
   });
 
   it('rejects an audio file whose declared mimetype does not match its real content', async () => {
@@ -152,6 +183,7 @@ describe('POST /api/messages/upload-audio', () => {
       .attach('audio', Buffer.from('this is not really webm audio'), { filename: 'fake.webm', contentType: 'audio/webm' });
 
     expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: 'upload.contentMismatch' });
   });
 });
 
@@ -191,6 +223,7 @@ describe('POST /api/messages/upload-file', () => {
     const response = await request(app).post('/api/messages/upload-file').set('Authorization', authHeader);
 
     expect(response.status).toBe(400);
+    expect(response.body).toEqual({ message: 'Nenhum arquivo enviado.', code: 'upload.missingFile', params: { kind: 'file' } });
   });
 
   it('rejects a mimetype that is not in the allowed list', async () => {
@@ -200,6 +233,11 @@ describe('POST /api/messages/upload-file', () => {
       .attach('file', Buffer.from('hello'), { filename: 'notes.exe', contentType: 'application/x-msdownload' });
 
     expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      message: 'Tipo de arquivo inválido. Envie arquivo PDF, vídeo (MP4, WEBM, MOV, AVI), documento do Office, ZIP, TXT ou CSV.',
+      code: 'upload.invalidType',
+      params: { kind: 'file' },
+    });
   });
 
   it('rejects a file whose declared mimetype does not match its real content', async () => {
@@ -209,6 +247,7 @@ describe('POST /api/messages/upload-file', () => {
       .attach('file', Buffer.from('this is not really a pdf'), { filename: 'fake.pdf', contentType: 'application/pdf' });
 
     expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: 'upload.contentMismatch' });
   });
 
   it('rejects a blocked extension even when the mimetype is spoofed to look allowed', async () => {
@@ -218,5 +257,6 @@ describe('POST /api/messages/upload-file', () => {
       .attach('file', Buffer.from([0x25, 0x50, 0x44, 0x46]), { filename: 'virus.exe', contentType: 'application/pdf' });
 
     expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: 'upload.invalidType', params: { kind: 'file' } });
   });
 });

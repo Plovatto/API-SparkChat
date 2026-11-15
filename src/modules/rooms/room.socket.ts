@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
+import { errorPayload } from '../../lib/app-error.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { roomIdPayloadSchema } from '../../sockets/payloads.js';
-import { extractErrorMessage } from '../../sockets/socket-errors.js';
+import { extractErrorPayload } from '../../sockets/socket-errors.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
 import { INITIAL_MESSAGES_LIMIT, type MessageService, type MessageView } from '../messages/index.js';
 import type { UserService } from '../users/index.js';
@@ -175,12 +176,12 @@ async function handleCreatePrivateRoom(io: AppServer, socket: AppSocket, deps: R
 
     const targetUser = await userService.getUserByNickname(targetNickname);
     if (!targetUser) {
-      socket.emit('error', { message: 'Usuário não encontrado.' });
+      socket.emit('error', errorPayload('user.notFound'));
       return;
     }
 
     if (targetUser.id === userId) {
-      socket.emit('error', { message: 'Você não pode iniciar uma conversa consigo mesmo.' });
+      socket.emit('error', errorPayload('room.selfConversation'));
       return;
     }
 
@@ -201,7 +202,7 @@ async function handleCreatePrivateRoom(io: AppServer, socket: AppSocket, deps: R
       deps.onRoomCreated?.({ io, room });
     }
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -224,7 +225,7 @@ async function handleCreateGroupRoom(socket: AppSocket, deps: RoomSocketDeps, pa
     const summary = await roomService.buildSummary(room, userId);
     socket.emit('room:created', { room: summary, messages: [await messageService.toView(systemMessage)] });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -242,7 +243,7 @@ async function handleRoomsGet(socket: AppSocket, deps: RoomSocketDeps): Promise<
 
     socket.emit('rooms:list', { rooms: summaries });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -259,7 +260,7 @@ async function handleJoinByCode(io: AppServer, socket: AppSocket, deps: RoomSock
     const normalizedCode = roomCode.toUpperCase().trim();
 
     if (normalizedCode.length < ROOM_CODE_MIN_LENGTH) {
-      socket.emit('error', { message: 'Formato de código inválido.' });
+      socket.emit('error', errorPayload('room.invalidCode'));
       return;
     }
 
@@ -284,7 +285,7 @@ async function handleJoinByCode(io: AppServer, socket: AppSocket, deps: RoomSock
     const summaries = await roomService.listSummariesForUser(userId);
     socket.emit('rooms:list', { rooms: summaries });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -298,13 +299,13 @@ async function handleJoinRoom(socket: AppSocket, deps: RoomSocketDeps, payload: 
     const { roomId } = roomIdPayloadSchema.parse(payload);
     const room = await deps.roomService.getRoomById(roomId);
     if (!room || !deps.roomService.isParticipant(room, userId)) {
-      socket.emit('error', { message: 'Sala não encontrada.' });
+      socket.emit('error', errorPayload('room.notFound'));
       return;
     }
 
     await socket.join(roomId);
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -320,7 +321,7 @@ async function handleDeleteRoom(io: AppServer, socket: AppSocket, deps: RoomSock
     const { roomId } = roomIdPayloadSchema.parse(payload);
     const room = await roomService.getRoomById(roomId);
     if (!room || !roomService.isParticipant(room, userId)) {
-      socket.emit('error', { message: 'Sala não encontrada.' });
+      socket.emit('error', errorPayload('room.notFound'));
       return;
     }
 
@@ -336,7 +337,7 @@ async function handleDeleteRoom(io: AppServer, socket: AppSocket, deps: RoomSock
     socket.emit('room:deleted', { roomId });
     await socket.leave(roomId);
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -371,7 +372,7 @@ async function handleLeaveGroup(socket: AppSocket, deps: RoomSocketDeps, payload
 
     await socket.leave(roomId);
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -416,7 +417,7 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
     );
     io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -449,7 +450,7 @@ async function handlePromoteAdmin(io: AppServer, socket: AppSocket, deps: RoomSo
     );
     io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -478,7 +479,7 @@ async function handleBlockUser(io: AppServer, socket: AppSocket, deps: RoomSocke
       });
     }
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -507,7 +508,7 @@ async function handleUnblockUser(io: AppServer, socket: AppSocket, deps: RoomSoc
       });
     }
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -541,7 +542,7 @@ async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: Room
       }
     }
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -557,7 +558,7 @@ async function handleGetRoomKeys(socket: AppSocket, deps: RoomSocketDeps, payloa
 
     socket.emit('e2e:room-keys', { keys });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -576,6 +577,6 @@ async function handleRequestRoomKey(socket: AppSocket, deps: RoomSocketDeps, pay
 
     socket.to(roomId).emit('e2e:key-request', { roomId, requesterId: userId });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }

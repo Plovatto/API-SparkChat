@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import '../../docs/zod-extend.js';
+import { errorPayload } from '../../lib/app-error.js';
 import { fetchProxiedImage } from './link-preview.image-proxy.js';
 import type { LinkPreviewService } from './link-preview.service.js';
 
@@ -18,19 +19,17 @@ export const linkPreviewResponseSchema = z
   })
   .openapi('LinkPreviewResponse');
 
-const INVALID_URL_MESSAGE = 'URL inválida.';
-
 export function createLinkPreviewController(service: LinkPreviewService) {
   const getPreview = async (req: Request, res: Response): Promise<void> => {
     const parsed = linkPreviewRequestSchema.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ message: INVALID_URL_MESSAGE });
+      res.status(400).json(errorPayload('linkPreview.invalidUrl'));
       return;
     }
 
     const preview = await service.getPreview(parsed.data.url).catch(() => null);
     if (!preview) {
-      res.status(422).json({ message: 'Não foi possível gerar um preview para essa URL.' });
+      res.status(422).json(errorPayload('linkPreview.unavailable'));
       return;
     }
 
@@ -40,13 +39,13 @@ export function createLinkPreviewController(service: LinkPreviewService) {
   const getImage = async (req: Request, res: Response): Promise<void> => {
     const parsed = linkPreviewRequestSchema.safeParse(req.query);
     if (!parsed.success) {
-      res.status(400).json({ message: INVALID_URL_MESSAGE });
+      res.status(400).json(errorPayload('linkPreview.invalidUrl'));
       return;
     }
 
     const image = await fetchProxiedImage(parsed.data.url).catch(() => null);
     if (!image) {
-      res.status(422).json({ message: 'Não foi possível carregar essa imagem.' });
+      res.status(422).json(errorPayload('linkPreview.imageUnavailable'));
       return;
     }
 

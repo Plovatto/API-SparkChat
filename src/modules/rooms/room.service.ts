@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { AppError } from '../../lib/app-error.js';
 import type { MessageRecord, MessageService } from '../messages/index.js';
 import type { UserRecord, UserService } from '../users/index.js';
 import { generateRoomCode } from './room.codes.js';
@@ -80,7 +81,7 @@ export class RoomService {
   async joinByCode(roomCode: string, userId: string): Promise<JoinByCodeResult> {
     const room = await this.repository.findByRoomCode(roomCode);
     if (!room) {
-      throw new Error('Sala não encontrada.');
+      throw AppError.of('room.notFound');
     }
 
     if (room.participants.includes(userId)) {
@@ -94,7 +95,7 @@ export class RoomService {
 
     const updated = await this.repository.update(room.id, { participants, visibleTo, joinedAt });
     if (!updated) {
-      throw new Error('Sala não encontrada.');
+      throw AppError.of('room.notFound');
     }
 
     return { room: updated, joined: true };
@@ -132,11 +133,11 @@ export class RoomService {
     }
 
     if (!room.admins.includes(actingUserId)) {
-      throw new Error('Apenas administradores podem promover outros membros.');
+      throw AppError.of('room.promoteRequiresAdmin');
     }
 
     if (!room.participants.includes(targetUserId)) {
-      throw new Error('Usuário não faz parte do grupo.');
+      throw AppError.of('room.notMember');
     }
 
     if (room.admins.includes(targetUserId)) {
@@ -153,15 +154,15 @@ export class RoomService {
     }
 
     if (!room.admins.includes(actingUserId)) {
-      throw new Error('Apenas administradores podem remover membros.');
+      throw AppError.of('room.removeRequiresAdmin');
     }
 
     if (targetUserId === actingUserId) {
-      throw new Error('Use a opção de sair do grupo para se remover.');
+      throw AppError.of('room.cannotRemoveSelf');
     }
 
     if (!room.participants.includes(targetUserId)) {
-      throw new Error('Usuário não faz parte do grupo.');
+      throw AppError.of('room.notMember');
     }
 
     const participants = room.participants.filter((id) => id !== targetUserId);
@@ -269,7 +270,7 @@ export class RoomService {
   async buildSummary(room: RoomRecord, viewerId: string): Promise<RoomSummary> {
     const [summary] = await this.buildSummaries([room], viewerId);
     if (!summary) {
-      throw new Error('Sala não encontrada.');
+      throw AppError.of('room.notFound');
     }
     return summary;
   }

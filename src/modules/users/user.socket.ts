@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { getClientIp } from '../../config/client-ip.js';
+import { errorPayloadSchema } from '../../docs/common-schemas.js';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
+import { errorPayload } from '../../lib/app-error.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
-import { extractErrorMessage } from '../../sockets/socket-errors.js';
+import { extractErrorPayload } from '../../sockets/socket-errors.js';
 import { clearSocketSession, requireSocketUserId } from '../../sockets/socket-session.js';
 import type { MessageService } from '../messages/index.js';
 import type { RoomService } from '../rooms/index.js';
@@ -62,6 +64,15 @@ const revokeSessionPayloadSchema = z.object({
   sessionId: z.string().trim().min(1),
 });
 
+const authFailedPayloadSchema = errorPayloadSchema.extend({
+  mode: z.enum(['register', 'resume']),
+  reason: z.enum(['invalid', 'temporary']),
+});
+
+const errorEventPayloadSchema = errorPayloadSchema.extend({
+  clientTempId: z.string().optional(),
+});
+
 registerClientEvents('users', {
   'user:join': joinPayloadSchema,
   'user:update-profile': updateProfilePayloadSchema,
@@ -95,7 +106,10 @@ registerServerEvents('users', [
   'e2e:public-keys',
   'e2e:my-keys',
   'error',
-]);
+], {
+  'user:auth-failed': authFailedPayloadSchema,
+  error: errorEventPayloadSchema,
+});
 
 export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, deps: UserSocketDeps): void {
   socket.on('user:join', (payload) => {
@@ -178,7 +192,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
         socket.emit('user:auth-failed', {
           mode: 'register',
           reason: 'invalid',
-          message: 'Muitas contas criadas a partir deste endereço. Tente novamente mais tarde.',
+          ...errorPayload('rateLimit.registrations'),
         });
         return;
       }
@@ -212,7 +226,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
       socket.emit('user:auth-failed', {
         mode: 'resume',
         reason: 'invalid',
-        message: 'Sessão inválida ou expirada. Faça login novamente.',
+        ...errorPayload('auth.sessionExpired'),
       });
       return;
     }
@@ -229,7 +243,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
     socket.emit('user:auth-failed', {
       mode: joinMode,
       reason: joinMode === 'resume' && !isPayloadError ? 'temporary' : 'invalid',
-      message: extractErrorMessage(error),
+      ...extractErrorPayload(error),
     });
   }
 }
@@ -266,7 +280,7 @@ async function handleUpdateProfile(io: AppServer, socket: AppSocket, deps: UserS
     const result = await deps.userService.updateProfile(userId, { nickname, avatar });
 
     if (!result) {
-      socket.emit('error', { message: 'Usuário não encontrado.' });
+      socket.emit('error', errorPayload('user.notFound'));
       return;
     }
 
@@ -282,7 +296,7 @@ async function handleUpdateProfile(io: AppServer, socket: AppSocket, deps: UserS
       recoveryToken: result.recoveryToken,
     });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -297,7 +311,7 @@ async function handleUpdateStatusText(io: AppServer, socket: AppSocket, deps: Us
     const updated = await deps.userService.updateStatusText(userId, statusText);
 
     if (!updated) {
-      socket.emit('error', { message: 'Usuário não encontrado.' });
+      socket.emit('error', errorPayload('user.notFound'));
       return;
     }
 
@@ -308,7 +322,7 @@ async function handleUpdateStatusText(io: AppServer, socket: AppSocket, deps: Us
       statusText: updated.statusText,
     });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -407,7 +421,7 @@ async function handleChangePassword(socket: AppSocket, deps: UserSocketDeps, pay
     clearSocketSession(socket);
     socket.emit('user:password-changed', { recoveryFile: recoveryFile.toString('base64'), recoveryToken });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -422,7 +436,7 @@ async function handleRegenerateRecoveryFile(socket: AppSocket, deps: UserSocketD
 
     socket.emit('user:recovery-file-regenerated', { recoveryFile: recoveryFile.toString('base64'), recoveryToken });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -462,7 +476,7 @@ async function handleRevokeSession(io: AppServer, socket: AppSocket, deps: UserS
       disconnectRevokedSession(io, socket, userId, sessionId);
     }
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -505,7 +519,7 @@ async function handlePublishE2eKeys(socket: AppSocket, deps: UserSocketDeps, pay
     const input = publishE2eKeysPayloadSchema.parse(payload);
     await deps.userService.publishE2eKeys(userId, input);
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -520,7 +534,7 @@ async function handleGetPublicKeys(socket: AppSocket, deps: UserSocketDeps, payl
     const keys = await deps.userService.getPublicKeys(userIds);
     socket.emit('e2e:public-keys', { keys });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -532,7 +546,7 @@ async function handleGetMyKeys(socket: AppSocket, deps: UserSocketDeps): Promise
 
   const user = await deps.userService.getUser(userId);
   if (!user) {
-    socket.emit('error', { message: 'Usuário não encontrado.' });
+    socket.emit('error', errorPayload('user.notFound'));
     return;
   }
 

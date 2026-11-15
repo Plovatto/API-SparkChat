@@ -4,12 +4,12 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import '../../docs/zod-extend.js';
 import { audioObjectKey, fileObjectKey, imageObjectKey } from '../../config/paths.js';
+import { errorPayload } from '../../lib/app-error.js';
+import type { UploadKind } from '../../lib/error-catalog.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import { StorageQuotaExceededError, type StorageQuota } from '../../storage/storage-quota.js';
 import { verifyFileSignature } from './message.file-signature.js';
 
-const INVALID_CONTENT_MESSAGE = 'O conteúdo do arquivo não corresponde ao tipo declarado.';
-const QUOTA_EXCEEDED_MESSAGE = 'Limite de armazenamento do servidor atingido. Tente novamente mais tarde.';
 const INLINE_SAFE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.mov', '.avi']);
 const UPLOAD_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
@@ -47,7 +47,7 @@ export const fileUploadResponseSchema = z
   .openapi('FileUploadResponse');
 
 interface UploadHandlerOptions<TResponse> {
-  missingFileMessage: string;
+  kind: UploadKind;
   buildKey: (filename: string) => string;
   buildResponse: (file: Express.Multer.File, url: string) => TResponse;
   contentDisposition?: (originalname: string) => string | undefined;
@@ -56,12 +56,12 @@ interface UploadHandlerOptions<TResponse> {
 function createUploadHandler<TResponse>(
   objectStorage: ObjectStorage,
   storageQuota: StorageQuota,
-  { missingFileMessage, buildKey, buildResponse, contentDisposition }: UploadHandlerOptions<TResponse>,
+  { kind, buildKey, buildResponse, contentDisposition }: UploadHandlerOptions<TResponse>,
 ) {
   return async (req: Request, res: Response): Promise<void> => {
     const file = req.file;
     if (!file) {
-      res.status(400).json({ message: missingFileMessage });
+      res.status(400).json(errorPayload('upload.missingFile', { kind }));
       return;
     }
 
@@ -69,7 +69,7 @@ function createUploadHandler<TResponse>(
       await storageQuota.ensureCapacity(file.size);
     } catch (err) {
       if (err instanceof StorageQuotaExceededError) {
-        res.status(507).json({ message: QUOTA_EXCEEDED_MESSAGE });
+        res.status(507).json(errorPayload('upload.quotaExceeded'));
         return;
       }
       throw err;
@@ -77,7 +77,7 @@ function createUploadHandler<TResponse>(
 
     const encrypted = isEncryptedUpload(req);
     if (!encrypted && !verifyFileSignature(file.buffer, file.mimetype)) {
-      res.status(400).json({ message: INVALID_CONTENT_MESSAGE });
+      res.status(400).json(errorPayload('upload.contentMismatch'));
       return;
     }
 
@@ -97,17 +97,17 @@ function createUploadHandler<TResponse>(
 export function createMessageController(objectStorage: ObjectStorage, storageQuota: StorageQuota) {
   return {
     uploadImage: createUploadHandler(objectStorage, storageQuota, {
-      missingFileMessage: 'Nenhuma imagem enviada.',
+      kind: 'image',
       buildKey: imageObjectKey,
       buildResponse: (file, url) => ({ url, mimeType: file.mimetype }),
     }),
     uploadAudio: createUploadHandler(objectStorage, storageQuota, {
-      missingFileMessage: 'Nenhum áudio enviado.',
+      kind: 'audio',
       buildKey: audioObjectKey,
       buildResponse: (file, url) => ({ url, mimeType: file.mimetype }),
     }),
     uploadFile: createUploadHandler(objectStorage, storageQuota, {
-      missingFileMessage: 'Nenhum arquivo enviado.',
+      kind: 'file',
       buildKey: fileObjectKey,
       contentDisposition: attachmentDispositionFor,
       buildResponse: (file, url) => ({

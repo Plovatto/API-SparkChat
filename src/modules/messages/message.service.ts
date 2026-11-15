@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '../../config/logger.js';
+import { AppError } from '../../lib/app-error.js';
 import { resolveObjectKey } from '../../storage/object-storage-url.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import type { StorageQuota } from '../../storage/storage-quota.js';
@@ -125,16 +126,16 @@ export class MessageService {
   async deleteMessage(messageId: string, requesterId: string): Promise<MessageRecord> {
     const message = await this.repository.findById(messageId);
     if (!message) {
-      throw new Error('Mensagem não encontrada.');
+      throw AppError.of('message.notFound');
     }
 
     if (message.senderId !== requesterId) {
-      throw new Error('Você não tem permissão para deletar esta mensagem.');
+      throw AppError.of('message.deleteForbidden');
     }
 
     const updated = await this.repository.update(messageId, { deletedForEveryone: true, content: '' });
     if (!updated) {
-      throw new Error('Mensagem não encontrada.');
+      throw AppError.of('message.notFound');
     }
 
     await this.deleteAttachmentObjects(message);
