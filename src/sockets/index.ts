@@ -1,4 +1,5 @@
 import { logger } from '../config/logger.js';
+import { registerClientEvents } from '../docs/socket-registry.js';
 import type { AiService } from '../modules/ai/index.js';
 import {
   registerMessageSocketHandlers,
@@ -11,6 +12,11 @@ import {
 import { registerRoomSocketHandlers, type RoomKeyRepository, type RoomService } from '../modules/rooms/index.js';
 import { registerUserSocketHandlers, type LoginRateLimiter, type UserService } from '../modules/users/index.js';
 import type { AppServer, AppSocket } from './events.js';
+import { handshakeAuthSchema, resolveHandshakeLocale } from './socket-locale.js';
+
+registerClientEvents('connection', {
+  'handshake.auth': handshakeAuthSchema,
+});
 
 export interface SocketDeps {
   userService: UserService;
@@ -29,6 +35,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
   const { aiService } = deps;
 
   io.on('connection', (socket: AppSocket) => {
+    socket.data.locale = resolveHandshakeLocale(socket.handshake.auth);
     logger.info({ socketId: socket.id }, 'Client connected');
 
     registerUserSocketHandlers(io, socket, {
@@ -43,9 +50,9 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       userService: deps.userService,
       messageService: deps.messageService,
       roomKeyRepository: deps.roomKeyRepository,
-      onRoomCreated: ({ io: server, room }) => {
+      onRoomCreated: ({ io: server, room, locale }) => {
         if (aiService.isAssistantRoom(room)) {
-          void aiService.sendWelcomeMessage(server, room);
+          void aiService.sendWelcomeMessage(server, room, locale);
         }
       },
       shouldResetInsteadOfDelete: (room) => aiService.isAssistantRoom(room),
@@ -59,9 +66,9 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       recordingService: deps.recordingService,
       presenceService: deps.presenceService,
       messageRateLimiter: deps.messageRateLimiter,
-      onMessageSent: ({ io: server, room, message }) => {
+      onMessageSent: ({ io: server, room, message, locale }) => {
         if (message.type !== 'system' && aiService.isAssistantRoom(room)) {
-          aiService.handleIncomingMessage(server, room, message);
+          aiService.handleIncomingMessage(server, room, message, locale);
         }
       },
     });

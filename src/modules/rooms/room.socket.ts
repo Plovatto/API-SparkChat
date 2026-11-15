@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import { errorPayload } from '../../lib/app-error.js';
+import type { Locale } from '../../lib/locale.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { roomIdPayloadSchema } from '../../sockets/payloads.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
+import { socketLocale } from '../../sockets/socket-locale.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
 import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService, type MessageView } from '../messages/index.js';
 import type { UserService } from '../users/index.js';
@@ -11,7 +13,7 @@ import type { RoomKeyRepository } from './room.e2e.js';
 import type { RoomService } from './room.service.js';
 import type { RoomRecord } from './room.types.js';
 
-export type OnRoomCreatedHook = (context: { io: AppServer; room: RoomRecord }) => void;
+export type OnRoomCreatedHook = (context: { io: AppServer; room: RoomRecord; locale: Locale }) => void;
 export type ShouldResetInsteadOfDeleteHook = (room: RoomRecord) => boolean;
 
 export interface RoomSocketDeps {
@@ -199,7 +201,7 @@ async function handleCreatePrivateRoom(io: AppServer, socket: AppSocket, deps: R
     socket.emit('room:joined', { room: summaryForViewer, messages: messageViews });
 
     if (!existingRoom) {
-      deps.onRoomCreated?.({ io, room });
+      deps.onRoomCreated?.({ io, room, locale: socketLocale(socket) });
     }
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
@@ -335,7 +337,7 @@ async function handleDeleteRoom(io: AppServer, socket: AppSocket, deps: RoomSock
       await roomService.resetVisibilityForUser(room, userId);
       const summary = await roomService.buildSummary(room, userId);
       socket.emit('room:new', { room: summary, messages: [] });
-      deps.onRoomCreated?.({ io, room });
+      deps.onRoomCreated?.({ io, room, locale: socketLocale(socket) });
       return;
     }
 

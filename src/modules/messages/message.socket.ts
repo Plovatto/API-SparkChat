@@ -2,9 +2,11 @@ import { z } from 'zod';
 import { uploadedMediaKeyPrefix } from '../../config/paths.js';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import { errorPayload } from '../../lib/app-error.js';
+import type { Locale } from '../../lib/locale.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { roomIdPayloadSchema } from '../../sockets/payloads.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
+import { socketLocale } from '../../sockets/socket-locale.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
@@ -17,7 +19,7 @@ import type { RecordingService } from './recording.service.js';
 import type { RoomPresenceService } from './room-presence.service.js';
 import type { TypingService } from './typing.service.js';
 
-export type OnMessageSentHook = (context: { io: AppServer; room: RoomRecord; message: MessageRecord }) => void;
+export type OnMessageSentHook = (context: { io: AppServer; room: RoomRecord; message: MessageRecord; locale: Locale }) => void;
 
 export interface MessageSocketDeps {
   messageService: MessageService;
@@ -296,7 +298,7 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
 
     const view = await messageService.toView(message);
     io.to(roomId).emit('message:new', clientTempId ? { ...view, clientTempId } : view);
-    deps.onMessageSent?.({ io, room, message });
+    deps.onMessageSent?.({ io, room, message, locale: socketLocale(socket) });
 
     if (newlyVisibleUserIds.length > 0) {
       const recipients = await userService.getUsersByIds(newlyVisibleUserIds);
