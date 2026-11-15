@@ -27,7 +27,7 @@ describe('UserService.registerAccount', () => {
 
     await expect(
       userService.registerAccount({ nickname: 'ALICE', avatar: 1, password: PASSWORD, socketId: 'socket-2' }),
-    ).rejects.toThrow('Esse nickname já está em uso.');
+    ).rejects.toMatchObject({ code: 'user.nicknameTaken', message: 'Esse nickname já está em uso.' });
   });
 
   it('rejects a password shorter than the minimum length', async () => {
@@ -35,7 +35,11 @@ describe('UserService.registerAccount', () => {
 
     await expect(
       userService.registerAccount({ nickname: 'Bob', avatar: 0, password: 'short', socketId: 'socket-bob' }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({
+      code: 'user.passwordTooShort',
+      message: 'A senha deve ter pelo menos 12 caracteres.',
+      params: { minLength: 12 },
+    });
   });
 
   it('rejects a nickname with special characters', async () => {
@@ -43,7 +47,11 @@ describe('UserService.registerAccount', () => {
 
     await expect(
       userService.registerAccount({ nickname: 'Bob!', avatar: 0, password: PASSWORD, socketId: 'socket-bob' }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({
+      code: 'user.nicknameInvalid',
+      message: 'Nickname deve ter entre 2 e 20 caracteres, usando apenas letras e números, com pelo menos 2 letras.',
+      params: { minLength: 2, maxLength: 20, minLetters: 2 },
+    });
   });
 
   it('rejects a nickname with fewer than two letters', async () => {
@@ -51,7 +59,7 @@ describe('UserService.registerAccount', () => {
 
     await expect(
       userService.registerAccount({ nickname: 'B1', avatar: 0, password: PASSWORD, socketId: 'socket-bob' }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: 'user.nicknameInvalid' });
   });
 
   it('accepts a nickname made only of letters and numbers with at least two letters', async () => {
@@ -244,7 +252,7 @@ describe('UserService.changePassword', () => {
 
     await expect(
       userService.changePassword(user.id, 'wrong-password', 'new-password-123', 'password'),
-    ).rejects.toThrow('Senha atual incorreta.');
+    ).rejects.toMatchObject({ code: 'user.currentPasswordIncorrect', message: 'Senha atual incorreta.' });
   });
 
   it('rejects when no current password is given for a password-authenticated session', async () => {
@@ -253,7 +261,7 @@ describe('UserService.changePassword', () => {
 
     await expect(
       userService.changePassword(user.id, undefined, 'new-password-123', 'password'),
-    ).rejects.toThrow('Senha atual incorreta.');
+    ).rejects.toMatchObject({ code: 'user.currentPasswordIncorrect', message: 'Senha atual incorreta.' });
   });
 
   it('rotates the password, revokes every session and issues a new recovery file', async () => {
@@ -383,9 +391,7 @@ describe('UserService.updateProfile', () => {
     const { user } = await registerAlice(userService);
     await userService.registerAccount({ nickname: 'Bob', avatar: 0, password: PASSWORD, socketId: 'socket-bob' });
 
-    await expect(userService.updateProfile(user.id, { nickname: 'Bob', avatar: 0 })).rejects.toThrow(
-      'Esse nickname já está em uso.',
-    );
+    await expect(userService.updateProfile(user.id, { nickname: 'Bob', avatar: 0 })).rejects.toMatchObject({ code: 'user.nicknameTaken', message: 'Esse nickname já está em uso.' });
   });
 
   it('allows renaming to the same nickname unchanged', async () => {

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { AppError } from '../../lib/app-error.js';
 import {
   ASSISTANT_USER_ID,
   isValidNicknameFormat,
@@ -69,15 +70,17 @@ function normalizeNickname(nickname: string): string {
 
 function assertValidNickname(nickname: string): void {
   if (!isValidNicknameFormat(nickname)) {
-    throw new Error(
-      `Nickname deve ter entre ${NICKNAME_MIN_LENGTH} e ${NICKNAME_MAX_LENGTH} caracteres, usando apenas letras e números, com pelo menos ${NICKNAME_MIN_LETTERS} letras.`,
-    );
+    throw AppError.of('user.nicknameInvalid', {
+      minLength: NICKNAME_MIN_LENGTH,
+      maxLength: NICKNAME_MAX_LENGTH,
+      minLetters: NICKNAME_MIN_LETTERS,
+    });
   }
 }
 
 function assertValidPassword(password: string): void {
   if (password.length < PASSWORD_MIN_LENGTH) {
-    throw new Error(`A senha deve ter pelo menos ${PASSWORD_MIN_LENGTH} caracteres.`);
+    throw AppError.of('user.passwordTooShort', { minLength: PASSWORD_MIN_LENGTH });
   }
 }
 
@@ -97,7 +100,7 @@ export class UserService {
     const nicknameNormalized = normalizeNickname(input.nickname);
     const existing = await this.repository.findByNickname(nicknameNormalized);
     if (existing) {
-      throw new Error('Esse nickname já está em uso.');
+      throw AppError.of('user.nicknameTaken');
     }
 
     const now = new Date().toISOString();
@@ -205,13 +208,13 @@ export class UserService {
   ): Promise<PasswordChangeResult> {
     const user = await this.repository.findById(userId);
     if (!user) {
-      throw new Error('Usuário não encontrado.');
+      throw AppError.of('user.notFound');
     }
 
     if (sessionAuthMethod === 'password') {
       const isValid = Boolean(currentPassword) && (await verifyPassword(currentPassword ?? '', user.passwordHash));
       if (!isValid) {
-        throw new Error('Senha atual incorreta.');
+        throw AppError.of('user.currentPasswordIncorrect');
       }
     }
 
@@ -225,7 +228,7 @@ export class UserService {
       recoveryTokenHash: hashToken(recoveryToken),
     });
     if (!updated) {
-      throw new Error('Usuário não encontrado.');
+      throw AppError.of('user.notFound');
     }
 
     await this.sessions.deleteAllForUser(userId);
@@ -236,13 +239,13 @@ export class UserService {
   async regenerateRecoveryFile(userId: string): Promise<PasswordChangeResult> {
     const user = await this.repository.findById(userId);
     if (!user) {
-      throw new Error('Usuário não encontrado.');
+      throw AppError.of('user.notFound');
     }
 
     const recoveryToken = generateToken();
     const updated = await this.repository.update(userId, { recoveryTokenHash: hashToken(recoveryToken) });
     if (!updated) {
-      throw new Error('Usuário não encontrado.');
+      throw AppError.of('user.notFound');
     }
 
     return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken), recoveryToken };
@@ -262,7 +265,7 @@ export class UserService {
     if (nicknameChanged) {
       const existing = await this.repository.findByNickname(nicknameNormalized);
       if (existing && existing.id !== userId) {
-        throw new Error('Esse nickname já está em uso.');
+        throw AppError.of('user.nicknameTaken');
       }
     }
 

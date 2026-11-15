@@ -123,7 +123,7 @@ describe('RoomService', () => {
     const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
-    await expect(roomService.joinByCode('NOPE0000', alice.id)).rejects.toThrow('Sala não encontrada.');
+    await expect(roomService.joinByCode('NOPE0000', alice.id)).rejects.toMatchObject({ code: 'room.notFound', message: 'Sala não encontrada.' });
   });
 
   it('removes a user from a room visibility without affecting other participants', async () => {
@@ -186,9 +186,7 @@ describe('RoomService', () => {
     await roomService.joinByCode(group.roomCode ?? '', bob.id);
     await roomService.joinByCode(group.roomCode ?? '', carol.id);
 
-    await expect(roomService.promoteAdmin(group.id, bob.id, carol.id)).rejects.toThrow(
-      'Apenas administradores podem promover outros membros.',
-    );
+    await expect(roomService.promoteAdmin(group.id, bob.id, carol.id)).rejects.toMatchObject({ code: 'room.promoteRequiresAdmin', message: 'Apenas administradores podem promover outros membros.' });
   });
 
   it('rejects promoting someone who is not a participant', async () => {
@@ -197,9 +195,7 @@ describe('RoomService', () => {
     const outsider = await createUser(userService, 'Outsider');
     const group = await roomService.createGroupRoom('Amigos', alice.id);
 
-    await expect(roomService.promoteAdmin(group.id, alice.id, outsider.id)).rejects.toThrow(
-      'Usuário não faz parte do grupo.',
-    );
+    await expect(roomService.promoteAdmin(group.id, alice.id, outsider.id)).rejects.toMatchObject({ code: 'room.notMember', message: 'Usuário não faz parte do grupo.' });
   });
 
   it('lets an admin remove a member from the group', async () => {
@@ -225,9 +221,7 @@ describe('RoomService', () => {
     await roomService.joinByCode(group.roomCode ?? '', bob.id);
     await roomService.joinByCode(group.roomCode ?? '', carol.id);
 
-    await expect(roomService.removeMember(group.id, bob.id, carol.id)).rejects.toThrow(
-      'Apenas administradores podem remover membros.',
-    );
+    await expect(roomService.removeMember(group.id, bob.id, carol.id)).rejects.toMatchObject({ code: 'room.removeRequiresAdmin', message: 'Apenas administradores podem remover membros.' });
   });
 
   it('rejects an admin trying to remove themselves', async () => {
@@ -235,9 +229,7 @@ describe('RoomService', () => {
     const alice = await createUser(userService, 'Alice');
     const group = await roomService.createGroupRoom('Amigos', alice.id);
 
-    await expect(roomService.removeMember(group.id, alice.id, alice.id)).rejects.toThrow(
-      'Use a opção de sair do grupo para se remover.',
-    );
+    await expect(roomService.removeMember(group.id, alice.id, alice.id)).rejects.toMatchObject({ code: 'room.cannotRemoveSelf', message: 'Use a opção de sair do grupo para se remover.' });
   });
 
   it('exposes isAdmin per participant in the room summary', async () => {

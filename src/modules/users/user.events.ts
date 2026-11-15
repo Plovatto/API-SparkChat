@@ -1,3 +1,4 @@
+import type { ErrorPayload } from '../../lib/app-error.js';
 import type { AuthMethod, PublicUser, SessionSummary, UserChatSettings, UserStatus, UserTheme } from './user.model.js';
 
 export interface E2ePublicKeyEntry {
@@ -14,7 +15,7 @@ export interface UserServerToClientEvents {
     authMethod: AuthMethod;
   }) => void;
   'user:resumed': (payload: { user: PublicUser; authMethod: AuthMethod }) => void;
-  'user:auth-failed': (payload: { mode: 'register' | 'resume'; reason: 'invalid' | 'temporary'; message: string }) => void;
+  'user:auth-failed': (payload: { mode: 'register' | 'resume'; reason: 'invalid' | 'temporary' } & ErrorPayload) => void;
   'user:online': (payload: { userId: string; nickname: string; avatar: number }) => void;
   'user:offline': (payload: {
     userId: string;
@@ -33,7 +34,7 @@ export interface UserServerToClientEvents {
     encryptedPrivateKeyByPassword: string | null;
     encryptedPrivateKeyByRecovery: string | null;
   }) => void;
-  error: (payload: { message: string; clientTempId?: string | undefined }) => void;
+  error: (payload: ErrorPayload & { clientTempId?: string | undefined }) => void;
 }
 
 export interface UserClientToServerEvents {

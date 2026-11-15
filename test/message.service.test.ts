@@ -142,16 +142,14 @@ describe('MessageService', () => {
 
     const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'não apague' });
 
-    await expect(messageService.deleteMessage(message.id, bob.id)).rejects.toThrow(
-      'Você não tem permissão para deletar esta mensagem.',
-    );
+    await expect(messageService.deleteMessage(message.id, bob.id)).rejects.toMatchObject({ code: 'message.deleteForbidden', message: 'Você não tem permissão para deletar esta mensagem.' });
   });
 
   it('rejects deleting a message that does not exist', async () => {
     const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
-    await expect(messageService.deleteMessage('unknown-id', alice.id)).rejects.toThrow('Mensagem não encontrada.');
+    await expect(messageService.deleteMessage('unknown-id', alice.id)).rejects.toMatchObject({ code: 'message.notFound', message: 'Mensagem não encontrada.' });
   });
 
   it('deletes the underlying image and thumbnail objects from storage when the message is deleted', async () => {

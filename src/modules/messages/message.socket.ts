@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { uploadedMediaKeyPrefix } from '../../config/paths.js';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
+import { errorPayload } from '../../lib/app-error.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { roomIdPayloadSchema } from '../../sockets/payloads.js';
-import { extractErrorMessage } from '../../sockets/socket-errors.js';
+import { extractErrorPayload } from '../../sockets/socket-errors.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
@@ -213,7 +214,7 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
   let clientTempId: string | undefined;
 
   if (messageRateLimiter.isBlocked(userId)) {
-    socket.emit('error', { message: 'Você está enviando mensagens muito rápido. Aguarde um instante.' });
+    socket.emit('error', errorPayload('rateLimit.messages'));
     return;
   }
   messageRateLimiter.registerSend(userId);
@@ -234,27 +235,24 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
     clientTempId = parsed.clientTempId;
 
     if (type !== 'text' && !isUploadedMediaUrl(content)) {
-      socket.emit('error', { message: 'Conteúdo de mídia inválido.', clientTempId });
+      socket.emit('error', { ...errorPayload('message.invalidMedia'), clientTempId });
       return;
     }
 
     if (fileMeta?.thumbnailUrl && !isUploadedMediaUrl(fileMeta.thumbnailUrl)) {
-      socket.emit('error', { message: 'Conteúdo de mídia inválido.', clientTempId });
+      socket.emit('error', { ...errorPayload('message.invalidMedia'), clientTempId });
       return;
     }
 
     const room = await roomService.getRoomById(roomId);
 
     if (!room || !roomService.isParticipant(room, userId)) {
-      socket.emit('error', { message: 'Sala não encontrada.', clientTempId });
+      socket.emit('error', { ...errorPayload('room.notFound'), clientTempId });
       return;
     }
 
     if (roomService.isBlocked(room, userId)) {
-      socket.emit('error', {
-        message: 'Você não pode enviar mensagens nesta conversa devido a bloqueios.',
-        clientTempId,
-      });
+      socket.emit('error', { ...errorPayload('message.blocked'), clientTempId });
       return;
     }
 
@@ -310,7 +308,7 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       }
     }
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error), clientTempId });
+    socket.emit('error', { ...extractErrorPayload(error), clientTempId });
   }
 }
 
@@ -327,7 +325,7 @@ async function handleGetMessages(socket: AppSocket, deps: MessageSocketDeps, pay
     const room = await roomService.getRoomById(roomId);
 
     if (!room || !roomService.isParticipant(room, userId)) {
-      socket.emit('error', { message: 'Sala não encontrada.' });
+      socket.emit('error', errorPayload('room.notFound'));
       return;
     }
 
@@ -336,7 +334,7 @@ async function handleGetMessages(socket: AppSocket, deps: MessageSocketDeps, pay
     const views = await messageService.toViews(page);
     socket.emit('messages:list', { roomId, messages: views, hasMore });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -351,7 +349,7 @@ async function handleDeleteMessage(io: AppServer, socket: AppSocket, deps: Messa
     const updated = await deps.messageService.deleteMessage(messageId, userId);
     io.to(updated.roomId).emit('message:deleted', { messageId, roomId: updated.roomId });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
@@ -423,6 +421,6 @@ async function handleMarkRead(socket: AppSocket, deps: MessageSocketDeps, payloa
     socket.emit('message:mark-read-done', { roomId, unreadCount, mentionCount });
     socket.to(roomId).emit('message:read-receipt', { roomId, userId });
   } catch (error) {
-    socket.emit('error', { message: extractErrorMessage(error) });
+    socket.emit('error', extractErrorPayload(error));
   }
 }

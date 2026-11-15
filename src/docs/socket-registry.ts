@@ -22,9 +22,19 @@ export function registerClientEvents(module: string, definitions: Record<string,
   }
 }
 
-export function registerServerEvents(module: string, eventNames: string[]): void {
+export function registerServerEvents(
+  module: string,
+  eventNames: string[],
+  payloadSchemas: Partial<Record<string, ZodType<unknown>>> = {},
+): void {
   for (const event of eventNames) {
-    events.push({ event, direction: 'server-to-client', module });
+    const schema = payloadSchemas[event];
+    events.push({
+      event,
+      direction: 'server-to-client',
+      module,
+      ...(schema ? { payloadSchema: z.toJSONSchema(schema, { target: 'draft-7', io: 'output', unrepresentable: 'any' }) } : {}),
+    });
   }
 }
 

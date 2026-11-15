@@ -1,11 +1,10 @@
+import { errorPayload } from '../lib/app-error.js';
 import type { AppSocket } from './events.js';
-
-const UNAUTHENTICATED_MESSAGE = 'Usuário não autenticado.';
 
 export function requireSocketUserId(socket: AppSocket): string | null {
   const userId = socket.data.userId;
   if (!userId) {
-    socket.emit('error', { message: UNAUTHENTICATED_MESSAGE });
+    socket.emit('error', errorPayload('auth.unauthenticated'));
     return null;
   }
 
