@@ -23,6 +23,7 @@ export interface MessageSender {
   id: string;
   nickname: string;
   avatar: number | null;
+  unknown?: true;
 }
 
 export interface MessageReplySnapshot {

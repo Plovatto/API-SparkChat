@@ -8,6 +8,7 @@ export const messageSenderSchema = z.object({
   id: z.string(),
   nickname: z.string(),
   avatar: z.number().int().nullable(),
+  unknown: z.literal(true).optional().openapi({ description: 'Presente quando o remetente não existe mais' }),
 });
 
 export const systemEventSchema = z

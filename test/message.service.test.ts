@@ -83,6 +83,15 @@ describe('MessageService', () => {
     expect(messageViewSchema.safeParse(view).success).toBe(true);
   });
 
+  it('flags a sender that no longer exists as unknown while keeping the fallback nickname', async () => {
+    const { messageService } = await buildRoomService();
+
+    const message = await messageService.sendMessage({ roomId: 'room-1', senderId: 'ghost-user', content: 'Oi!' });
+    const view = await messageService.toView(message);
+
+    expect(view.sender).toEqual({ id: 'ghost-user', nickname: 'Usuário desconhecido', avatar: null, unknown: true });
+    expect(messageViewSchema.safeParse(view).success).toBe(true);
+  });
 
   it('marks unread messages as read for a user and reports the correct unread count', async () => {
     const { messageService, userService } = await buildRoomService();

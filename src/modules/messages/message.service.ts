@@ -343,7 +343,7 @@ export class MessageService {
 
     const user = await this.userService.getUser(senderId);
     if (!user) {
-      return { id: senderId, nickname: 'Usuário desconhecido', avatar: null };
+      return { id: senderId, nickname: 'Usuário desconhecido', avatar: null, unknown: true };
     }
 
     return { id: user.id, nickname: user.nickname, avatar: user.avatar };
