@@ -24,7 +24,7 @@ const healthResponseSchema = z
 
 const apiRateLimiter = createRateLimiter({
   limit: 300,
-  message: 'Muitas requisições em pouco tempo. Aguarde e tente novamente.',
+  code: 'rateLimit.api',
 });
 
 registry.registerPath({

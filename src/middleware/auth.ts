@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 import type { UserRecord, UserService } from '../modules/users/index.js';
+import { errorPayload } from '../lib/app-error.js';
 import { asyncHandler } from './async-handler.js';
 
 declare module 'express-serve-static-core' {
@@ -29,13 +30,13 @@ export function createRequireAuth(userService: UserService): RequestHandler {
   return asyncHandler(async (req, res, next) => {
     const credentials = parseBearerToken(req.headers.authorization);
     if (!credentials) {
-      res.status(401).json({ message: 'Autenticação necessária.' });
+      res.status(401).json(errorPayload('auth.required'));
       return;
     }
 
     const user = await userService.verifySession(credentials.userId, credentials.sessionToken);
     if (!user) {
-      res.status(401).json({ message: 'Sessão inválida ou expirada.' });
+      res.status(401).json(errorPayload('auth.sessionInvalid'));
       return;
     }
 

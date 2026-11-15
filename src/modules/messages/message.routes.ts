@@ -4,6 +4,8 @@ import multer from 'multer';
 import type { z } from 'zod';
 import { errorResponseSchema } from '../../docs/common-schemas.js';
 import { registry } from '../../docs/registry.js';
+import { errorPayload } from '../../lib/app-error.js';
+import type { UploadKind } from '../../lib/error-catalog.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { createRequireAuth } from '../../middleware/auth.js';
 import { createRateLimiter } from '../../middleware/rate-limit.js';
@@ -19,7 +21,7 @@ import { audioUpload, fileUpload, imageUpload } from './message.upload.js';
 
 const uploadRateLimiter = createRateLimiter({
   limit: 20,
-  message: 'Muitos envios de arquivo. Aguarde um momento e tente novamente.',
+  code: 'rateLimit.upload',
 });
 
 function registerUploadPath(
@@ -91,7 +93,7 @@ registerUploadPath(
   fileUploadResponseSchema,
 );
 
-function createUploadErrorHandler(mediaLabel: string, maxSizeLabel: string, acceptedTypesLabel: string) {
+function createUploadErrorHandler(kind: UploadKind, maxSize: string) {
   return function handleUploadError(err: unknown, _req: Request, res: Response, next: NextFunction): void {
     if (!(err instanceof multer.MulterError)) {
       next(err);
@@ -99,21 +101,17 @@ function createUploadErrorHandler(mediaLabel: string, maxSizeLabel: string, acce
     }
 
     if (err.code === 'LIMIT_FILE_SIZE') {
-      res.status(400).json({ message: `O ${mediaLabel} excede o tamanho máximo permitido de ${maxSizeLabel}.` });
+      res.status(400).json(errorPayload('upload.tooLarge', { kind, maxSize }));
       return;
     }
 
-    res.status(400).json({ message: `Tipo de arquivo inválido. Envie ${mediaLabel} ${acceptedTypesLabel}.` });
+    res.status(400).json(errorPayload('upload.invalidType', { kind }));
   };
 }
 
-const handleImageUploadError = createUploadErrorHandler('imagem', '5MB', 'JPEG, PNG, GIF ou WEBP');
-const handleAudioUploadError = createUploadErrorHandler('áudio', '8MB', 'WEBM, OGG, MP4, AAC, MPEG ou WAV');
-const handleFileUploadError = createUploadErrorHandler(
-  'arquivo',
-  '50MB',
-  'PDF, vídeo (MP4, WEBM, MOV, AVI), documento do Office, ZIP, TXT ou CSV',
-);
+const handleImageUploadError = createUploadErrorHandler('image', '5MB');
+const handleAudioUploadError = createUploadErrorHandler('audio', '8MB');
+const handleFileUploadError = createUploadErrorHandler('file', '50MB');
 
 export function createMessageRouter(userService: UserService, objectStorage: ObjectStorage, storageQuota: StorageQuota): Router {
   const router = Router();

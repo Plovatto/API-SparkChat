@@ -19,6 +19,10 @@ describe('GET /health', () => {
     const response = await request(app).get('/api/does-not-exist');
 
     expect(response.status).toBe(404);
-    expect(response.body).toEqual({ message: 'Route not found: GET /api/does-not-exist' });
+    expect(response.body).toEqual({
+      message: 'Route not found: GET /api/does-not-exist',
+      code: 'internal.routeNotFound',
+      params: { method: 'GET', path: '/api/does-not-exist' },
+    });
   });
 });

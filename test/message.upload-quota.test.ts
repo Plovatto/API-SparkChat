@@ -27,6 +27,10 @@ describe('upload endpoints under a storage quota ceiling', () => {
       });
 
     expect(response.status).toBe(507);
+    expect(response.body).toEqual({
+      message: 'Limite de armazenamento do servidor atingido. Tente novamente mais tarde.',
+      code: 'upload.quotaExceeded',
+    });
   });
 
   it('still allows an upload that fits within the configured ceiling', async () => {

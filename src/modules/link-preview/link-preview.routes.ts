@@ -10,7 +10,7 @@ import type { LinkPreviewService } from './link-preview.service.js';
 
 const linkPreviewRateLimiter = createRateLimiter({
   limit: 30,
-  message: 'Muitas requisições de preview. Aguarde um momento e tente novamente.',
+  code: 'rateLimit.linkPreview',
 });
 
 registry.registerPath({

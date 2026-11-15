@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildTestApp } from './support/build-test-app.js';
 
 const PASSWORD = 'correct-horse-battery-staple';
@@ -11,7 +11,7 @@ describe('POST /api/users/login', () => {
     const response = await request(app).post('/api/users/login').send({});
 
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({ message: 'Nickname e senha são obrigatórios!' });
+    expect(response.body).toEqual({ message: 'Nickname e senha são obrigatórios!', code: 'auth.missingCredentials' });
   });
 
   it('returns 401 when the nickname does not exist', async () => {
@@ -20,6 +20,7 @@ describe('POST /api/users/login', () => {
     const response = await request(app).post('/api/users/login').send({ nickname: 'Ghost', password: PASSWORD });
 
     expect(response.status).toBe(401);
+    expect(response.body).toEqual({ message: 'Nickname ou senha inválidos.', code: 'auth.invalidCredentials' });
   });
 
   it('returns 200 with the public user and a session token on success', async () => {
@@ -58,6 +59,7 @@ describe('POST /api/users/login', () => {
     const response = await request(app).post('/api/users/login').send({ nickname: 'RateLimited', password: PASSWORD });
 
     expect(response.status).toBe(429);
+    expect(response.body).toEqual({ message: 'Muitas tentativas de login. Tente novamente mais tarde.', code: 'rateLimit.loginAttempts' });
   });
 });
 
@@ -68,6 +70,7 @@ describe('POST /api/users/login-with-keyfile', () => {
     const response = await request(app).post('/api/users/login-with-keyfile');
 
     expect(response.status).toBe(400);
+    expect(response.body).toEqual({ message: 'Arquivo de recuperação é obrigatório!', code: 'auth.keyfileRequired' });
   });
 
   it('returns 401 for a corrupted file', async () => {
@@ -78,6 +81,7 @@ describe('POST /api/users/login-with-keyfile', () => {
       .attach('keyfile', Buffer.from('not a real keyfile'), { filename: 'sparkchat-ghost.sparkkey' });
 
     expect(response.status).toBe(401);
+    expect(response.body).toEqual({ message: 'Arquivo de recuperação inválido.', code: 'auth.keyfileInvalid' });
   });
 
   it('returns 200 with the public user and a session token for a valid keyfile', async () => {
@@ -112,6 +116,31 @@ describe('POST /api/users/login-with-keyfile', () => {
       .attach('keyfile', Buffer.from('not a real keyfile'), { filename: 'sparkchat-ghost.sparkkey' });
 
     expect(response.status).toBe(429);
+    expect(response.body).toEqual({ message: 'Muitas tentativas de login. Tente novamente mais tarde.', code: 'rateLimit.loginAttempts' });
+  });
+});
+
+describe('login failures', () => {
+  it('answers auth.loginFailed when the password login throws unexpectedly', async () => {
+    const { app, userService } = await buildTestApp();
+    vi.spyOn(userService, 'login').mockRejectedValue(new Error('database is locked'));
+
+    const response = await request(app).post('/api/users/login').send({ nickname: 'Ada', password: PASSWORD });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({ message: 'Erro ao entrar. Tente novamente!', code: 'auth.loginFailed' });
+  });
+
+  it('answers auth.loginFailed when the keyfile login throws unexpectedly', async () => {
+    const { app, userService } = await buildTestApp();
+    vi.spyOn(userService, 'loginWithKeyfile').mockRejectedValue(new Error('database is locked'));
+
+    const response = await request(app)
+      .post('/api/users/login-with-keyfile')
+      .attach('keyfile', Buffer.from('anything'), { filename: 'sparkchat-ada.sparkkey' });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({ message: 'Erro ao entrar. Tente novamente!', code: 'auth.loginFailed' });
   });
 });
 
@@ -122,6 +151,17 @@ describe('GET /api/users/nickname-availability', () => {
     const response = await request(app).get('/api/users/nickname-availability');
 
     expect(response.status).toBe(400);
+    expect(response.body).toEqual({ message: 'Nickname é obrigatório!', code: 'user.nicknameRequired' });
+  });
+
+  it('answers user.nicknameCheckFailed when the lookup throws unexpectedly', async () => {
+    const { app, userService } = await buildTestApp();
+    vi.spyOn(userService, 'getUserByNickname').mockRejectedValue(new Error('database is locked'));
+
+    const response = await request(app).get('/api/users/nickname-availability').query({ nickname: 'FreeNick' });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({ message: 'Erro ao verificar nickname. Tente novamente!', code: 'user.nicknameCheckFailed' });
   });
 
   it('returns invalid for a nickname with special characters', async () => {
