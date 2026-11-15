@@ -5,6 +5,7 @@ import { drizzle } from 'drizzle-orm/libsql';
 import { describe, expect, it } from 'vitest';
 import { runMigrations } from '@/database/migrate.js';
 import * as schema from '@/database/schema.js';
+import { MessageRepository } from '@/modules/messages/index.js';
 import {
   renderSystemEvent,
   SYSTEM_EVENT_CATALOG,
@@ -51,7 +52,9 @@ describe('system event catalog', () => {
 const migrationsFolder = path.resolve(import.meta.dirname, '../drizzle');
 
 function readBackfillStatements(): string[] {
-  const file = readdirSync(migrationsFolder).find((name) => name.startsWith('0014_') && name.endsWith('.sql'));
+  const file = readdirSync(migrationsFolder).find(
+    (name) => name.endsWith('.sql') && readFileSync(path.join(migrationsFolder, name), 'utf8').includes('ADD `system_event`'),
+  );
   if (!file) {
     throw new Error('system_event migration not found');
   }
@@ -65,7 +68,8 @@ function readBackfillStatements(): string[] {
 describe('system_event backfill migration', () => {
   it('recognizes the stored sentences and leaves everything else untouched', async () => {
     const client = createClient({ url: ':memory:' });
-    await runMigrations(drizzle(client, { schema }));
+    const db = drizzle(client, { schema });
+    await runMigrations(db);
 
     const rows: [string, string, string][] = [
       ['m1', 'system', 'Alice criou o grupo'],
@@ -76,6 +80,12 @@ describe('system_event backfill migration', () => {
       ['m6', 'error', 'Não consegui responder agora. Tente novamente em instantes.'],
       ['m7', 'text', 'Alice criou o grupo'],
       ['m8', 'system', 'Uma frase qualquer'],
+      ['m9', 'system', 'Alguém criou o grupo'],
+      ['n1', 'system', 'José foi promovido a administrador por Ângela'],
+      ['n2', 'system', 'Ana Paula saiu do grupo'],
+      ['n3', 'system', 'Bob Silva foi removido do grupo por Alice'],
+      ['n4', 'error', 'Você atingiu o limite diário de mensagens com a IA. Tente novamente amanhã.'],
+      ['n5', 'error', 'Não foi possível preparar a conversa criptografada. Tente enviar a mensagem novamente em instantes.'],
     ];
     for (const [id, type, content] of rows) {
       await client.execute({
@@ -102,6 +112,15 @@ describe('system_event backfill migration', () => {
       m6: { type: 'ai.replyFailed', params: {} },
       m7: null,
       m8: null,
+      m9: { type: 'group.created', params: { actor: null } },
+      n1: { type: 'group.adminPromoted', params: { target: 'José', actor: 'Ângela' } },
+      n2: null,
+      n3: null,
+      n4: { type: 'ai.dailyLimitReached', params: {} },
+      n5: { type: 'ai.encryptionUnavailable', params: {} },
     });
+
+    const stored = await new MessageRepository(db).findById('m4');
+    expect(stored?.systemEvent).toEqual({ type: 'group.memberRemoved', params: { target: 'Bob', actor: 'Alice' } });
   });
 });

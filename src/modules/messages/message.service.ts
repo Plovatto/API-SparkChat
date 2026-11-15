@@ -279,7 +279,7 @@ export class MessageService {
       fileMeta: message.deletedForEveryone ? null : message.fileMeta,
       caption: message.deletedForEveryone ? null : message.caption,
       linkPreview: message.deletedForEveryone ? null : message.linkPreview,
-      systemEvent: message.systemEvent,
+      systemEvent: message.deletedForEveryone ? null : message.systemEvent,
     };
   }
 

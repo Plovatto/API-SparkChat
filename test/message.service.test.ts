@@ -45,7 +45,10 @@ describe('MessageService', () => {
       systemEvent('group.memberRemoved', { target: 'Bob', actor: 'Alice' }),
     );
     const stored = await messageRepository.findById(message.id);
-    const view = await messageService.toView(stored ?? message);
+    if (!stored) {
+      throw new Error('expected the system message to be stored');
+    }
+    const view = await messageService.toView(stored);
 
     expect(view.content).toBe('Bob foi removido do grupo por Alice');
     expect(view.systemEvent).toEqual({ type: 'group.memberRemoved', params: { target: 'Bob', actor: 'Alice' } });
