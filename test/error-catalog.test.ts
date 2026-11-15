@@ -11,7 +11,7 @@ const SAMPLE_PARAMS: Partial<Record<ErrorCode, object>> = {
   'internal.routeNotFound': { method: 'GET', path: '/api/x' },
 };
 
-const CODE_PATTERN = /^(auth|user|room|message|upload|linkPreview|ai|rateLimit|validation|internal)\.[a-z][A-Za-z]+$/;
+const CODE_PATTERN = /^(auth|user|room|message|upload|linkPreview|rateLimit|validation|internal)\.[a-z][A-Za-z]+$/;
 
 describe('error catalog', () => {
   it('lists every catalog entry in ERROR_CODES', () => {

@@ -16,7 +16,7 @@ export class AppError extends Error {
   readonly code: ErrorCode;
   readonly params: ErrorParams | undefined;
 
-  constructor(payload: ErrorPayload) {
+  private constructor(payload: ErrorPayload) {
     super(payload.message);
     this.name = 'AppError';
     this.code = payload.code;
