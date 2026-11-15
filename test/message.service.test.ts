@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { systemEvent } from '@/modules/messages/index.js';
+import { messageViewSchema } from '@/modules/messages/message.schemas.js';
 import { buildRoomService } from './support/build-room-service.js';
 
 async function createUser(userService: Awaited<ReturnType<typeof buildRoomService>>['userService'], nickname: string) {
@@ -28,12 +30,59 @@ describe('MessageService', () => {
   it('creates a system message attributed to "Sistema"', async () => {
     const { messageService } = await buildRoomService();
 
-    const message = await messageService.createSystemMessage('room-1', 'Alice criou o grupo');
+    const message = await messageService.createSystemMessage('room-1', systemEvent('group.created', { actor: 'Alice' }));
     const view = await messageService.toView(message);
 
     expect(view.sender).toEqual({ id: 'system', nickname: 'Sistema', avatar: null });
     expect(view.type).toBe('system');
   });
+
+  it('stores the system event next to the portuguese sentence and delivers both', async () => {
+    const { messageService, messageRepository } = await buildRoomService();
+
+    const message = await messageService.createSystemMessage(
+      'room-1',
+      systemEvent('group.memberRemoved', { target: 'Bob', actor: 'Alice' }),
+    );
+    const stored = await messageRepository.findById(message.id);
+    const view = await messageService.toView(stored ?? message);
+
+    expect(view.content).toBe('Bob foi removido do grupo por Alice');
+    expect(view.systemEvent).toEqual({ type: 'group.memberRemoved', params: { target: 'Bob', actor: 'Alice' } });
+    expect(messageViewSchema.safeParse(view).success).toBe(true);
+  });
+
+  it('falls back to "Alguém" in the sentence when the group creator is unknown', async () => {
+    const { messageService } = await buildRoomService();
+
+    const message = await messageService.createSystemMessage('room-1', systemEvent('group.created', { actor: null }));
+
+    expect(message.content).toBe('Alguém criou o grupo');
+    expect(message.systemEvent).toEqual({ type: 'group.created', params: { actor: null } });
+  });
+
+  it('tags the SparkAI warnings with an ai system event', async () => {
+    const { messageService } = await buildRoomService();
+
+    const message = await messageService.createErrorMessage('room-1', systemEvent('ai.dailyLimitReached'));
+    const view = await messageService.toView(message);
+
+    expect(view.type).toBe('error');
+    expect(view.content).toBe('Você atingiu o limite diário de mensagens com a IA. Tente novamente amanhã.');
+    expect(view.systemEvent).toEqual({ type: 'ai.dailyLimitReached', params: {} });
+  });
+
+  it('delivers a null system event on regular messages', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+
+    const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'Oi!' });
+    const view = await messageService.toView(message);
+
+    expect(view.systemEvent).toBeNull();
+    expect(messageViewSchema.safeParse(view).success).toBe(true);
+  });
+
 
   it('marks unread messages as read for a user and reports the correct unread count', async () => {
     const { messageService, userService } = await buildRoomService();

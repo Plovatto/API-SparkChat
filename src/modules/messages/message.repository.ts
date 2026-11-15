@@ -51,6 +51,7 @@ function toRecord(row: MessageRow): MessageRecord {
     fileMeta: row.fileMeta ?? null,
     caption: row.caption ?? null,
     linkPreview: row.linkPreview ?? null,
+    systemEvent: row.systemEvent ?? null,
   };
 }
 
@@ -102,6 +103,7 @@ export class MessageRepository {
       fileMeta: message.fileMeta,
       caption: message.caption,
       linkPreview: message.linkPreview,
+      systemEvent: message.systemEvent,
     });
 
     return message;

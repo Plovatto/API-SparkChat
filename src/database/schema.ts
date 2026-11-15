@@ -1,5 +1,6 @@
 import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import type { LinkPreviewCacheRecord } from '../modules/link-preview/link-preview.types.js';
+import type { SystemEvent } from '../modules/messages/message.system-events.js';
 import type {
   MessageFileMeta,
   MessageLinkPreview,
@@ -115,6 +116,7 @@ export const messages = sqliteTable(
     fileMeta: text('file_meta', { mode: 'json' }).$type<MessageFileMeta>(),
     caption: text('caption'),
     linkPreview: text('link_preview', { mode: 'json' }).$type<MessageLinkPreview>(),
+    systemEvent: text('system_event', { mode: 'json' }).$type<SystemEvent>(),
   },
   (table) => [index('messages_room_id_timestamp_idx').on(table.roomId, table.timestamp)],
 );

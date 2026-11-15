@@ -99,6 +99,13 @@
       "when": 1788902400004,
       "tag": "0013_acoustic_loki",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1794778604157,
+      "tag": "0014_supreme_wendigo",
+      "breakpoints": true
     }
   ]
 }

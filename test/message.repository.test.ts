@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { systemEvent } from '@/modules/messages/index.js';
 import { buildRoomService } from './support/build-room-service.js';
 
 type Services = Awaited<ReturnType<typeof buildRoomService>>;
@@ -166,7 +167,7 @@ describe('MessageService.toViews', () => {
 
     const first = await messageService.sendMessage({ roomId: 'room-a', senderId: alice.id, content: 'oi' });
     const second = await messageService.sendMessage({ roomId: 'room-a', senderId: bob.id, content: 'olá' });
-    const system = await messageService.createSystemMessage('room-a', 'Bob entrou no grupo');
+    const system = await messageService.createSystemMessage('room-a', systemEvent('group.memberJoined', { actor: 'Bob' }));
 
     const views = await messageService.toViews([first, second, system]);
 
