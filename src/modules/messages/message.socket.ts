@@ -10,6 +10,7 @@ import type { RoomRecord, RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
 import { parseMentionedUserIds } from './message.mentions.js';
 import type { MessageRateLimiter } from './message.rate-limiter.js';
+import { messageViewSchema, messagesListPayloadSchema, newMessagePayloadSchema } from './message.schemas.js';
 import type { MessageService } from './message.service.js';
 import type { MessageRecord } from './message.types.js';
 import type { RecordingService } from './recording.service.js';
@@ -99,16 +100,24 @@ registerClientEvents('messages', {
   'room:view-stop': roomIdPayloadSchema,
 });
 
-registerServerEvents('messages', [
-  'message:new',
-  'message:mark-read-done',
-  'message:read-receipt',
-  'messages:list',
-  'message:deleted',
-  'message:updated',
-  'typing:update',
-  'recording:update',
-]);
+registerServerEvents(
+  'messages',
+  [
+    'message:new',
+    'message:mark-read-done',
+    'message:read-receipt',
+    'messages:list',
+    'message:deleted',
+    'message:updated',
+    'typing:update',
+    'recording:update',
+  ],
+  {
+    'message:new': newMessagePayloadSchema,
+    'messages:list': messagesListPayloadSchema,
+    'message:updated': messageViewSchema,
+  },
+);
 
 const uploadedMediaPathPattern = new RegExp(`^/${uploadedMediaKeyPrefix}/(images|audio|files)/[^/]+$`);
 

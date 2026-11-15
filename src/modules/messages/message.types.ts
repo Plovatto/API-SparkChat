@@ -1,3 +1,5 @@
+import type { SystemEvent } from './message.system-events.js';
+
 export type MessageStatus = 'sent' | 'delivered' | 'read';
 
 export type MessageType = 'text' | 'system' | 'image' | 'audio' | 'file' | 'error';
@@ -21,6 +23,7 @@ export interface MessageSender {
   id: string;
   nickname: string;
   avatar: number | null;
+  unknown?: true;
 }
 
 export interface MessageReplySnapshot {
@@ -51,6 +54,7 @@ export interface MessageRecord {
   fileMeta: MessageFileMeta | null;
   caption: string | null;
   linkPreview: MessageLinkPreview | null;
+  systemEvent: SystemEvent | null;
 }
 
 export interface MessageView {
@@ -71,4 +75,5 @@ export interface MessageView {
   fileMeta: MessageFileMeta | null;
   caption: string | null;
   linkPreview: MessageLinkPreview | null;
+  systemEvent: SystemEvent | null;
 }

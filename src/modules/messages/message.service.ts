@@ -7,6 +7,7 @@ import type { StorageQuota } from '../../storage/storage-quota.js';
 import type { UserService } from '../users/index.js';
 import { nextTimestamp } from './message.clock.js';
 import type { MessageRepository, RoomDigest, RoomDigestRequest, UnreadCounts } from './message.repository.js';
+import { renderSystemEvent, type SystemEvent } from './message.system-events.js';
 import type {
   MessageFileMeta,
   MessageLinkPreview,
@@ -67,25 +68,26 @@ export class MessageService {
       fileMeta: input.fileMeta ?? null,
       caption: input.type && input.type !== 'text' ? (input.caption ?? null) : null,
       linkPreview: input.linkPreview ?? null,
+      systemEvent: null,
     };
 
     return this.repository.insert(message);
   }
 
-  createSystemMessage(roomId: string, content: string): Promise<MessageRecord> {
-    return this.createSystemLikeMessage(roomId, content, 'system');
+  createSystemMessage(roomId: string, event: SystemEvent): Promise<MessageRecord> {
+    return this.createSystemLikeMessage(roomId, event, 'system');
   }
 
-  createErrorMessage(roomId: string, content: string): Promise<MessageRecord> {
-    return this.createSystemLikeMessage(roomId, content, 'error');
+  createErrorMessage(roomId: string, event: SystemEvent): Promise<MessageRecord> {
+    return this.createSystemLikeMessage(roomId, event, 'error');
   }
 
-  private createSystemLikeMessage(roomId: string, content: string, type: Extract<MessageType, 'system' | 'error'>): Promise<MessageRecord> {
+  private createSystemLikeMessage(roomId: string, event: SystemEvent, type: Extract<MessageType, 'system' | 'error'>): Promise<MessageRecord> {
     const message: MessageRecord = {
       id: randomUUID(),
       roomId,
       senderId: SYSTEM_SENDER_ID,
-      content,
+      content: renderSystemEvent(event),
       type,
       duration: null,
       timestamp: nextTimestamp(roomId),
@@ -99,6 +101,7 @@ export class MessageService {
       fileMeta: null,
       caption: null,
       linkPreview: null,
+      systemEvent: event,
     };
 
     return this.repository.insert(message);
@@ -276,6 +279,7 @@ export class MessageService {
       fileMeta: message.deletedForEveryone ? null : message.fileMeta,
       caption: message.deletedForEveryone ? null : message.caption,
       linkPreview: message.deletedForEveryone ? null : message.linkPreview,
+      systemEvent: message.deletedForEveryone ? null : message.systemEvent,
     };
   }
 
@@ -339,7 +343,7 @@ export class MessageService {
 
     const user = await this.userService.getUser(senderId);
     if (!user) {
-      return { id: senderId, nickname: 'Usuário desconhecido', avatar: null };
+      return { id: senderId, nickname: 'Usuário desconhecido', avatar: null, unknown: true };
     }
 
     return { id: user.id, nickname: user.nickname, avatar: user.avatar };

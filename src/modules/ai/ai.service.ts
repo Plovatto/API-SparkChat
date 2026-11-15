@@ -1,6 +1,13 @@
 import { logger } from '../../config/logger.js';
 import type { AppServer } from '../../sockets/events.js';
-import type { MessageRecord, MessageService, RoomPresenceService, TypingService } from '../messages/index.js';
+import {
+  systemEvent,
+  type MessageRecord,
+  type MessageService,
+  type RoomPresenceService,
+  type SystemEventType,
+  type TypingService,
+} from '../messages/index.js';
 import type { RoomKeyRepository, RoomRecord } from '../rooms/index.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import { guessMimeTypeFromUrl, loadDecryptedAttachment } from './ai.attachments.js';
@@ -82,7 +89,7 @@ export class AiService {
     }
 
     if (this.usageLimiter.isBlocked(message.senderId)) {
-      void this.sendErrorMessage(io, room.id, 'Você atingiu o limite diário de mensagens com a IA. Tente novamente amanhã.');
+      void this.sendErrorMessage(io, room.id, 'ai.dailyLimitReached');
       return;
     }
 
@@ -117,11 +124,7 @@ export class AiService {
     try {
       const roomKey = await this.resolveRoomKey(room.id);
       if (!roomKey) {
-        await this.sendErrorMessage(
-          io,
-          room.id,
-          'Não foi possível preparar a conversa criptografada. Tente enviar a mensagem novamente em instantes.',
-        );
+        await this.sendErrorMessage(io, room.id, 'ai.encryptionUnavailable');
         return;
       }
 
@@ -142,7 +145,7 @@ export class AiService {
       io.to(room.id).emit('message:new', await this.messageService.toView(reply));
     } catch (error) {
       logger.error({ err: error, roomId: room.id }, 'Falha ao gerar resposta da IA');
-      await this.sendErrorMessage(io, room.id, 'Não consegui responder agora. Tente novamente em instantes.');
+      await this.sendErrorMessage(io, room.id, 'ai.replyFailed');
     } finally {
       this.broadcastTyping(io, room.id, false);
     }
@@ -155,8 +158,12 @@ export class AiService {
     io.to(roomId).emit('typing:update', { roomId, users });
   }
 
-  private async sendErrorMessage(io: AppServer, roomId: string, content: string): Promise<void> {
-    const message = await this.messageService.createErrorMessage(roomId, content);
+  private async sendErrorMessage(
+    io: AppServer,
+    roomId: string,
+    type: Extract<SystemEventType, `ai.${string}`>,
+  ): Promise<void> {
+    const message = await this.messageService.createErrorMessage(roomId, systemEvent(type));
     io.to(roomId).emit('message:new', await this.messageService.toView(message));
   }
 

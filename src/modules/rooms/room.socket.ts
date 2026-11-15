@@ -5,7 +5,7 @@ import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { roomIdPayloadSchema } from '../../sockets/payloads.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
-import { INITIAL_MESSAGES_LIMIT, type MessageService, type MessageView } from '../messages/index.js';
+import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService, type MessageView } from '../messages/index.js';
 import type { UserService } from '../users/index.js';
 import type { RoomKeyRepository } from './room.e2e.js';
 import type { RoomService } from './room.service.js';
@@ -220,7 +220,10 @@ async function handleCreateGroupRoom(socket: AppSocket, deps: RoomSocketDeps, pa
     await socket.join(room.id);
 
     const user = await userService.getUser(userId);
-    const systemMessage = await messageService.createSystemMessage(room.id, `${user?.nickname ?? 'Alguém'} criou o grupo`);
+    const systemMessage = await messageService.createSystemMessage(
+      room.id,
+      systemEvent('group.created', { actor: user?.nickname ?? null }),
+    );
 
     const summary = await roomService.buildSummary(room, userId);
     socket.emit('room:created', { room: summary, messages: [await messageService.toView(systemMessage)] });
@@ -270,7 +273,10 @@ async function handleJoinByCode(io: AppServer, socket: AppSocket, deps: RoomSock
     if (joined) {
       const user = await userService.getUser(userId);
       if (user) {
-        const systemMessage = await messageService.createSystemMessage(room.id, `${user.nickname} entrou no grupo`);
+        const systemMessage = await messageService.createSystemMessage(
+          room.id,
+          systemEvent('group.memberJoined', { actor: user.nickname }),
+        );
         io.to(room.id).emit('message:new', await messageService.toView(systemMessage));
 
         const participants = await roomService.buildParticipantViews(room);
@@ -366,7 +372,7 @@ async function handleLeaveGroup(socket: AppSocket, deps: RoomSocketDeps, payload
         participants: remaining,
       });
 
-      const systemMessage = await messageService.createSystemMessage(roomId, `${user.nickname} saiu do grupo`);
+      const systemMessage = await messageService.createSystemMessage(roomId, systemEvent('group.memberLeft', { actor: user.nickname }));
       socket.to(roomId).emit('message:new', await messageService.toView(systemMessage));
     }
 
@@ -413,7 +419,7 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
 
     const systemMessage = await messageService.createSystemMessage(
       roomId,
-      `${targetUser.nickname} foi removido do grupo por ${actingUser.nickname}`,
+      systemEvent('group.memberRemoved', { target: targetUser.nickname, actor: actingUser.nickname }),
     );
     io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
   } catch (error) {
@@ -446,7 +452,7 @@ async function handlePromoteAdmin(io: AppServer, socket: AppSocket, deps: RoomSo
 
     const systemMessage = await messageService.createSystemMessage(
       roomId,
-      `${targetUser.nickname} foi promovido a administrador por ${actingUser.nickname}`,
+      systemEvent('group.adminPromoted', { target: targetUser.nickname, actor: actingUser.nickname }),
     );
     io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
   } catch (error) {
