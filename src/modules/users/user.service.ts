@@ -24,7 +24,6 @@ export interface RegisterAccountInput {
   nickname: string;
   avatar: number;
   password: string;
-  socketId: string;
   userAgent?: string;
 }
 
@@ -114,7 +113,6 @@ export class UserService {
       avatar: input.avatar,
       passwordHash,
       recoveryTokenHash: hashToken(recoveryToken),
-      socketId: input.socketId,
       status: 'online',
       statusText: null,
       createdAt: now,
@@ -180,10 +178,18 @@ export class UserService {
     return user;
   }
 
+  async isSessionActive(userId: string, sessionId: string): Promise<boolean> {
+    const session = await this.sessions.findByIdForUser(userId, sessionId);
+    if (!session) {
+      return false;
+    }
+
+    return Date.now() - new Date(session.lastUsedAt).getTime() <= SESSION_TTL_MS;
+  }
+
   async resumeSession(
     userId: string,
     sessionToken: string,
-    socketId: string,
   ): Promise<{ user: UserRecord; authMethod: AuthMethod; sessionId: string } | null> {
     const session = await this.sessions.findValid(userId, hashToken(sessionToken), SESSION_TTL_MS);
     if (!session) {
@@ -192,7 +198,6 @@ export class UserService {
 
     await this.sessions.touch(session.id);
     const user = await this.repository.update(userId, {
-      socketId,
       status: 'online',
       lastSeen: new Date().toISOString(),
     });

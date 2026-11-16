@@ -22,7 +22,6 @@ describe('GET /health', () => {
       nickname: 'Crasher',
       avatar: 0,
       password: 'correct-horse-battery-staple',
-      socketId: 'socket-crasher',
     });
 
     const response = await request(app)

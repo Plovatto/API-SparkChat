@@ -8,7 +8,6 @@ async function createUser(userService: Awaited<ReturnType<typeof buildRoomServic
     nickname,
     avatar: 0,
     password: 'correct-horse-battery-staple',
-    socketId: `socket-${nickname}`,
   });
   return user;
 }
@@ -190,7 +189,7 @@ describe('MessageService', () => {
     const alice = await createUser(userService, 'Alice');
 
     const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'apagar isso' });
-    const deleted = await messageService.deleteMessage(message.id, alice.id);
+    const { message: deleted } = await messageService.deleteMessage(message.id, alice.id);
 
     expect(deleted.deletedForEveryone).toBe(true);
     expect(deleted.content).toBe('');
@@ -244,7 +243,7 @@ describe('MessageService', () => {
 
     const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'sem anexo' });
 
-    await expect(messageService.deleteMessage(message.id, alice.id)).resolves.toMatchObject({ deletedForEveryone: true });
+    await expect(messageService.deleteMessage(message.id, alice.id)).resolves.toMatchObject({ message: { deletedForEveryone: true } });
   });
 
   it('attaches a resolved snapshot of the original message when replying', async () => {
@@ -268,6 +267,7 @@ describe('MessageService', () => {
       fileMeta: null,
       caption: null,
       sender: { id: alice.id, nickname: 'Alice', avatar: 0 },
+      deleted: false,
     });
   });
 
@@ -292,6 +292,132 @@ describe('MessageService', () => {
     });
 
     expect(reply.replyTo?.fileMeta).toEqual(fileMeta);
+  });
+
+  it('leaves replyTo null when the replied message belongs to another room', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const mallory = await createUser(userService, 'Mallory');
+    const fileMeta = { name: 'segredo.pdf', mimeType: 'application/pdf', size: 10, thumbnailUrl: 'https://cdn.test/uploads/images/thumb.webp' };
+
+    const secret = await messageService.sendMessage({
+      roomId: 'room-private',
+      senderId: alice.id,
+      content: 'https://cdn.test/uploads/files/segredo.pdf',
+      type: 'file',
+      fileMeta,
+      caption: 'ciphertext-da-legenda',
+    });
+    const probe = await messageService.sendMessage({
+      roomId: 'room-mallory',
+      senderId: mallory.id,
+      content: 'oi',
+      replyToMessageId: secret.id,
+    });
+
+    expect(probe.replyTo).toBeNull();
+    expect((await messageService.toView(probe)).replyTo).toBeNull();
+  });
+
+  it('stores a deleted snapshot when replying to a message already deleted for everyone', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    const original = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'apagada' });
+    await messageService.deleteMessage(original.id, alice.id);
+    const reply = await messageService.sendMessage({ roomId: 'room-1', senderId: bob.id, content: 'hein?', replyToMessageId: original.id });
+
+    expect(reply.replyTo).toEqual({
+      id: original.id,
+      content: '',
+      type: 'text',
+      duration: null,
+      fileMeta: null,
+      caption: null,
+      sender: { id: alice.id, nickname: 'Alice', avatar: 0 },
+      deleted: true,
+    });
+  });
+
+  it('neutralizes the reply snapshots of a message deleted for everyone and returns the affected replies', async () => {
+    const { messageService, messageRepository, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const fileMeta = { name: 'foto.png', mimeType: 'image/png', size: 10, thumbnailUrl: 'https://cdn.test/uploads/images/thumb.webp' };
+
+    const original = await messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: 'https://cdn.test/uploads/images/foto.png',
+      type: 'image',
+      fileMeta,
+      caption: 'legenda',
+    });
+    const reply = await messageService.sendMessage({ roomId: 'room-1', senderId: bob.id, content: 'linda', replyToMessageId: original.id });
+    const otherRoomMessage = await messageService.sendMessage({ roomId: 'room-2', senderId: bob.id, content: 'nada a ver' });
+
+    const { affectedReplies } = await messageService.deleteMessage(original.id, alice.id);
+
+    expect(affectedReplies.map((message) => message.id)).toEqual([reply.id]);
+    const expectedSnapshot = {
+      id: original.id,
+      content: '',
+      type: 'image',
+      duration: null,
+      fileMeta: null,
+      caption: null,
+      sender: { id: alice.id, nickname: 'Alice', avatar: 0 },
+      deleted: true,
+    };
+    expect(affectedReplies[0]?.replyTo).toEqual(expectedSnapshot);
+    expect((await messageRepository.findById(reply.id))?.replyTo).toEqual(expectedSnapshot);
+    expect((await messageRepository.findById(otherRoomMessage.id))?.replyTo).toBeNull();
+
+    const [view] = await messageService.toViews(affectedReplies);
+    expect(view?.replyTo).toEqual(expectedSnapshot);
+    expect(messageViewSchema.safeParse(view).success).toBe(true);
+  });
+
+  it('hides the content of a legacy reply snapshot whose original was deleted before neutralization existed', async () => {
+    const { messageService, messageRepository, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    const original = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'antigo' });
+    const reply = await messageService.sendMessage({ roomId: 'room-1', senderId: bob.id, content: 'resposta', replyToMessageId: original.id });
+    await messageRepository.update(original.id, { deletedForEveryone: true, content: '' });
+
+    const [listed] = await messageService.toViews([reply]);
+    const single = await messageService.toView(reply);
+
+    expect(listed?.replyTo).toMatchObject({ id: original.id, content: '', deleted: true });
+    expect(single.replyTo).toMatchObject({ id: original.id, content: '', deleted: true });
+  });
+
+  it('drops the reply quote from a message that was itself deleted for everyone', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+
+    const original = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'oi' });
+    const reply = await messageService.sendMessage({ roomId: 'room-1', senderId: bob.id, content: 'tchau', replyToMessageId: original.id });
+    const { message: deletedReply } = await messageService.deleteMessage(reply.id, bob.id);
+
+    expect((await messageService.toView(deletedReply)).replyTo).toBeNull();
+  });
+
+  it('does not touch storage again when deleting a message that was already deleted', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+
+    const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'uma vez' });
+    await messageService.deleteMessage(message.id, alice.id);
+
+    await expect(messageService.deleteMessage(message.id, alice.id)).resolves.toMatchObject({
+      message: { deletedForEveryone: true },
+      affectedReplies: [],
+    });
   });
 
   it('leaves replyTo null when replying to a message id that does not exist', async () => {

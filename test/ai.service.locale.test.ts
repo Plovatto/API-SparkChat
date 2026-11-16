@@ -21,8 +21,8 @@ async function setup() {
   const { userService, roomService, roomKeyRepository, messageService } = services;
   const sodium = await getSodium();
 
-  const { user: alice } = await userService.registerAccount({ nickname: 'Alice', avatar: 0, password: PASSWORD, socketId: 's-alice' });
-  const { user: assistant } = await userService.registerAccount({ nickname: 'Assistente', avatar: 1, password: PASSWORD, socketId: 's-ai' });
+  const { user: alice } = await userService.registerAccount({ nickname: 'Alice', avatar: 0, password: PASSWORD });
+  const { user: assistant } = await userService.registerAccount({ nickname: 'Assistente', avatar: 1, password: PASSWORD });
   const keyPair = sodium.crypto_box_keypair();
   const identity: AssistantIdentity = {
     userId: assistant.id,

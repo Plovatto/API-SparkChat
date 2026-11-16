@@ -6,7 +6,9 @@ import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { roomIdPayloadSchema } from '../../sockets/payloads.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
 import { socketLocale } from '../../sockets/socket-locale.js';
+import { exceedsLookupLimit, E2E_LOOKUP_MAX_ITEMS, lookupTooLargePayload } from '../../sockets/id-lookup.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
+import { emitToUser, joinUserSocketsToRoom, removeUserSocketsFromRoom, userRoom } from '../../sockets/user-sockets.js';
 import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService, type MessageView } from '../messages/index.js';
 import type { UserService } from '../users/index.js';
 import type { RoomKeyRepository } from './room.e2e.js';
@@ -64,7 +66,7 @@ const publishRoomKeyPayloadSchema = z.object({
 });
 
 const getRoomKeysPayloadSchema = z.object({
-  roomIds: z.array(z.string().trim().min(1)).min(1).max(200),
+  roomIds: z.array(z.string().trim().min(1)).min(1).max(E2E_LOOKUP_MAX_ITEMS),
 });
 
 registerClientEvents('rooms', {
@@ -113,7 +115,7 @@ export function registerRoomSocketHandlers(io: AppServer, socket: AppSocket, dep
   });
 
   socket.on('room:create-group', (payload) => {
-    void handleCreateGroupRoom(socket, deps, payload);
+    void handleCreateGroupRoom(io, socket, deps, payload);
   });
 
   socket.on('rooms:get', () => {
@@ -133,7 +135,7 @@ export function registerRoomSocketHandlers(io: AppServer, socket: AppSocket, dep
   });
 
   socket.on('group:leave', (payload) => {
-    void handleLeaveGroup(socket, deps, payload);
+    void handleLeaveGroup(io, socket, deps, payload);
   });
 
   socket.on('group:remove-member', (payload) => {
@@ -190,10 +192,7 @@ async function handleCreatePrivateRoom(io: AppServer, socket: AppSocket, deps: R
     const existingRoom = await roomService.findPrivateRoomBetween(userId, targetUser.id);
     const room = await roomService.createPrivateRoom(userId, targetUser.id);
     await socket.join(room.id);
-
-    if (targetUser.socketId) {
-      await io.sockets.sockets.get(targetUser.socketId)?.join(room.id);
-    }
+    await Promise.all([joinUserSocketsToRoom(io, userId, room.id), joinUserSocketsToRoom(io, targetUser.id, room.id)]);
 
     const messageViews = await getInitialMessageViews(deps, room, userId);
 
@@ -208,7 +207,7 @@ async function handleCreatePrivateRoom(io: AppServer, socket: AppSocket, deps: R
   }
 }
 
-async function handleCreateGroupRoom(socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+async function handleCreateGroupRoom(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
   const userId = requireSocketUserId(socket);
   if (!userId) {
     return;
@@ -220,6 +219,7 @@ async function handleCreateGroupRoom(socket: AppSocket, deps: RoomSocketDeps, pa
     const { roomName } = createGroupRoomPayloadSchema.parse(payload);
     const room = await roomService.createGroupRoom(roomName, userId);
     await socket.join(room.id);
+    await joinUserSocketsToRoom(io, userId, room.id);
 
     const user = await userService.getUser(userId);
     const systemMessage = await messageService.createSystemMessage(
@@ -271,6 +271,7 @@ async function handleJoinByCode(io: AppServer, socket: AppSocket, deps: RoomSock
 
     const { room, joined } = await roomService.joinByCode(normalizedCode, userId);
     await socket.join(room.id);
+    await joinUserSocketsToRoom(io, userId, room.id);
 
     if (joined) {
       const user = await userService.getUser(userId);
@@ -342,14 +343,14 @@ async function handleDeleteRoom(io: AppServer, socket: AppSocket, deps: RoomSock
     }
 
     await roomService.deleteForUser(roomId, userId);
-    socket.emit('room:deleted', { roomId });
-    await socket.leave(roomId);
+    emitToUser(io, userId).emit('room:deleted', { roomId });
+    await removeUserSocketsFromRoom(io, userId, roomId);
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
 }
 
-async function handleLeaveGroup(socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+async function handleLeaveGroup(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
   const userId = requireSocketUserId(socket);
   if (!userId) {
     return;
@@ -362,12 +363,14 @@ async function handleLeaveGroup(socket: AppSocket, deps: RoomSocketDeps, payload
     const user = await userService.getUser(userId);
     const updatedRoom = await roomService.leaveGroup(roomId, userId);
 
-    socket.emit('group:left', { roomId });
+    await socket.leave(roomId);
+    await removeUserSocketsFromRoom(io, userId, roomId);
+    emitToUser(io, userId).emit('group:left', { roomId });
 
     if (updatedRoom && user) {
       const remaining = await roomService.buildParticipantViews(updatedRoom);
 
-      socket.to(roomId).emit('group:user-left', {
+      io.to(roomId).emit('group:user-left', {
         roomId,
         userId,
         userName: user.nickname,
@@ -375,10 +378,8 @@ async function handleLeaveGroup(socket: AppSocket, deps: RoomSocketDeps, payload
       });
 
       const systemMessage = await messageService.createSystemMessage(roomId, systemEvent('group.memberLeft', { actor: user.nickname }));
-      socket.to(roomId).emit('message:new', await messageService.toView(systemMessage));
+      io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
     }
-
-    await socket.leave(roomId);
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
@@ -413,11 +414,8 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
       participants: remaining,
     });
 
-    if (targetUser.socketId) {
-      const targetSocket = io.sockets.sockets.get(targetUser.socketId);
-      targetSocket?.emit('group:left', { roomId });
-      await targetSocket?.leave(roomId);
-    }
+    emitToUser(io, targetUserId).emit('group:left', { roomId });
+    await removeUserSocketsFromRoom(io, targetUserId, roomId);
 
     const systemMessage = await messageService.createSystemMessage(
       roomId,
@@ -475,17 +473,13 @@ async function handleBlockUser(io: AppServer, socket: AppSocket, deps: RoomSocke
       return;
     }
 
-    socket.emit('user:blocked', { roomId, blockedUserId, blockedBy: room.blockedBy, isBlocking: true });
-
-    const blockedUser = await deps.userService.getUser(blockedUserId);
-    if (blockedUser?.socketId) {
-      io.to(blockedUser.socketId).emit('user:blocked', {
-        roomId,
-        blockedByUserId: userId,
-        blockedBy: room.blockedBy,
-        isBlocking: false,
-      });
-    }
+    emitToUser(io, userId).emit('user:blocked', { roomId, blockedUserId, blockedBy: room.blockedBy, isBlocking: true });
+    emitToUser(io, blockedUserId).emit('user:blocked', {
+      roomId,
+      blockedByUserId: userId,
+      blockedBy: room.blockedBy,
+      isBlocking: false,
+    });
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
@@ -504,17 +498,13 @@ async function handleUnblockUser(io: AppServer, socket: AppSocket, deps: RoomSoc
       return;
     }
 
-    socket.emit('user:unblocked', { roomId, blockedUserId, blockedBy: room.blockedBy, isBlocking: true });
-
-    const blockedUser = await deps.userService.getUser(blockedUserId);
-    if (blockedUser?.socketId) {
-      io.to(blockedUser.socketId).emit('user:unblocked', {
-        roomId,
-        blockedByUserId: userId,
-        blockedBy: room.blockedBy,
-        isBlocking: false,
-      });
-    }
+    emitToUser(io, userId).emit('user:unblocked', { roomId, blockedUserId, blockedBy: room.blockedBy, isBlocking: true });
+    emitToUser(io, blockedUserId).emit('user:unblocked', {
+      roomId,
+      blockedByUserId: userId,
+      blockedBy: room.blockedBy,
+      isBlocking: false,
+    });
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
@@ -526,7 +516,7 @@ async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: Room
     return;
   }
 
-  const { roomService, userService, roomKeyRepository } = deps;
+  const { roomService, roomKeyRepository } = deps;
 
   try {
     const { roomId, keys } = publishRoomKeyPayloadSchema.parse(payload);
@@ -540,14 +530,8 @@ async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: Room
     await Promise.all(validKeys.map((key) => roomKeyRepository.publish(roomId, key.userId, key.sealedKey)));
 
     for (const key of validKeys) {
-      if (key.userId === actingUserId) {
-        continue;
-      }
-
-      const recipient = await userService.getUser(key.userId);
-      if (recipient?.socketId) {
-        io.to(recipient.socketId).emit('e2e:room-key', { roomId, sealedKey: key.sealedKey });
-      }
+      const target = key.userId === actingUserId ? socket.to(userRoom(actingUserId)) : emitToUser(io, key.userId);
+      target.emit('e2e:room-key', { roomId, sealedKey: key.sealedKey });
     }
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
@@ -560,13 +544,18 @@ async function handleGetRoomKeys(socket: AppSocket, deps: RoomSocketDeps, payloa
     return;
   }
 
+  if (exceedsLookupLimit(payload, 'roomIds')) {
+    socket.emit('error', lookupTooLargePayload('e2e:get-room-keys'));
+    return;
+  }
+
   try {
     const { roomIds } = getRoomKeysPayloadSchema.parse(payload);
     const keys = await deps.roomKeyRepository.findForParticipantInRooms(roomIds, userId);
 
     socket.emit('e2e:room-keys', { keys });
   } catch (error) {
-    socket.emit('error', extractErrorPayload(error));
+    socket.emit('error', { ...extractErrorPayload(error), event: 'e2e:get-room-keys' });
   }
 }
 

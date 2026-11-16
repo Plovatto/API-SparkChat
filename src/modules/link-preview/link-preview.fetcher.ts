@@ -1,4 +1,5 @@
 import { fetchWithGuard, readBodyBuffer } from './link-preview.http.js';
+import { fitLinkPreviewForEncryption } from './link-preview.limits.js';
 import { assertPublicHttpUrl } from './link-preview.ssrf-guard.js';
 import type { LinkPreviewFetcher, LinkPreviewMetadata } from './link-preview.types.js';
 
@@ -78,6 +79,11 @@ function parseHtmlMetadata(html: string, pageUrl: URL): LinkPreviewMetadata | nu
 }
 
 async function fetchMetadata(rawUrl: string): Promise<LinkPreviewMetadata | null> {
+  const metadata = await fetchRawMetadata(rawUrl);
+  return metadata ? fitLinkPreviewForEncryption(metadata) : null;
+}
+
+async function fetchRawMetadata(rawUrl: string): Promise<LinkPreviewMetadata | null> {
   let currentUrl = await assertPublicHttpUrl(rawUrl);
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {

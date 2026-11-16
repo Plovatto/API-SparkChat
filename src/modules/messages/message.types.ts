@@ -34,6 +34,7 @@ export interface MessageReplySnapshot {
   fileMeta: MessageFileMeta | null;
   caption: string | null;
   sender: MessageSender;
+  deleted: boolean;
 }
 
 export interface MessageRecord {

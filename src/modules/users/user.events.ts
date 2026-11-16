@@ -1,4 +1,5 @@
 import type { ErrorPayload } from '../../lib/app-error.js';
+import type { Locale } from '../../lib/locale.js';
 import type { AuthMethod, PublicUser, SessionSummary, UserChatSettings, UserStatus, UserTheme } from './user.model.js';
 
 export interface E2ePublicKeyEntry {
@@ -34,7 +35,7 @@ export interface UserServerToClientEvents {
     encryptedPrivateKeyByPassword: string | null;
     encryptedPrivateKeyByRecovery: string | null;
   }) => void;
-  error: (payload: ErrorPayload & { clientTempId?: string | undefined }) => void;
+  error: (payload: ErrorPayload & { clientTempId?: string | undefined; event?: string | undefined }) => void;
 }
 
 export interface UserClientToServerEvents {
@@ -60,4 +61,5 @@ export interface UserClientToServerEvents {
   }) => void;
   'e2e:get-public-keys': (payload: { userIds: string[] }) => void;
   'e2e:get-my-keys': () => void;
+  'user:set-locale': (payload: { locale: Locale }) => void;
 }

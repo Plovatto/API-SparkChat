@@ -3,9 +3,12 @@ import { getClientIp } from '../../config/client-ip.js';
 import { errorPayloadSchema } from '../../docs/common-schemas.js';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import { errorPayload } from '../../lib/app-error.js';
+import { SUPPORTED_LOCALES } from '../../lib/locale.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
+import { exceedsLookupLimit, lookupTooLargePayload } from '../../sockets/id-lookup.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
-import { clearSocketSession, requireSocketUserId } from '../../sockets/socket-session.js';
+import { bindSocketSession, clearSocketSession, requireSocketUserId } from '../../sockets/socket-session.js';
+import { hasVisibleUserSocket, listUserSockets, userRoom } from '../../sockets/user-sockets.js';
 import type { MessageService } from '../messages/index.js';
 import type { RoomService } from '../rooms/index.js';
 import { describeDevice } from './user.device.js';
@@ -26,6 +29,7 @@ export interface UserSocketDeps {
   roomService: RoomService;
   messageService: MessageService;
   loginRateLimiter: LoginRateLimiter;
+  onSessionReleased?: (context: { socket: AppSocket; userId: string }) => void;
 }
 
 const joinPayloadSchema = z.discriminatedUnion('mode', [
@@ -64,13 +68,18 @@ const revokeSessionPayloadSchema = z.object({
   sessionId: z.string().trim().min(1),
 });
 
+const setLocalePayloadSchema = z.object({
+  locale: z.enum(SUPPORTED_LOCALES),
+});
+
 const authFailedPayloadSchema = errorPayloadSchema.extend({
   mode: z.enum(['register', 'resume']),
   reason: z.enum(['invalid', 'temporary']),
 });
 
 const errorEventPayloadSchema = errorPayloadSchema.extend({
-  clientTempId: z.string().optional(),
+  clientTempId: z.string().optional().openapi({ description: 'Presente quando o erro se refere a um message:send que trouxe clientTempId' }),
+  event: z.string().optional().openapi({ description: 'Evento de origem, presente nos erros das consultas de chaves E2EE' }),
 });
 
 registerClientEvents('users', {
@@ -80,6 +89,7 @@ registerClientEvents('users', {
   'user:update-theme': userThemeSchema,
   'user:update-chat-settings': userChatSettingsSchema,
   'user:visibility': visibilityPayloadSchema,
+  'user:set-locale': setLocalePayloadSchema,
   'user:change-password': changePasswordPayloadSchema,
   'user:regenerate-recovery-file': null,
   'user:logout': null,
@@ -129,7 +139,7 @@ export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, dep
   });
 
   socket.on('user:update-chat-settings', (payload) => {
-    void handleUpdateChatSettings(io, socket, deps, payload);
+    void handleUpdateChatSettings(socket, deps, payload);
   });
 
   socket.on('user:visibility', (payload, ack) => {
@@ -137,8 +147,12 @@ export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, dep
     void handleVisibility(io, socket, deps, payload);
   });
 
+  socket.on('user:set-locale', (payload) => {
+    handleSetLocale(socket, payload);
+  });
+
   socket.on('user:change-password', (payload) => {
-    void handleChangePassword(socket, deps, payload);
+    void handleChangePassword(io, socket, deps, payload);
   });
 
   socket.on('user:regenerate-recovery-file', () => {
@@ -146,7 +160,7 @@ export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, dep
   });
 
   socket.on('user:logout', () => {
-    void handleLogout(socket, deps);
+    void handleLogout(io, socket, deps);
   });
 
   socket.on('user:list-sessions', () => {
@@ -202,13 +216,10 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
         nickname: input.nickname,
         avatar: input.avatar,
         password: input.password,
-        socketId: socket.id,
         userAgent: socket.handshake.headers['user-agent'] ?? '',
       });
 
-      socket.data.userId = user.id;
-      socket.data.authMethod = 'password';
-      socket.data.sessionId = sessionId;
+      await bindSocketSession(socket, { userId: user.id, authMethod: 'password', sessionId });
       socket.emit('user:registered', {
         user: userService.toPublicUser(user),
         sessionToken,
@@ -221,7 +232,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
       return;
     }
 
-    const resumed = await userService.resumeSession(input.userId, input.sessionToken, socket.id);
+    const resumed = await userService.resumeSession(input.userId, input.sessionToken);
     if (!resumed) {
       socket.emit('user:auth-failed', {
         mode: 'resume',
@@ -232,9 +243,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
     }
 
     const { user, authMethod, sessionId } = resumed;
-    socket.data.userId = user.id;
-    socket.data.authMethod = authMethod;
-    socket.data.sessionId = sessionId;
+    await bindSocketSession(socket, { userId: user.id, authMethod, sessionId });
     socket.emit('user:resumed', { user: userService.toPublicUser(user), authMethod });
     socket.broadcast.emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
     await deliverPendingMessages(io, deps, user.id);
@@ -340,22 +349,67 @@ async function handleUpdateTheme(socket: AppSocket, deps: UserSocketDeps, payloa
   await deps.userService.updateTheme(userId, parsed.data);
 }
 
-async function handleLogout(socket: AppSocket, deps: UserSocketDeps): Promise<void> {
+function handleSetLocale(socket: AppSocket, payload: unknown): void {
+  const parsed = setLocalePayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    return;
+  }
+
+  socket.data.locale = parsed.data.locale;
+}
+
+async function releaseSocketUser(io: AppServer, socket: AppSocket, deps: UserSocketDeps): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    return;
+  }
+
+  const wasVisible = socket.data.hidden !== true;
+  deps.onSessionReleased?.({ socket, userId });
+  await clearSocketSession(socket);
+  if (wasVisible) {
+    await markOfflineIfNoVisibleSocket(io, deps, userId);
+  }
+}
+
+async function markOfflineIfNoVisibleSocket(io: AppServer, deps: UserSocketDeps, userId: string): Promise<void> {
+  if (hasVisibleUserSocket(io, userId)) {
+    return;
+  }
+
+  const updated = await deps.userService.setStatus(userId, 'offline');
+  if (!updated) {
+    return;
+  }
+
+  io.emit('user:offline', {
+    userId: updated.id,
+    user: { id: updated.id, status: updated.status, lastSeen: updated.lastSeen },
+  });
+}
+
+function revokeUserSockets(io: AppServer, userId: string, requester: AppSocket, shouldRevoke: (target: AppSocket) => boolean): void {
+  for (const target of listUserSockets(io, userId)) {
+    if (target.id === requester.id || !shouldRevoke(target)) {
+      continue;
+    }
+    target.emit('user:session-revoked');
+    target.disconnect(true);
+  }
+}
+
+async function handleLogout(io: AppServer, socket: AppSocket, deps: UserSocketDeps): Promise<void> {
   const { userId, sessionId } = socket.data;
   if (!userId || !sessionId) {
     return;
   }
 
   await deps.userService.revokeSession(userId, sessionId);
-  clearSocketSession(socket);
+  revokeUserSockets(io, userId, socket, (target) => target.data.sessionId === sessionId);
+  await releaseSocketUser(io, socket, deps);
 }
 
-async function handleUpdateChatSettings(
-  io: AppServer,
-  socket: AppSocket,
-  deps: UserSocketDeps,
-  payload: unknown,
-): Promise<void> {
+async function handleUpdateChatSettings(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
   const userId = socket.data.userId;
   if (!userId) {
     return;
@@ -367,12 +421,7 @@ async function handleUpdateChatSettings(
   }
 
   await deps.userService.updateChatSettings(userId, parsed.data);
-
-  for (const target of io.sockets.sockets.values()) {
-    if (target.id !== socket.id && target.data.userId === userId) {
-      target.emit('user:chat-settings-updated', { chatSettings: parsed.data });
-    }
-  }
+  socket.to(userRoom(userId)).emit('user:chat-settings-updated', { chatSettings: parsed.data });
 }
 
 async function handleVisibility(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
@@ -387,6 +436,12 @@ async function handleVisibility(io: AppServer, socket: AppSocket, deps: UserSock
   }
 
   const { visible } = parsed.data;
+  socket.data.hidden = !visible;
+
+  if (!visible && hasVisibleUserSocket(io, userId)) {
+    return;
+  }
+
   const updated = await deps.userService.setStatus(userId, visible ? 'online' : 'offline');
   if (!updated) {
     return;
@@ -407,7 +462,7 @@ async function handleVisibility(io: AppServer, socket: AppSocket, deps: UserSock
   }
 }
 
-async function handleChangePassword(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+async function handleChangePassword(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
   const userId = requireSocketUserId(socket);
   if (!userId) {
     return;
@@ -418,7 +473,8 @@ async function handleChangePassword(socket: AppSocket, deps: UserSocketDeps, pay
     const authMethod = socket.data.authMethod ?? 'password';
     const { recoveryFile, recoveryToken } = await deps.userService.changePassword(userId, currentPassword, newPassword, authMethod);
 
-    clearSocketSession(socket);
+    revokeUserSockets(io, userId, socket, () => true);
+    await releaseSocketUser(io, socket, deps);
     socket.emit('user:password-changed', { recoveryFile: recoveryFile.toString('base64'), recoveryToken });
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
@@ -470,43 +526,22 @@ async function handleRevokeSession(io: AppServer, socket: AppSocket, deps: UserS
     await deps.userService.revokeSession(userId, sessionId);
     await handleListSessions(socket, deps);
 
+    revokeUserSockets(io, userId, socket, (target) => target.data.sessionId === sessionId);
     if (sessionId === socket.data.sessionId) {
-      clearSocketSession(socket);
-    } else {
-      disconnectRevokedSession(io, socket, userId, sessionId);
+      await releaseSocketUser(io, socket, deps);
     }
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
 }
 
-function disconnectRevokedSession(io: AppServer, requester: AppSocket, userId: string, sessionId: string): void {
-  for (const target of io.sockets.sockets.values()) {
-    if (target.id === requester.id) {
-      continue;
-    }
-    if (target.data.userId === userId && target.data.sessionId === sessionId) {
-      target.emit('user:session-revoked');
-      target.disconnect(true);
-    }
-  }
-}
-
 async function handleDisconnect(io: AppServer, socket: AppSocket, deps: UserSocketDeps): Promise<void> {
   const userId = socket.data.userId;
-  if (!userId) {
+  if (!userId || socket.data.hidden === true) {
     return;
   }
 
-  const updated = await deps.userService.setStatus(userId, 'offline');
-  if (!updated) {
-    return;
-  }
-
-  io.emit('user:offline', {
-    userId: updated.id,
-    user: { id: updated.id, status: updated.status, lastSeen: updated.lastSeen },
-  });
+  await markOfflineIfNoVisibleSocket(io, deps, userId);
 }
 
 async function handlePublishE2eKeys(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
@@ -529,12 +564,17 @@ async function handleGetPublicKeys(socket: AppSocket, deps: UserSocketDeps, payl
     return;
   }
 
+  if (exceedsLookupLimit(payload, 'userIds')) {
+    socket.emit('error', lookupTooLargePayload('e2e:get-public-keys'));
+    return;
+  }
+
   try {
     const { userIds } = getPublicKeysPayloadSchema.parse(payload);
     const keys = await deps.userService.getPublicKeys(userIds);
     socket.emit('e2e:public-keys', { keys });
   } catch (error) {
-    socket.emit('error', extractErrorPayload(error));
+    socket.emit('error', { ...extractErrorPayload(error), event: 'e2e:get-public-keys' });
   }
 }
 

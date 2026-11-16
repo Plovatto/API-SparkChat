@@ -5,7 +5,7 @@ import { buildRoomService } from './support/build-room-service.js';
 const PASSWORD = 'correct-horse-battery-staple';
 
 async function registerAlice(userService: Awaited<ReturnType<typeof buildRoomService>>['userService']) {
-  return userService.registerAccount({ nickname: 'Alice', avatar: 0, password: PASSWORD, socketId: 'socket-alice' });
+  return userService.registerAccount({ nickname: 'Alice', avatar: 0, password: PASSWORD });
 }
 
 describe('UserService.registerAccount', () => {
@@ -26,7 +26,7 @@ describe('UserService.registerAccount', () => {
     await registerAlice(userService);
 
     await expect(
-      userService.registerAccount({ nickname: 'ALICE', avatar: 1, password: PASSWORD, socketId: 'socket-2' }),
+      userService.registerAccount({ nickname: 'ALICE', avatar: 1, password: PASSWORD }),
     ).rejects.toMatchObject({ code: 'user.nicknameTaken', message: 'Esse nickname já está em uso.' });
   });
 
@@ -34,7 +34,7 @@ describe('UserService.registerAccount', () => {
     const { userService } = await buildRoomService();
 
     await expect(
-      userService.registerAccount({ nickname: 'Bob', avatar: 0, password: 'short', socketId: 'socket-bob' }),
+      userService.registerAccount({ nickname: 'Bob', avatar: 0, password: 'short' }),
     ).rejects.toMatchObject({
       code: 'user.passwordTooShort',
       message: 'A senha deve ter pelo menos 12 caracteres.',
@@ -46,7 +46,7 @@ describe('UserService.registerAccount', () => {
     const { userService } = await buildRoomService();
 
     await expect(
-      userService.registerAccount({ nickname: 'Bob!', avatar: 0, password: PASSWORD, socketId: 'socket-bob' }),
+      userService.registerAccount({ nickname: 'Bob!', avatar: 0, password: PASSWORD }),
     ).rejects.toMatchObject({
       code: 'user.nicknameInvalid',
       message: 'Nickname deve ter entre 2 e 20 caracteres, usando apenas letras e números, com pelo menos 2 letras.',
@@ -58,7 +58,7 @@ describe('UserService.registerAccount', () => {
     const { userService } = await buildRoomService();
 
     await expect(
-      userService.registerAccount({ nickname: 'B1', avatar: 0, password: PASSWORD, socketId: 'socket-bob' }),
+      userService.registerAccount({ nickname: 'B1', avatar: 0, password: PASSWORD }),
     ).rejects.toMatchObject({ code: 'user.nicknameInvalid' });
   });
 
@@ -69,7 +69,6 @@ describe('UserService.registerAccount', () => {
       nickname: 'Bob123',
       avatar: 0,
       password: PASSWORD,
-      socketId: 'socket-bob',
     });
 
     expect(user.nickname).toBe('Bob123');
@@ -111,8 +110,8 @@ describe('UserService.login', () => {
     const deviceA = await userService.login('Alice', PASSWORD);
     const deviceB = await userService.login('Alice', PASSWORD);
 
-    const resumedA = await userService.resumeSession(user.id, deviceA?.sessionToken ?? '', 'socket-a');
-    const resumedB = await userService.resumeSession(user.id, deviceB?.sessionToken ?? '', 'socket-b');
+    const resumedA = await userService.resumeSession(user.id, deviceA?.sessionToken ?? '');
+    const resumedB = await userService.resumeSession(user.id, deviceB?.sessionToken ?? '');
 
     expect(resumedA?.user.id).toBe(user.id);
     expect(resumedB?.user.id).toBe(user.id);
@@ -125,8 +124,8 @@ describe('UserService.login', () => {
     const deviceA = await userService.login('Alice', PASSWORD);
     const deviceB = await userService.login('Alice', PASSWORD);
 
-    const resumedA = await userService.resumeSession(user.id, deviceA?.sessionToken ?? '', 'socket-a');
-    const resumedB = await userService.resumeSession(user.id, deviceB?.sessionToken ?? '', 'socket-b');
+    const resumedA = await userService.resumeSession(user.id, deviceA?.sessionToken ?? '');
+    const resumedB = await userService.resumeSession(user.id, deviceB?.sessionToken ?? '');
 
     expect(deviceA?.sessionId).toBeTruthy();
     expect(deviceB?.sessionId).toBeTruthy();
@@ -140,7 +139,7 @@ describe('UserService.login', () => {
     const { user } = await registerAlice(userService);
 
     const result = await userService.login('Alice', PASSWORD);
-    const resumed = await userService.resumeSession(user.id, result?.sessionToken ?? '', 'socket-a');
+    const resumed = await userService.resumeSession(user.id, result?.sessionToken ?? '');
 
     expect(resumed?.authMethod).toBe('password');
   });
@@ -173,7 +172,7 @@ describe('UserService.loginWithKeyfile', () => {
     const { user, recoveryFile } = await registerAlice(userService);
 
     const result = await userService.loginWithKeyfile(recoveryFile);
-    const resumed = await userService.resumeSession(user.id, result?.sessionToken ?? '', 'socket-a');
+    const resumed = await userService.resumeSession(user.id, result?.sessionToken ?? '');
 
     expect(resumed?.authMethod).toBe('keyfile');
   });
@@ -184,7 +183,7 @@ describe('UserService.resumeSession', () => {
     const { userService } = await buildRoomService();
     const { user } = await registerAlice(userService);
 
-    const result = await userService.resumeSession(user.id, 'not-a-real-token', 'socket-new');
+    const result = await userService.resumeSession(user.id, 'not-a-real-token');
 
     expect(result).toBeNull();
   });
@@ -205,7 +204,7 @@ describe('UserService.resumeSession', () => {
       lastUsedAt: eightDaysAgo,
     });
 
-    const result = await userService.resumeSession(user.id, sessionToken, 'socket-old');
+    const result = await userService.resumeSession(user.id, sessionToken);
     expect(result).toBeNull();
   });
 });
@@ -236,12 +235,32 @@ describe('UserService.verifySession', () => {
       nickname: 'Bob',
       avatar: 0,
       password: 'correct-horse-battery-staple',
-      socketId: 'socket-bob',
     });
 
     const result = await userService.verifySession(bob.id, sessionToken);
 
     expect(result).toBeNull();
+  });
+});
+
+describe('UserService.isSessionActive', () => {
+  it('accepts a live session and rejects it once revoked', async () => {
+    const { userService } = await buildRoomService();
+    const { user, sessionId } = await registerAlice(userService);
+
+    await expect(userService.isSessionActive(user.id, sessionId)).resolves.toBe(true);
+
+    await userService.revokeSession(user.id, sessionId);
+
+    await expect(userService.isSessionActive(user.id, sessionId)).resolves.toBe(false);
+  });
+
+  it('rejects a session id that belongs to a different user', async () => {
+    const { userService } = await buildRoomService();
+    const { sessionId } = await registerAlice(userService);
+    const { user: bob } = await userService.registerAccount({ nickname: 'Bob', avatar: 0, password: PASSWORD });
+
+    await expect(userService.isSessionActive(bob.id, sessionId)).resolves.toBe(false);
   });
 });
 
@@ -389,7 +408,7 @@ describe('UserService.updateProfile', () => {
   it('rejects renaming to a nickname already used by someone else', async () => {
     const { userService } = await buildRoomService();
     const { user } = await registerAlice(userService);
-    await userService.registerAccount({ nickname: 'Bob', avatar: 0, password: PASSWORD, socketId: 'socket-bob' });
+    await userService.registerAccount({ nickname: 'Bob', avatar: 0, password: PASSWORD });
 
     await expect(userService.updateProfile(user.id, { nickname: 'Bob', avatar: 0 })).rejects.toMatchObject({ code: 'user.nicknameTaken', message: 'Esse nickname já está em uso.' });
   });
@@ -505,7 +524,6 @@ describe('UserService.publishE2eKeys / getPublicKeys', () => {
       nickname: 'Bob',
       avatar: 0,
       password: PASSWORD,
-      socketId: 'socket-bob',
     });
 
     await userService.publishE2eKeys(alice.id, { publicKey: 'pub-key-alice' });
@@ -520,7 +538,7 @@ describe('UserService.getUsersByIds', () => {
   it('returns every existing user keyed by id and keeps getPublicKeys in request order', async () => {
     const { userService } = await buildRoomService();
     const { user: alice } = await registerAlice(userService);
-    const { user: bob } = await userService.registerAccount({ nickname: 'Bob', avatar: 2, password: PASSWORD, socketId: 'socket-bob' });
+    const { user: bob } = await userService.registerAccount({ nickname: 'Bob', avatar: 2, password: PASSWORD });
     await userService.publishE2eKeys(alice.id, { publicKey: 'pub-key-alice' });
     await userService.publishE2eKeys(bob.id, { publicKey: 'pub-key-bob' });
 

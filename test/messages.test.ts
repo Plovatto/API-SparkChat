@@ -11,7 +11,6 @@ beforeAll(async () => {
     nickname: 'Uploader',
     avatar: 0,
     password: 'correct-horse-battery-staple',
-    socketId: 'socket-uploader',
   });
   authHeader = `Bearer ${user.id}:${sessionToken}`;
 });

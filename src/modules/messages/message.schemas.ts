@@ -41,6 +41,9 @@ const messageReplySnapshotSchema = z.object({
   fileMeta: messageFileMetaSchema.nullable(),
   caption: z.string().nullable(),
   sender: messageSenderSchema,
+  deleted: z.boolean().openapi({
+    description: 'true quando a mensagem original foi apagada para todos; nesse caso content fica vazio e duration, fileMeta e caption ficam nulos',
+  }),
 });
 
 export const messageViewSchema = z.object({

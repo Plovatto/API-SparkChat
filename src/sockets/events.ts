@@ -15,6 +15,8 @@ export interface SocketData {
   authMethod?: AuthMethod;
   sessionId?: string;
   locale?: Locale;
+  hidden?: boolean;
+  sessionRevoked?: boolean;
 }
 
 export type AppServer = Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>;
