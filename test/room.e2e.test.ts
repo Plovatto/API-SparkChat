@@ -6,7 +6,6 @@ async function createUser(userService: Awaited<ReturnType<typeof buildRoomServic
     nickname,
     avatar: 0,
     password: 'correct-horse-battery-staple',
-    socketId: `socket-${nickname}`,
   });
   return user;
 }

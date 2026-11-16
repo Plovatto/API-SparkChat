@@ -29,7 +29,6 @@ describe('POST /api/users/login', () => {
       nickname: 'RouteTest',
       avatar: 0,
       password: PASSWORD,
-      socketId: 'socket-1',
     });
 
     const response = await request(app).post('/api/users/login').send({ nickname: 'RouteTest', password: PASSWORD });
@@ -50,7 +49,7 @@ describe('POST /api/users/login', () => {
 
   it('returns 429 after too many failed attempts for the same nickname', async () => {
     const { app, userService } = await buildTestApp();
-    await userService.registerAccount({ nickname: 'RateLimited', avatar: 0, password: PASSWORD, socketId: 'socket-1' });
+    await userService.registerAccount({ nickname: 'RateLimited', avatar: 0, password: PASSWORD });
 
     for (let i = 0; i < 5; i += 1) {
       await request(app).post('/api/users/login').send({ nickname: 'RateLimited', password: 'wrong-password' });
@@ -90,7 +89,6 @@ describe('POST /api/users/login-with-keyfile', () => {
       nickname: 'KeyfileUser',
       avatar: 0,
       password: PASSWORD,
-      socketId: 'socket-1',
     });
 
     const response = await request(app)
@@ -184,7 +182,7 @@ describe('GET /api/users/nickname-availability', () => {
 
   it('returns taken for a nickname already in use, regardless of case', async () => {
     const { app, userService } = await buildTestApp();
-    await userService.registerAccount({ nickname: 'TakenNick', avatar: 0, password: PASSWORD, socketId: 'socket-1' });
+    await userService.registerAccount({ nickname: 'TakenNick', avatar: 0, password: PASSWORD });
 
     const response = await request(app).get('/api/users/nickname-availability').query({ nickname: 'takennick' });
 

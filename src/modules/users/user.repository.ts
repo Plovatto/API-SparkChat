@@ -5,7 +5,6 @@ import type { UserRecord } from './user.types.js';
 
 const MAX_IN_CLAUSE_IDS = 500;
 
-const socketIdsByUserId = new Map<string, string>();
 const onlineUserIds = new Set<string>();
 const profileByUserId = new Map<string, { nickname: string; avatar: number }>();
 
@@ -31,7 +30,6 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
     avatar: row.avatar,
     passwordHash: row.passwordHash,
     recoveryTokenHash: row.recoveryTokenHash,
-    socketId: socketIdsByUserId.get(row.id) ?? '',
     status: row.status,
     statusText: row.statusText ?? null,
     createdAt: row.createdAt,
@@ -77,7 +75,6 @@ export class UserRepository {
   }
 
   async insert(user: UserRecord): Promise<UserRecord> {
-    socketIdsByUserId.set(user.id, user.socketId);
     cacheProfile(user);
 
     await this.db.insert(users).values({
@@ -103,11 +100,7 @@ export class UserRepository {
   }
 
   async update(id: string, patch: Partial<UserRecord>): Promise<UserRecord | null> {
-    if (patch.socketId !== undefined) {
-      socketIdsByUserId.set(id, patch.socketId);
-    }
-
-    const { socketId: _socketId, theme, ...rest } = patch;
+    const { theme, ...rest } = patch;
 
     const columns: Partial<typeof users.$inferInsert> = { ...rest };
     if (theme !== undefined) {

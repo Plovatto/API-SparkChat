@@ -7,7 +7,6 @@ export interface UserRecord {
   avatar: number;
   passwordHash: string;
   recoveryTokenHash: string;
-  socketId: string;
   status: UserStatus;
   statusText: string | null;
   createdAt: string;
