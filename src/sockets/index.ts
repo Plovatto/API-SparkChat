@@ -3,6 +3,7 @@ import { registerClientEvents } from '../docs/socket-registry.js';
 import type { AiService } from '../modules/ai/index.js';
 import {
   registerMessageSocketHandlers,
+  releaseSocketActivity,
   type MessageRateLimiter,
   type MessageService,
   type RecordingService,
@@ -12,6 +13,7 @@ import {
 import { registerRoomSocketHandlers, type RoomKeyRepository, type RoomService } from '../modules/rooms/index.js';
 import { registerUserSocketHandlers, type LoginRateLimiter, type UserService } from '../modules/users/index.js';
 import type { AppServer, AppSocket } from './events.js';
+import { guardSessionRecovery, rejectRevokedRecovery } from './session-recovery.js';
 import { handshakeAuthSchema, resolveHandshakeLocale } from './socket-locale.js';
 
 registerClientEvents('connection', {
@@ -34,15 +36,30 @@ export interface SocketDeps {
 export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
   const { aiService } = deps;
 
+  guardSessionRecovery(io, (userId, sessionId) => deps.userService.isSessionActive(userId, sessionId));
+
   io.on('connection', (socket: AppSocket) => {
     socket.data.locale = resolveHandshakeLocale(socket.handshake.auth);
-    logger.info({ socketId: socket.id }, 'Client connected');
+    logger.info({ socketId: socket.id, recovered: socket.recovered }, 'Client connected');
+
+    if (rejectRevokedRecovery(socket)) {
+      return;
+    }
+
+    const activityServices = {
+      typingService: deps.typingService,
+      recordingService: deps.recordingService,
+      presenceService: deps.presenceService,
+    };
 
     registerUserSocketHandlers(io, socket, {
       userService: deps.userService,
       roomService: deps.roomService,
       messageService: deps.messageService,
       loginRateLimiter: deps.loginRateLimiter,
+      onSessionReleased: ({ socket: released, userId }) => {
+        releaseSocketActivity(io, released, activityServices, userId);
+      },
     });
 
     registerRoomSocketHandlers(io, socket, {
@@ -62,9 +79,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       messageService: deps.messageService,
       roomService: deps.roomService,
       userService: deps.userService,
-      typingService: deps.typingService,
-      recordingService: deps.recordingService,
-      presenceService: deps.presenceService,
+      ...activityServices,
       messageRateLimiter: deps.messageRateLimiter,
       onMessageSent: ({ io: server, room, message, locale }) => {
         if (message.type !== 'system' && aiService.isAssistantRoom(room)) {

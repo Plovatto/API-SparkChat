@@ -38,6 +38,15 @@ export class UserSessionRepository {
     return age <= maxAgeMs ? record : null;
   }
 
+  async findByIdForUser(userId: string, sessionId: string): Promise<SessionRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(sessions)
+      .where(and(eq(sessions.id, sessionId), eq(sessions.userId, userId)));
+
+    return row ? toRecord(row) : null;
+  }
+
   async touch(id: string): Promise<void> {
     await this.db.update(sessions).set({ lastUsedAt: new Date().toISOString() }).where(eq(sessions.id, id));
   }
