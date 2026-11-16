@@ -1,3 +1,4 @@
+import { fitLinkPreviewForEncryption } from './link-preview.limits.js';
 import type { LinkPreviewRepository } from './link-preview.repository.js';
 import type { LinkPreviewCacheRecord, LinkPreviewFetcher, LinkPreviewMetadata } from './link-preview.types.js';
 
@@ -13,13 +14,13 @@ function toMetadata(record: LinkPreviewCacheRecord): LinkPreviewMetadata | null 
   if (record.status === 'error' || !record.title) {
     return null;
   }
-  return {
+  return fitLinkPreviewForEncryption({
     url: record.url,
     title: record.title,
     description: record.description,
     imageUrl: record.imageUrl,
     siteName: record.siteName,
-  };
+  });
 }
 
 export class LinkPreviewService {
@@ -34,7 +35,8 @@ export class LinkPreviewService {
       return toMetadata(cached);
     }
 
-    const metadata = await this.fetcher.fetchMetadata(url).catch(() => null);
+    const fetched = await this.fetcher.fetchMetadata(url).catch(() => null);
+    const metadata = fetched ? fitLinkPreviewForEncryption(fetched) : null;
     const fetchedAt = new Date().toISOString();
 
     if (!metadata) {

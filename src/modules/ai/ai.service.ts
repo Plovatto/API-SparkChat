@@ -35,7 +35,6 @@ function delay(ms: number): Promise<void> {
 
 interface PendingBatch {
   messageIds: string[];
-  senderId: string;
   locale: Locale;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -81,6 +80,12 @@ export class AiService {
   handleIncomingMessage(io: AppServer, room: RoomRecord, message: MessageRecord, locale: Locale): void {
     void this.markAsReadByAssistant(io, room, [message.id]);
 
+    if (this.usageLimiter.isBlocked(message.senderId)) {
+      void this.sendErrorMessage(io, room.id, 'ai.dailyLimitReached');
+      return;
+    }
+    this.usageLimiter.registerUsage(message.senderId);
+
     const existing = this.pendingBatchByRoom.get(room.id);
 
     if (existing) {
@@ -91,15 +96,9 @@ export class AiService {
       return;
     }
 
-    if (this.usageLimiter.isBlocked(message.senderId)) {
-      void this.sendErrorMessage(io, room.id, 'ai.dailyLimitReached');
-      return;
-    }
-
     this.broadcastTyping(io, room.id, true);
     this.pendingBatchByRoom.set(room.id, {
       messageIds: [message.id],
-      senderId: message.senderId,
       locale,
       timer: setTimeout(() => this.flushBatch(io, room), AI_BATCH_DEBOUNCE_MS),
     });
@@ -145,7 +144,6 @@ export class AiService {
         viewingUserIds: this.presenceService.getViewers(room.id),
       });
 
-      this.usageLimiter.registerUsage(batch.senderId);
       io.to(room.id).emit('message:new', await this.messageService.toView(reply));
     } catch (error) {
       logger.error({ err: error, roomId: room.id }, 'Falha ao gerar resposta da IA');

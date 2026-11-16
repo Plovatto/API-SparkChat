@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { encryptedLength, LINK_PREVIEW_ENCRYPTED_LIMITS } from '@/modules/link-preview/index.js';
 import { httpLinkPreviewFetcher } from '@/modules/link-preview/link-preview.fetcher.js';
 
 function htmlResponse(html: string, contentType = 'text/html; charset=utf-8'): Response {
@@ -77,5 +78,24 @@ describe('httpLinkPreviewFetcher', () => {
       imageUrl: 'https://93.184.216.34/photos/cat.jpg',
       siteName: '93.184.216.34',
     });
+  });
+
+  it('truncates long multibyte metadata so it still fits once the client encrypts it', async () => {
+    const html = `<!doctype html><html><head>
+      <meta property="og:title" content="${'🎉'.repeat(3000)}" />
+      <meta property="og:description" content="${'ção'.repeat(5000)}" />
+      <meta property="og:site_name" content="${'日本'.repeat(1000)}" />
+      <meta property="og:image" content="/${'i'.repeat(5000)}.jpg" />
+    </head></html>`;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(html)));
+
+    const result = await httpLinkPreviewFetcher.fetchMetadata('https://93.184.216.34/long');
+
+    expect(result).not.toBeNull();
+    expect(encryptedLength(result?.title ?? '')).toBeLessThanOrEqual(LINK_PREVIEW_ENCRYPTED_LIMITS.title);
+    expect(encryptedLength(result?.description ?? '')).toBeLessThanOrEqual(LINK_PREVIEW_ENCRYPTED_LIMITS.description);
+    expect(encryptedLength(result?.siteName ?? '')).toBeLessThanOrEqual(LINK_PREVIEW_ENCRYPTED_LIMITS.siteName);
+    expect(result?.imageUrl).toBeNull();
+    expect(result?.url).toBe('https://93.184.216.34/long');
   });
 });

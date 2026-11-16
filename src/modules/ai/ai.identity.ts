@@ -46,7 +46,6 @@ export async function ensureAssistantUser(userRepository: UserRepository, identi
       avatar: ASSISTANT_AVATAR,
       passwordHash: await hashPassword(randomUUID()),
       recoveryTokenHash: hashToken(randomUUID()),
-      socketId: '',
       status: 'online',
       statusText: ASSISTANT_STATUS_TEXT,
       createdAt: now,
