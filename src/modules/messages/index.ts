@@ -3,7 +3,7 @@ export { MessageRateLimiter } from './message.rate-limiter.js';
 export { MessageRepository } from './message.repository.js';
 export { createMessageRouter } from './message.routes.js';
 export { MessageService } from './message.service.js';
-export { INITIAL_MESSAGES_LIMIT, registerMessageSocketHandlers } from './message.socket.js';
+export { INITIAL_MESSAGES_LIMIT, registerMessageSocketHandlers, releaseSocketActivity } from './message.socket.js';
 export { systemEvent } from './message.system-events.js';
 export type { SystemEvent, SystemEventType } from './message.system-events.js';
 export type { MessageRecord, MessageView } from './message.types.js';

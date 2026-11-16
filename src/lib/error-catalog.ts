@@ -47,6 +47,7 @@ export const ERROR_CATALOG = {
   'message.deleteForbidden': () => 'Você não tem permissão para deletar esta mensagem.',
   'message.invalidMedia': () => 'Conteúdo de mídia inválido.',
   'message.blocked': () => 'Você não pode enviar mensagens nesta conversa devido a bloqueios.',
+  'e2e.lookupTooLarge': ({ maxItems }: { maxItems: number }) => `Consulta de chaves com itens demais. Envie no máximo ${maxItems} por vez.`,
   'upload.missingFile': ({ kind }: { kind: UploadKind }) => UPLOAD_MISSING_FILE_MESSAGES[kind],
   'upload.tooLarge': ({ kind, maxSize }: { kind: UploadKind; maxSize: string }) =>
     `O ${UPLOAD_KIND_LABELS[kind]} excede o tamanho máximo permitido de ${maxSize}.`,

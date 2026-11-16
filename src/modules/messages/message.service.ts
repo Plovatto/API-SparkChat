@@ -33,8 +33,26 @@ export interface SendMessageInput {
   linkPreview?: MessageLinkPreview | null | undefined;
 }
 
+export interface DeleteMessageResult {
+  message: MessageRecord;
+  affectedReplies: MessageRecord[];
+}
+
 const SYSTEM_SENDER_ID = 'system';
 const SYSTEM_SENDER: MessageSender = { id: SYSTEM_SENDER_ID, nickname: 'Sistema', avatar: null };
+
+function toDeletedReplySnapshot(snapshot: MessageReplySnapshot): MessageReplySnapshot {
+  return {
+    id: snapshot.id,
+    content: '',
+    type: snapshot.type,
+    duration: null,
+    fileMeta: null,
+    caption: null,
+    sender: snapshot.sender,
+    deleted: true,
+  };
+}
 
 export class MessageService {
   constructor(
@@ -63,7 +81,7 @@ export class MessageService {
       deliveredTo,
       readBy,
       playedBy: [],
-      replyTo: input.replyToMessageId ? await this.buildReplySnapshot(input.replyToMessageId) : null,
+      replyTo: input.replyToMessageId ? await this.buildReplySnapshot(input.replyToMessageId, input.roomId) : null,
       mentionedUserIds: input.mentionedUserIds ?? [],
       fileMeta: input.fileMeta ?? null,
       caption: input.type && input.type !== 'text' ? (input.caption ?? null) : null,
@@ -126,7 +144,11 @@ export class MessageService {
     return this.repository.countUnread(roomId, userId);
   }
 
-  async deleteMessage(messageId: string, requesterId: string): Promise<MessageRecord> {
+  getMessage(messageId: string): Promise<MessageRecord | null> {
+    return this.repository.findById(messageId);
+  }
+
+  async deleteMessage(messageId: string, requesterId: string): Promise<DeleteMessageResult> {
     const message = await this.repository.findById(messageId);
     if (!message) {
       throw AppError.of('message.notFound');
@@ -136,14 +158,37 @@ export class MessageService {
       throw AppError.of('message.deleteForbidden');
     }
 
-    const updated = await this.repository.update(messageId, { deletedForEveryone: true, content: '' });
+    if (message.deletedForEveryone) {
+      return { message, affectedReplies: [] };
+    }
+
+    const updated = await this.repository.update(messageId, {
+      deletedForEveryone: true,
+      content: '',
+      fileMeta: null,
+      caption: null,
+      linkPreview: null,
+      replyTo: null,
+    });
     if (!updated) {
       throw AppError.of('message.notFound');
     }
 
     await this.deleteAttachmentObjects(message);
+    const affectedReplies = await this.neutralizeRepliesTo(message.roomId, messageId);
 
-    return updated;
+    return { message: updated, affectedReplies };
+  }
+
+  private async neutralizeRepliesTo(roomId: string, messageId: string): Promise<MessageRecord[]> {
+    const replies = await this.repository.findRepliesTo(roomId, messageId);
+    const affected = replies
+      .filter((reply): reply is MessageRecord & { replyTo: MessageReplySnapshot } => Boolean(reply.replyTo && !reply.replyTo.deleted))
+      .map((reply) => ({ ...reply, replyTo: toDeletedReplySnapshot(reply.replyTo) }));
+
+    await this.repository.updateMany(affected.map((reply) => ({ id: reply.id, patch: { replyTo: reply.replyTo } })));
+
+    return affected;
   }
 
   private async deleteAttachmentObjects(message: MessageRecord): Promise<void> {
@@ -260,7 +305,9 @@ export class MessageService {
     ).length;
   }
 
-  async toView(message: MessageRecord): Promise<MessageView> {
+  async toView(message: MessageRecord, deletedReplyIds?: ReadonlySet<string>): Promise<MessageView> {
+    const resolvedDeletedReplyIds = deletedReplyIds ?? (await this.findDeletedReplyIds([message]));
+
     return {
       id: message.id,
       roomId: message.roomId,
@@ -274,7 +321,7 @@ export class MessageService {
       deliveredTo: message.deliveredTo,
       readBy: message.readBy,
       playedBy: message.playedBy,
-      replyTo: message.replyTo,
+      replyTo: this.resolveReplyView(message, resolvedDeletedReplyIds),
       mentionedUserIds: message.mentionedUserIds,
       fileMeta: message.deletedForEveryone ? null : message.fileMeta,
       caption: message.deletedForEveryone ? null : message.caption,
@@ -284,8 +331,34 @@ export class MessageService {
   }
 
   async toViews(messages: MessageRecord[]): Promise<MessageView[]> {
-    await this.warmSenderProfiles(messages.map((message) => message.senderId));
-    return Promise.all(messages.map((message) => this.toView(message)));
+    const [deletedReplyIds] = await Promise.all([
+      this.findDeletedReplyIds(messages),
+      this.warmSenderProfiles(messages.map((message) => message.senderId)),
+    ]);
+    return Promise.all(messages.map((message) => this.toView(message, deletedReplyIds)));
+  }
+
+  private resolveReplyView(message: MessageRecord, deletedReplyIds: ReadonlySet<string>): MessageReplySnapshot | null {
+    if (message.deletedForEveryone || !message.replyTo) {
+      return null;
+    }
+
+    if (!message.replyTo.deleted && deletedReplyIds.has(message.replyTo.id)) {
+      return toDeletedReplySnapshot(message.replyTo);
+    }
+
+    return message.replyTo;
+  }
+
+  private findDeletedReplyIds(messages: MessageRecord[]): Promise<Set<string>> {
+    const replyIds: string[] = [];
+    for (const message of messages) {
+      if (!message.deletedForEveryone && message.replyTo && !message.replyTo.deleted) {
+        replyIds.push(message.replyTo.id);
+      }
+    }
+
+    return replyIds.length > 0 ? this.repository.findDeletedIds(replyIds) : Promise.resolve(new Set());
   }
 
   async markAudioPlayed(messageId: string, userId: string): Promise<MessageRecord | null> {
@@ -314,13 +387,13 @@ export class MessageService {
     return participantIds.filter((id) => id !== senderId && this.userService.isOnline(id));
   }
 
-  private async buildReplySnapshot(messageId: string): Promise<MessageReplySnapshot | null> {
+  private async buildReplySnapshot(messageId: string, roomId: string): Promise<MessageReplySnapshot | null> {
     const original = await this.repository.findById(messageId);
-    if (!original) {
+    if (!original || original.roomId !== roomId) {
       return null;
     }
 
-    return {
+    const snapshot: MessageReplySnapshot = {
       id: original.id,
       content: original.content,
       type: original.type,
@@ -328,7 +401,10 @@ export class MessageService {
       fileMeta: original.fileMeta,
       caption: original.caption,
       sender: await this.resolveSender(original.senderId),
+      deleted: false,
     };
+
+    return original.deletedForEveryone ? toDeletedReplySnapshot(snapshot) : snapshot;
   }
 
   private async resolveSender(senderId: string): Promise<MessageSender> {

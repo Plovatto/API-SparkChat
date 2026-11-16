@@ -9,7 +9,6 @@ async function createUser(userService: Services['userService'], nickname: string
     nickname,
     avatar: 0,
     password: 'correct-horse-battery-staple',
-    socketId: `socket-${nickname}`,
   });
   return user;
 }

@@ -29,7 +29,7 @@ function normalizeReplySnapshot(snapshot: MessageReplySnapshot | null | undefine
   if (!snapshot) {
     return null;
   }
-  return { ...snapshot, caption: snapshot.caption ?? null };
+  return { ...snapshot, caption: snapshot.caption ?? null, deleted: snapshot.deleted === true };
 }
 
 function toRecord(row: MessageRow): MessageRecord {
@@ -137,6 +137,34 @@ export class MessageRepository {
     }
 
     await this.db.batch(statements as [(typeof statements)[number], ...(typeof statements)[number][]]);
+  }
+
+  async findDeletedIds(ids: string[]): Promise<Set<string>> {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) {
+      return new Set();
+    }
+
+    const pages = await Promise.all(
+      chunk(unique, MAX_IN_CLAUSE_IDS).map((batch) =>
+        this.db
+          .select({ id: messages.id })
+          .from(messages)
+          .where(and(inArray(messages.id, batch), eq(messages.deletedForEveryone, true))),
+      ),
+    );
+
+    return new Set(pages.flat().map((row) => row.id));
+  }
+
+  async findRepliesTo(roomId: string, messageId: string): Promise<MessageRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.roomId, roomId), sql`json_extract(${messages.replyToSnapshot}, '$.id') = ${messageId}`))
+      .orderBy(asc(messages.timestamp));
+
+    return rows.map(toRecord);
   }
 
   async findByRoomId(roomId: string): Promise<MessageRecord[]> {

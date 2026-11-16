@@ -8,6 +8,8 @@ import { roomIdPayloadSchema } from '../../sockets/payloads.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
 import { socketLocale } from '../../sockets/socket-locale.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
+import { emitToUser, isUserRoom, joinUserSocketsToRoom, listUserSockets, userRoom } from '../../sockets/user-sockets.js';
+import { LINK_PREVIEW_ENCRYPTED_LIMITS } from '../link-preview/index.js';
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
 import { parseMentionedUserIds } from './message.mentions.js';
@@ -17,6 +19,13 @@ import type { MessageService } from './message.service.js';
 import type { MessageRecord } from './message.types.js';
 import type { RecordingService } from './recording.service.js';
 import type { RoomPresenceService } from './room-presence.service.js';
+import {
+  isActivityHeldByOtherSocket,
+  markSocketActivity,
+  releaseAllSocketActivity,
+  unmarkSocketActivity,
+  type SocketActivityKind,
+} from './socket-activity.js';
 import type { TypingService } from './typing.service.js';
 
 export type OnMessageSentHook = (context: { io: AppServer; room: RoomRecord; message: MessageRecord; locale: Locale }) => void;
@@ -34,7 +43,14 @@ export interface MessageSocketDeps {
 
 export const INITIAL_MESSAGES_LIMIT = 20;
 
-type ActivityEvent = 'typing:update' | 'recording:update';
+export type MessageActivityServices = Pick<MessageSocketDeps, 'typingService' | 'recordingService' | 'presenceService'>;
+
+type ActivityKind = Exclude<SocketActivityKind, 'viewing'>;
+
+const activityEvents = {
+  typing: 'typing:update',
+  recording: 'recording:update',
+} as const satisfies Record<ActivityKind, string>;
 
 const fileMetaSchema = z.object({
   name: z.string().trim().min(1).max(500),
@@ -44,12 +60,14 @@ const fileMetaSchema = z.object({
 });
 
 const linkPreviewSchema = z.object({
-  url: z.string().trim().min(1).max(4000),
-  title: z.string().trim().min(1).max(4000),
-  description: z.string().trim().max(8000).nullable(),
-  imageUrl: z.string().trim().max(4000).nullable(),
-  siteName: z.string().trim().max(1000).nullable(),
+  url: z.string().trim().min(1).max(LINK_PREVIEW_ENCRYPTED_LIMITS.url),
+  title: z.string().trim().min(1).max(LINK_PREVIEW_ENCRYPTED_LIMITS.title),
+  description: z.string().trim().max(LINK_PREVIEW_ENCRYPTED_LIMITS.description).nullable(),
+  imageUrl: z.string().trim().max(LINK_PREVIEW_ENCRYPTED_LIMITS.imageUrl).nullable(),
+  siteName: z.string().trim().max(LINK_PREVIEW_ENCRYPTED_LIMITS.siteName).nullable(),
 });
+
+const clientTempIdSchema = z.string().trim().min(1);
 
 const sendMessagePayloadSchema = z
   .object({
@@ -58,7 +76,7 @@ const sendMessagePayloadSchema = z
     type: z.enum(['text', 'image', 'audio', 'file']).default('text'),
     duration: z.number().int().positive().optional(),
     replyToMessageId: z.string().trim().min(1).optional(),
-    clientTempId: z.string().trim().min(1).optional(),
+    clientTempId: clientTempIdSchema.optional(),
     fileMeta: fileMetaSchema.optional(),
     mentionedUserIds: z.array(z.string().trim().min(1)).max(50).optional(),
     caption: z.string().trim().max(3000).optional(),
@@ -152,19 +170,19 @@ export function registerMessageSocketHandlers(io: AppServer, socket: AppSocket, 
   });
 
   socket.on('typing:start', (payload) => {
-    handleActivityChange(socket, payload, 'typing:update', (roomId, userId) => typingService.startTyping(roomId, userId));
+    handleActivityChange(io, socket, payload, 'typing', 'start', (roomId, userId) => typingService.startTyping(roomId, userId));
   });
 
   socket.on('typing:stop', (payload) => {
-    handleActivityChange(socket, payload, 'typing:update', (roomId, userId) => typingService.stopTyping(roomId, userId));
+    handleActivityChange(io, socket, payload, 'typing', 'stop', (roomId, userId) => typingService.stopTyping(roomId, userId));
   });
 
   socket.on('recording:start', (payload) => {
-    handleActivityChange(socket, payload, 'recording:update', (roomId, userId) => recordingService.startRecording(roomId, userId));
+    handleActivityChange(io, socket, payload, 'recording', 'start', (roomId, userId) => recordingService.startRecording(roomId, userId));
   });
 
   socket.on('recording:stop', (payload) => {
-    handleActivityChange(socket, payload, 'recording:update', (roomId, userId) => recordingService.stopRecording(roomId, userId));
+    handleActivityChange(io, socket, payload, 'recording', 'stop', (roomId, userId) => recordingService.stopRecording(roomId, userId));
   });
 
   socket.on('audio:played', (payload) => {
@@ -172,11 +190,11 @@ export function registerMessageSocketHandlers(io: AppServer, socket: AppSocket, 
   });
 
   socket.on('room:view-start', (payload) => {
-    void handleRoomView(socket, deps, payload, 'view');
+    void handleRoomView(io, socket, deps, payload, 'view');
   });
 
   socket.on('room:view-stop', (payload) => {
-    void handleRoomView(socket, deps, payload, 'leave');
+    void handleRoomView(io, socket, deps, payload, 'leave');
   });
 
   socket.on('disconnect', () => {
@@ -185,13 +203,33 @@ export function registerMessageSocketHandlers(io: AppServer, socket: AppSocket, 
       return;
     }
 
-    broadcastActivityRemoval(io, 'typing:update', typingService.removeUserEverywhere(userId));
-    broadcastActivityRemoval(io, 'recording:update', recordingService.removeUserEverywhere(userId));
-    presenceService.removeUserEverywhere(userId);
+    releaseSocketActivity(io, socket, { typingService, recordingService, presenceService }, userId);
   });
 }
 
-async function handleRoomView(socket: AppSocket, deps: MessageSocketDeps, payload: unknown, action: 'view' | 'leave'): Promise<void> {
+export function releaseSocketActivity(io: AppServer, socket: AppSocket, services: MessageActivityServices, userId: string): void {
+  const released = releaseAllSocketActivity(io, socket, userId);
+
+  for (const roomId of released.typing) {
+    io.to(roomId).emit(activityEvents.typing, { roomId, users: services.typingService.stopTyping(roomId, userId) });
+  }
+
+  for (const roomId of released.recording) {
+    io.to(roomId).emit(activityEvents.recording, { roomId, users: services.recordingService.stopRecording(roomId, userId) });
+  }
+
+  for (const roomId of released.viewing) {
+    services.presenceService.leave(roomId, userId);
+  }
+}
+
+async function handleRoomView(
+  io: AppServer,
+  socket: AppSocket,
+  deps: MessageSocketDeps,
+  payload: unknown,
+  action: 'view' | 'leave',
+): Promise<void> {
   const userId = socket.data.userId;
   if (!userId) {
     return;
@@ -208,24 +246,43 @@ async function handleRoomView(socket: AppSocket, deps: MessageSocketDeps, payloa
     return;
   }
 
+  if (socket.disconnected || socket.data.userId !== userId) {
+    return;
+  }
+
   if (action === 'view') {
+    markSocketActivity(socket, 'viewing', roomId);
     deps.presenceService.view(roomId, userId);
-  } else {
+    return;
+  }
+
+  unmarkSocketActivity(socket, 'viewing', roomId);
+  if (!isActivityHeldByOtherSocket(io, socket, userId, 'viewing', roomId)) {
     deps.presenceService.leave(roomId, userId);
   }
 }
 
+export function readClientTempId(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null) {
+    return undefined;
+  }
+
+  const parsed = clientTempIdSchema.safeParse((payload as { clientTempId?: unknown }).clientTempId);
+  return parsed.success ? parsed.data : undefined;
+}
+
 async function handleSendMessage(io: AppServer, socket: AppSocket, deps: MessageSocketDeps, payload: unknown): Promise<void> {
-  const userId = requireSocketUserId(socket);
+  const clientTempId = readClientTempId(payload);
+  const userId = socket.data.userId;
   if (!userId) {
+    socket.emit('error', { ...errorPayload('auth.unauthenticated'), clientTempId });
     return;
   }
 
-  const { messageService, roomService, userService, presenceService, messageRateLimiter } = deps;
-  let clientTempId: string | undefined;
+  const { messageService, roomService, presenceService, messageRateLimiter } = deps;
 
   if (messageRateLimiter.isBlocked(userId)) {
-    socket.emit('error', errorPayload('rateLimit.messages'));
+    socket.emit('error', { ...errorPayload('rateLimit.messages'), clientTempId });
     return;
   }
   messageRateLimiter.registerSend(userId);
@@ -243,7 +300,6 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       linkPreview,
       mentionedUserIds: clientMentionedUserIds,
     } = parsed;
-    clientTempId = parsed.clientTempId;
 
     if (type !== 'text' && !isUploadedMediaUrl(content)) {
       socket.emit('error', { ...errorPayload('message.invalidMedia'), clientTempId });
@@ -300,23 +356,19 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
     io.to(roomId).emit('message:new', clientTempId ? { ...view, clientTempId } : view);
     deps.onMessageSent?.({ io, room, message, locale: socketLocale(socket) });
 
-    if (newlyVisibleUserIds.length > 0) {
-      const recipients = await userService.getUsersByIds(newlyVisibleUserIds);
-
-      for (const newlyVisibleUserId of newlyVisibleUserIds) {
-        const recipient = recipients.get(newlyVisibleUserId);
-        if (!recipient?.socketId) {
-          continue;
-        }
-
-        const after = roomService.getVisibilityCutoff(updatedRoom, newlyVisibleUserId);
-        const [summary, { messages: page }] = await Promise.all([
-          roomService.buildSummary(updatedRoom, newlyVisibleUserId),
-          messageService.getRoomMessagesPage(roomId, { after, limit: INITIAL_MESSAGES_LIMIT }),
-        ]);
-        const messages = await messageService.toViews(page);
-        io.to(recipient.socketId).emit('room:new', { room: summary, messages });
+    for (const newlyVisibleUserId of newlyVisibleUserIds) {
+      if (listUserSockets(io, newlyVisibleUserId).length === 0) {
+        continue;
       }
+
+      const after = roomService.getVisibilityCutoff(updatedRoom, newlyVisibleUserId);
+      const [summary, { messages: page }] = await Promise.all([
+        roomService.buildSummary(updatedRoom, newlyVisibleUserId),
+        messageService.getRoomMessagesPage(roomId, { after, limit: INITIAL_MESSAGES_LIMIT }),
+      ]);
+      const messages = await messageService.toViews(page);
+      await joinUserSocketsToRoom(io, newlyVisibleUserId, roomId);
+      emitToUser(io, newlyVisibleUserId).emit('room:new', { room: summary, messages });
     }
   } catch (error) {
     socket.emit('error', { ...extractErrorPayload(error), clientTempId });
@@ -357,11 +409,34 @@ async function handleDeleteMessage(io: AppServer, socket: AppSocket, deps: Messa
 
   try {
     const { messageId } = messageIdPayloadSchema.parse(payload);
-    const updated = await deps.messageService.deleteMessage(messageId, userId);
+    const { message: updated, affectedReplies } = await deps.messageService.deleteMessage(messageId, userId);
     io.to(updated.roomId).emit('message:deleted', { messageId, roomId: updated.roomId });
+
+    if (affectedReplies.length === 0) {
+      return;
+    }
+
+    const [room, views] = await Promise.all([
+      deps.roomService.getRoomById(updated.roomId),
+      deps.messageService.toViews(affectedReplies),
+    ]);
+    if (!room) {
+      return;
+    }
+
+    for (const view of views) {
+      const hiddenFrom = room.participants
+        .filter((participantId) => !isWithinVisibility(deps.roomService.getVisibilityCutoff(room, participantId), view.timestamp))
+        .map(userRoom);
+      io.to(updated.roomId).except(hiddenFrom).emit('message:updated', view);
+    }
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
+}
+
+function isWithinVisibility(cutoff: string | undefined, timestamp: string): boolean {
+  return cutoff === undefined || timestamp > cutoff;
 }
 
 async function handleAudioPlayed(io: AppServer, socket: AppSocket, deps: MessageSocketDeps, payload: unknown): Promise<void> {
@@ -375,13 +450,18 @@ async function handleAudioPlayed(io: AppServer, socket: AppSocket, deps: Message
     return;
   }
 
-  const updated = await deps.messageService.markAudioPlayed(parsed.data.messageId, userId);
-  if (!updated) {
+  const message = await deps.messageService.getMessage(parsed.data.messageId);
+  if (!message) {
     return;
   }
 
-  const room = await deps.roomService.getRoomById(updated.roomId);
+  const room = await deps.roomService.getRoomById(message.roomId);
   if (!room || !deps.roomService.isParticipant(room, userId)) {
+    return;
+  }
+
+  const updated = await deps.messageService.markAudioPlayed(message.id, userId);
+  if (!updated) {
     return;
   }
 
@@ -390,9 +470,11 @@ async function handleAudioPlayed(io: AppServer, socket: AppSocket, deps: Message
 }
 
 function handleActivityChange(
+  io: AppServer,
   socket: AppSocket,
   payload: unknown,
-  event: ActivityEvent,
+  kind: ActivityKind,
+  action: 'start' | 'stop',
   apply: (roomId: string, userId: string) => string[],
 ): void {
   const userId = socket.data.userId;
@@ -406,14 +488,21 @@ function handleActivityChange(
   }
 
   const { roomId } = parsed.data;
-  const users = apply(roomId, userId);
-  socket.to(roomId).emit(event, { roomId, users });
-}
-
-function broadcastActivityRemoval(io: AppServer, event: ActivityEvent, updates: { roomId: string; users: string[] }[]): void {
-  for (const { roomId, users } of updates) {
-    io.to(roomId).emit(event, { roomId, users });
+  if (isUserRoom(roomId) || !socket.rooms.has(roomId)) {
+    return;
   }
+
+  if (action === 'start') {
+    markSocketActivity(socket, kind, roomId);
+  } else {
+    unmarkSocketActivity(socket, kind, roomId);
+    if (isActivityHeldByOtherSocket(io, socket, userId, kind, roomId)) {
+      return;
+    }
+  }
+
+  const users = apply(roomId, userId);
+  socket.to(roomId).emit(activityEvents[kind], { roomId, users });
 }
 
 async function handleMarkRead(socket: AppSocket, deps: MessageSocketDeps, payload: unknown): Promise<void> {
@@ -422,10 +511,16 @@ async function handleMarkRead(socket: AppSocket, deps: MessageSocketDeps, payloa
     return;
   }
 
-  const { messageService } = deps;
+  const { messageService, roomService } = deps;
 
   try {
     const { roomId, messageIds } = markReadPayloadSchema.parse(payload);
+    const room = await roomService.getRoomById(roomId);
+    if (!room || !roomService.isParticipant(room, userId)) {
+      socket.emit('error', errorPayload('room.notFound'));
+      return;
+    }
+
     await messageService.markRoomAsRead(roomId, userId, messageIds);
     const { unreadCount, mentionCount } = await messageService.countUnreadForUser(roomId, userId);
 

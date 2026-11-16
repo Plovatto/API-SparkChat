@@ -14,7 +14,6 @@ describe('upload endpoints under a storage quota ceiling', () => {
       nickname: 'QuotaTester',
       avatar: 0,
       password: 'correct-horse-battery-staple',
-      socketId: 'socket-quota',
     });
     const authHeader = `Bearer ${user.id}:${sessionToken}`;
 
@@ -41,7 +40,6 @@ describe('upload endpoints under a storage quota ceiling', () => {
       nickname: 'QuotaTester2',
       avatar: 0,
       password: 'correct-horse-battery-staple',
-      socketId: 'socket-quota-2',
     });
     const authHeader = `Bearer ${user.id}:${sessionToken}`;
 

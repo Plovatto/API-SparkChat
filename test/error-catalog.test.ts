@@ -9,9 +9,10 @@ const SAMPLE_PARAMS: Partial<Record<ErrorCode, object>> = {
   'upload.tooLarge': { kind: 'audio', maxSize: '8MB' },
   'upload.invalidType': { kind: 'file' },
   'internal.routeNotFound': { method: 'GET', path: '/api/x' },
+  'e2e.lookupTooLarge': { maxItems: 200 },
 };
 
-const CODE_PATTERN = /^(auth|user|room|message|upload|linkPreview|rateLimit|validation|internal)\.[a-z][A-Za-z]+$/;
+const CODE_PATTERN = /^(auth|user|room|message|e2e|upload|linkPreview|rateLimit|validation|internal)\.[a-z][A-Za-z]+$/;
 
 describe('error catalog', () => {
   it('lists every catalog entry in ERROR_CODES', () => {
