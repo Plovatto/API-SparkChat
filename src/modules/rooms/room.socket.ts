@@ -5,12 +5,13 @@ import type { Locale } from '../../lib/locale.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { roomIdPayloadSchema } from '../../sockets/payloads.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
+import { runSocketHandler } from '../../sockets/socket-handler.js';
 import { socketLocale } from '../../sockets/socket-locale.js';
 import { exceedsLookupLimit, E2E_LOOKUP_MAX_ITEMS, lookupTooLargePayload } from '../../sockets/id-lookup.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
 import { emitToUser, joinUserSocketsToRoom, removeUserSocketsFromRoom, userRoom } from '../../sockets/user-sockets.js';
 import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService, type MessageView } from '../messages/index.js';
-import type { UserService } from '../users/index.js';
+import { NICKNAME_MAX_LENGTH, type UserService } from '../users/index.js';
 import type { RoomKeyRepository } from './room.e2e.js';
 import type { RoomActionRateLimiter } from './room.rate-limiter.js';
 import type { RoomService } from './room.service.js';
@@ -33,19 +34,22 @@ export interface RoomSocketDeps {
   canReplaceRoomKey?: CanReplaceRoomKeyHook;
 }
 
-const ROOM_CODE_MIN_LENGTH = 4;
+const ROOM_CODE_MIN_LENGTH = 8;
+const ROOM_CODE_MAX_LENGTH = 12;
+const ROOM_CODE_INPUT_MAX_LENGTH = 64;
+const ROOM_NAME_MAX_LENGTH = 64;
 const MAX_SEALED_KEY_LENGTH = 2000;
 
 const createPrivateRoomPayloadSchema = z.object({
-  targetNickname: z.string().trim().min(1),
+  targetNickname: z.string().trim().min(1).max(NICKNAME_MAX_LENGTH),
 });
 
 const createGroupRoomPayloadSchema = z.object({
-  roomName: z.string().trim().min(1),
+  roomName: z.string().trim().min(1).max(ROOM_NAME_MAX_LENGTH),
 });
 
 const joinByCodePayloadSchema = z.object({
-  roomCode: z.string().trim().min(1),
+  roomCode: z.string().trim().min(1).max(ROOM_CODE_INPUT_MAX_LENGTH),
 });
 
 const blockPayloadSchema = z.object({
@@ -118,59 +122,59 @@ async function getInitialMessageViews(deps: RoomSocketDeps, room: RoomRecord, us
 
 export function registerRoomSocketHandlers(io: AppServer, socket: AppSocket, deps: RoomSocketDeps): void {
   socket.on('room:create-private', (payload) => {
-    void handleCreatePrivateRoom(io, socket, deps, payload);
+    runSocketHandler(socket, 'room:create-private', () => handleCreatePrivateRoom(io, socket, deps, payload));
   });
 
   socket.on('room:create-group', (payload) => {
-    void handleCreateGroupRoom(io, socket, deps, payload);
+    runSocketHandler(socket, 'room:create-group', () => handleCreateGroupRoom(io, socket, deps, payload));
   });
 
   socket.on('rooms:get', () => {
-    void handleRoomsGet(socket, deps);
+    runSocketHandler(socket, 'rooms:get', () => handleRoomsGet(socket, deps));
   });
 
   socket.on('room:join-by-code', (payload) => {
-    void handleJoinByCode(io, socket, deps, payload);
+    runSocketHandler(socket, 'room:join-by-code', () => handleJoinByCode(io, socket, deps, payload));
   });
 
   socket.on('room:join', (payload) => {
-    void handleJoinRoom(socket, deps, payload);
+    runSocketHandler(socket, 'room:join', () => handleJoinRoom(socket, deps, payload));
   });
 
   socket.on('room:delete', (payload) => {
-    void handleDeleteRoom(io, socket, deps, payload);
+    runSocketHandler(socket, 'room:delete', () => handleDeleteRoom(io, socket, deps, payload));
   });
 
   socket.on('group:leave', (payload) => {
-    void handleLeaveGroup(io, socket, deps, payload);
+    runSocketHandler(socket, 'group:leave', () => handleLeaveGroup(io, socket, deps, payload));
   });
 
   socket.on('group:remove-member', (payload) => {
-    void handleRemoveMember(io, socket, deps, payload);
+    runSocketHandler(socket, 'group:remove-member', () => handleRemoveMember(io, socket, deps, payload));
   });
 
   socket.on('group:promote-admin', (payload) => {
-    void handlePromoteAdmin(io, socket, deps, payload);
+    runSocketHandler(socket, 'group:promote-admin', () => handlePromoteAdmin(io, socket, deps, payload));
   });
 
   socket.on('user:block', (payload) => {
-    void handleBlockUser(io, socket, deps, payload);
+    runSocketHandler(socket, 'user:block', () => handleBlockUser(io, socket, deps, payload));
   });
 
   socket.on('user:unblock', (payload) => {
-    void handleUnblockUser(io, socket, deps, payload);
+    runSocketHandler(socket, 'user:unblock', () => handleUnblockUser(io, socket, deps, payload));
   });
 
   socket.on('e2e:publish-room-key', (payload) => {
-    void handlePublishRoomKey(io, socket, deps, payload);
+    runSocketHandler(socket, 'e2e:publish-room-key', () => handlePublishRoomKey(io, socket, deps, payload));
   });
 
   socket.on('e2e:get-room-keys', (payload) => {
-    void handleGetRoomKeys(socket, deps, payload);
+    runSocketHandler(socket, 'e2e:get-room-keys', () => handleGetRoomKeys(socket, deps, payload));
   });
 
   socket.on('e2e:request-room-key', (payload) => {
-    void handleRequestRoomKey(socket, deps, payload);
+    runSocketHandler(socket, 'e2e:request-room-key', () => handleRequestRoomKey(socket, deps, payload));
   });
 }
 
@@ -224,6 +228,11 @@ async function handleCreateGroupRoom(io: AppServer, socket: AppSocket, deps: Roo
 
   try {
     const { roomName } = createGroupRoomPayloadSchema.parse(payload);
+    if (!deps.rateLimiter.tryCreateGroup(userId)) {
+      socket.emit('error', errorPayload('rateLimit.roomCreate'));
+      return;
+    }
+
     const room = await roomService.createGroupRoom(roomName, userId);
     await socket.join(room.id);
     await joinUserSocketsToRoom(io, userId, room.id);
@@ -250,10 +259,19 @@ async function handleRoomsGet(socket: AppSocket, deps: RoomSocketDeps): Promise<
   try {
     const rooms = await deps.roomService.getVisibleRoomsForUser(userId);
     const summaries = await deps.roomService.buildSummaries(rooms, userId);
+    const roomIds = rooms.map((room) => room.id);
 
-    await socket.join(rooms.map((room) => room.id));
+    await socket.join(roomIds);
 
-    socket.emit('rooms:list', { rooms: summaries });
+    const stillParticipating = await deps.roomService.findParticipatingRoomIds(userId, roomIds);
+    const lost = roomIds.filter((roomId) => !stillParticipating.has(roomId));
+    await Promise.all(
+      lost.map(async (roomId) => {
+        await socket.leave(roomId);
+      }),
+    );
+
+    socket.emit('rooms:list', { rooms: summaries.filter((summary) => stillParticipating.has(summary.id)) });
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
@@ -271,7 +289,7 @@ async function handleJoinByCode(io: AppServer, socket: AppSocket, deps: RoomSock
     const { roomCode } = joinByCodePayloadSchema.parse(payload);
     const normalizedCode = roomCode.toUpperCase().trim();
 
-    if (normalizedCode.length < ROOM_CODE_MIN_LENGTH) {
+    if (normalizedCode.length < ROOM_CODE_MIN_LENGTH || normalizedCode.length > ROOM_CODE_MAX_LENGTH) {
       socket.emit('error', errorPayload('room.invalidCode'));
       return;
     }
@@ -333,6 +351,12 @@ async function handleJoinRoom(socket: AppSocket, deps: RoomSocketDeps, payload: 
     }
 
     await socket.join(roomId);
+
+    const stillParticipating = await deps.roomService.findParticipatingRoomIds(userId, [roomId]);
+    if (!stillParticipating.has(roomId)) {
+      await socket.leave(roomId);
+      socket.emit('error', errorPayload('room.notFound'));
+    }
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }

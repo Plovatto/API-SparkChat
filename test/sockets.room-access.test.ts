@@ -529,7 +529,8 @@ describe('group membership enforcement', () => {
     }
     await h.roomService.joinByCode(group.roomCode, bob.user.id);
     await h.roomService.joinByCode(group.roomCode, carol.user.id);
-    await h.roomRepository.update(group.id, { blockedBy: { [alice.user.id]: bob.user.id, [carol.user.id]: alice.user.id } });
+    await h.roomRepository.updateParticipant(group.id, alice.user.id, { blockedByUserId: bob.user.id });
+    await h.roomRepository.updateParticipant(group.id, carol.user.id, { blockedByUserId: alice.user.id });
 
     const afterLeave = await h.roomService.leaveGroup(group.id, bob.user.id);
     expect(afterLeave?.blockedBy).toEqual({ [carol.user.id]: alice.user.id });

@@ -8,6 +8,8 @@ import type { UploadRegistry } from '../../storage/upload-registry.js';
 import type { UserService } from '../users/index.js';
 import { nextTimestamp } from './message.clock.js';
 import type { MessageRepository, RoomDigest, RoomDigestRequest, UnreadCounts } from './message.repository.js';
+
+export const MARK_READ_BATCH_LIMIT = 500;
 import { renderSystemEvent, type SystemEvent } from './message.system-events.js';
 import type {
   MessageFileMeta,
@@ -181,8 +183,8 @@ export class MessageService {
     return this.repository.findRoomDigests(requests, userId);
   }
 
-  countUnreadForUser(roomId: string, userId: string): Promise<UnreadCounts> {
-    return this.repository.countUnread(roomId, userId);
+  countUnreadForUser(roomId: string, userId: string, after?: string): Promise<UnreadCounts> {
+    return this.repository.countUnread(roomId, userId, after);
   }
 
   getMessage(messageId: string): Promise<MessageRecord | null> {
@@ -268,11 +270,11 @@ export class MessageService {
     }
   }
 
-  async markRoomAsRead(roomId: string, userId: string, messageIds?: string[]): Promise<MessageRecord[]> {
+  async markRoomAsRead(roomId: string, userId: string, messageIds?: string[], after?: string): Promise<MessageRecord[]> {
     const messages =
       messageIds && messageIds.length > 0
-        ? await this.repository.findByRoomIdAndIds(roomId, messageIds)
-        : await this.repository.findUnreadByRoomId(roomId, userId);
+        ? (await this.repository.findByRoomIdAndIds(roomId, messageIds)).filter((message) => !after || message.timestamp > after)
+        : await this.repository.findUnreadByRoomId(roomId, userId, { after, limit: MARK_READ_BATCH_LIMIT });
     let changed = false;
 
     const updated = messages.map((message) => {
@@ -301,14 +303,14 @@ export class MessageService {
     return updated;
   }
 
-  async markPendingMessagesDelivered(roomId: string, userId: string): Promise<MessageRecord[]> {
-    const deliveredByRoom = await this.markPendingMessagesDeliveredInRooms([roomId], userId);
+  async markPendingMessagesDelivered(roomId: string, userId: string, after?: string): Promise<MessageRecord[]> {
+    const deliveredByRoom = await this.markPendingMessagesDeliveredInRooms([{ roomId, after }], userId);
     return deliveredByRoom.get(roomId) ?? [];
   }
 
-  async markPendingMessagesDeliveredInRooms(roomIds: string[], userId: string): Promise<Map<string, MessageRecord[]>> {
+  async markPendingMessagesDeliveredInRooms(rooms: RoomDigestRequest[], userId: string): Promise<Map<string, MessageRecord[]>> {
     const deliveredByRoom = new Map<string, MessageRecord[]>();
-    const pending = await this.repository.findUndeliveredInRooms(roomIds, userId);
+    const pending = await this.repository.findUndeliveredInRooms(rooms, userId);
     if (pending.length === 0) {
       return deliveredByRoom;
     }

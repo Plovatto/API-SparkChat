@@ -17,9 +17,9 @@ describe('extractErrorPayload', () => {
     expect(extractErrorPayload(result.error)).toEqual({ message: result.error.message, code: 'validation.invalidPayload' });
   });
 
-  it('maps an error without a code to internal.unexpected keeping its message', () => {
+  it('maps an error without a code to internal.unexpected without leaking its message', () => {
     expect(extractErrorPayload(new Error('database is locked'))).toEqual({
-      message: 'database is locked',
+      message: 'Erro inesperado.',
       code: 'internal.unexpected',
     });
   });

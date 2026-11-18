@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, lt, ne, not, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, lt, ne, not, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { messages } from '../../database/schema.js';
 import type { MessageRecord, MessageReplySnapshot } from './message.types.js';
@@ -24,6 +24,12 @@ export interface UnreadCounts {
 }
 
 const MAX_IN_CLAUSE_IDS = 500;
+const MAX_CUTOFF_TERMS = 100;
+
+export interface UnreadLookupOptions {
+  after?: string | undefined;
+  limit?: number | undefined;
+}
 
 function normalizeReplySnapshot(snapshot: MessageReplySnapshot | null | undefined): MessageReplySnapshot | null {
   if (!snapshot) {
@@ -191,29 +197,47 @@ export class MessageRepository {
     return rows.map(toRecord);
   }
 
-  async findUnreadByRoomId(roomId: string, userId: string): Promise<MessageRecord[]> {
-    const rows = await this.db
+  async findUnreadByRoomId(roomId: string, userId: string, options: UnreadLookupOptions = {}): Promise<MessageRecord[]> {
+    const query = this.db
       .select()
       .from(messages)
-      .where(and(eq(messages.roomId, roomId), ne(messages.senderId, userId), not(jsonArrayContains(messages.readBy, userId))))
+      .where(
+        and(
+          eq(messages.roomId, roomId),
+          options.after ? gt(messages.timestamp, options.after) : undefined,
+          ne(messages.senderId, userId),
+          not(jsonArrayContains(messages.readBy, userId)),
+        ),
+      )
       .orderBy(asc(messages.timestamp));
 
+    const rows = options.limit !== undefined ? await query.limit(options.limit) : await query;
     return rows.map(toRecord);
   }
 
-  async findUndeliveredInRooms(roomIds: string[], userId: string): Promise<MessageRecord[]> {
-    if (roomIds.length === 0) {
+  async findUndeliveredInRooms(requests: RoomDigestRequest[], userId: string): Promise<MessageRecord[]> {
+    if (requests.length === 0) {
       return [];
     }
 
+    const unrestricted = requests.filter((request) => !request.after).map((request) => request.roomId);
+    const restricted = requests.filter((request): request is { roomId: string; after: string } => Boolean(request.after));
+    const roomFilters: SQL[] = [
+      ...chunk(unrestricted, MAX_IN_CLAUSE_IDS).map((ids) => inArray(messages.roomId, ids)),
+      ...chunk(restricted, MAX_CUTOFF_TERMS).map(
+        (group) =>
+          or(...group.map((request) => and(eq(messages.roomId, request.roomId), gt(messages.timestamp, request.after)))) ?? sql`0`,
+      ),
+    ];
+
     const pages = await Promise.all(
-      chunk(roomIds, MAX_IN_CLAUSE_IDS).map((ids) =>
+      roomFilters.map((roomFilter) =>
         this.db
           .select()
           .from(messages)
           .where(
             and(
-              inArray(messages.roomId, ids),
+              roomFilter,
               ne(messages.senderId, userId),
               eq(messages.deletedForEveryone, false),
               not(jsonArrayContains(messages.deliveredTo, userId)),

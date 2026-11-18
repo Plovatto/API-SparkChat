@@ -33,6 +33,7 @@ export async function buildRoomService() {
   const roomKeyRepository = new RoomKeyRepository(db);
 
   return {
+    db,
     roomService,
     roomRepository,
     roomKeyRepository,
