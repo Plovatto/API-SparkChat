@@ -63,7 +63,8 @@ const messageRateLimiter = new MessageRateLimiter();
 const roomRateLimiter = new RoomActionRateLimiter();
 
 const linkPreviewRepository = new LinkPreviewRepository(db);
-const linkPreviewService = new LinkPreviewService(linkPreviewRepository, httpLinkPreviewFetcher);
+const linkPreviewService = new LinkPreviewService(linkPreviewRepository, httpLinkPreviewFetcher, env.RECOVERY_FILE_SECRET);
+await linkPreviewService.purgeExpired().catch((error: unknown) => logger.warn({ err: error }, 'Link preview cache purge failed'));
 
 const assistantIdentity = await loadAssistantIdentity(env.AI_ASSISTANT_PRIVATE_KEY);
 await ensureAssistantUser(userRepository, assistantIdentity);
