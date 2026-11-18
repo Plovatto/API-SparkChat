@@ -17,6 +17,15 @@ export class RoomKeyRepository {
       .onConflictDoUpdate({ target: [roomKeys.roomId, roomKeys.userId], set: { sealedKey } });
   }
 
+  async publishIfAbsent(roomId: string, userId: string, sealedKey: string): Promise<boolean> {
+    const inserted = await this.db
+      .insert(roomKeys)
+      .values({ roomId, userId, sealedKey, createdAt: new Date().toISOString() })
+      .onConflictDoNothing({ target: [roomKeys.roomId, roomKeys.userId] })
+      .returning({ userId: roomKeys.userId });
+    return inserted.length > 0;
+  }
+
   async findForUser(roomId: string, userId: string): Promise<string | null> {
     const [row] = await this.db
       .select({ sealedKey: roomKeys.sealedKey })

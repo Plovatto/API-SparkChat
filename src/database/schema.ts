@@ -78,6 +78,21 @@ export const roomParticipants = sqliteTable(
   ],
 );
 
+export const roomBans = sqliteTable(
+  'room_bans',
+  {
+    roomId: text('room_id')
+      .notNull()
+      .references(() => rooms.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    bannedBy: text('banned_by'),
+    bannedAt: text('banned_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.roomId, table.userId] })],
+);
+
 export const roomKeys = sqliteTable(
   'room_keys',
   {

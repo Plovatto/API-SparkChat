@@ -21,6 +21,7 @@ export interface RoomServerToClientEvents {
     userId: string;
     userName: string;
     participants: RoomParticipant[];
+    roomCode?: string;
   }) => void;
   'group:participants-updated': (payload: { roomId: string; participants: RoomParticipant[] }) => void;
   'user:blocked': (payload: BlockStatusPayload) => void;

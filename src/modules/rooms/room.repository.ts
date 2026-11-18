@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import type { Database } from '../../database/turso-client.js';
-import { roomParticipants, rooms } from '../../database/schema.js';
+import { roomBans, roomParticipants, rooms } from '../../database/schema.js';
 import type { RoomRecord } from './room.types.js';
 
 type RoomRow = typeof rooms.$inferSelect;
@@ -115,6 +115,42 @@ export class RoomRepository {
     }
 
     return toRoomRecord(room, await this.getParticipants(room.id));
+  }
+
+  async ban(roomId: string, userId: string, bannedBy: string): Promise<void> {
+    await this.db
+      .insert(roomBans)
+      .values({ roomId, userId, bannedBy, bannedAt: new Date().toISOString() })
+      .onConflictDoNothing({ target: [roomBans.roomId, roomBans.userId] });
+  }
+
+  async isBanned(roomId: string, userId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ userId: roomBans.userId })
+      .from(roomBans)
+      .where(and(eq(roomBans.roomId, roomId), eq(roomBans.userId, userId)));
+    return row !== undefined;
+  }
+
+  async findParticipatingRoomIds(userId: string, roomIds: string[]): Promise<Set<string>> {
+    if (roomIds.length === 0) {
+      return new Set();
+    }
+
+    const rows = await this.db
+      .select({ roomId: roomParticipants.roomId })
+      .from(roomParticipants)
+      .where(and(eq(roomParticipants.userId, userId), inArray(roomParticipants.roomId, roomIds)));
+    return new Set(rows.map((row) => row.roomId));
+  }
+
+  async findContactIds(userId: string): Promise<string[]> {
+    const rows = await this.db
+      .selectDistinct({ userId: rp2.userId })
+      .from(roomParticipants)
+      .innerJoin(rp2, eq(rp2.roomId, roomParticipants.roomId))
+      .where(eq(roomParticipants.userId, userId));
+    return rows.map((row) => row.userId);
   }
 
   async findPrivateRoomBetween(userId1: string, userId2: string): Promise<RoomRecord | null> {

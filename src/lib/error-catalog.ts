@@ -64,6 +64,7 @@ export const ERROR_CATALOG = {
   'rateLimit.loginAttempts': () => 'Muitas tentativas de login. Tente novamente mais tarde.',
   'rateLimit.registrations': () => 'Muitas contas criadas a partir deste endereço. Tente novamente mais tarde.',
   'rateLimit.messages': () => 'Você está enviando mensagens muito rápido. Aguarde um instante.',
+  'rateLimit.roomJoin': () => 'Muitas tentativas de entrar com código. Tente novamente mais tarde.',
   'validation.invalidPayload': () => 'Dados inválidos.',
   'internal.unexpected': () => 'Erro inesperado.',
   'internal.routeNotFound': ({ method, path }: { method: string; path: string }) => `Route not found: ${method} ${path}`,

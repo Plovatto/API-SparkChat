@@ -1,6 +1,6 @@
 import { eq, inArray } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
-import { users } from '../../database/schema.js';
+import { roomKeys, users } from '../../database/schema.js';
 import type { UserRecord } from './user.types.js';
 
 const MAX_IN_CLAUSE_IDS = 500;
@@ -97,6 +97,10 @@ export class UserRepository {
     });
 
     return user;
+  }
+
+  async deleteRoomKeys(userId: string): Promise<void> {
+    await this.db.delete(roomKeys).where(eq(roomKeys.userId, userId));
   }
 
   async update(id: string, patch: Partial<UserRecord>): Promise<UserRecord | null> {

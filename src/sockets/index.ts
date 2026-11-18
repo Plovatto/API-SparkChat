@@ -10,7 +10,12 @@ import {
   type RoomPresenceService,
   type TypingService,
 } from '../modules/messages/index.js';
-import { registerRoomSocketHandlers, type RoomKeyRepository, type RoomService } from '../modules/rooms/index.js';
+import {
+  RoomActionRateLimiter,
+  registerRoomSocketHandlers,
+  type RoomKeyRepository,
+  type RoomService,
+} from '../modules/rooms/index.js';
 import { registerUserSocketHandlers, type LoginRateLimiter, type UserService } from '../modules/users/index.js';
 import type { AppServer, AppSocket } from './events.js';
 import { guardSessionRecovery, rejectRevokedRecovery } from './session-recovery.js';
@@ -31,12 +36,18 @@ export interface SocketDeps {
   messageRateLimiter: MessageRateLimiter;
   roomKeyRepository: RoomKeyRepository;
   aiService: AiService;
+  roomRateLimiter?: RoomActionRateLimiter;
 }
 
 export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
   const { aiService } = deps;
+  const roomRateLimiter = deps.roomRateLimiter ?? new RoomActionRateLimiter();
 
-  guardSessionRecovery(io, (userId, sessionId) => deps.userService.isSessionActive(userId, sessionId));
+  guardSessionRecovery(
+    io,
+    (userId, sessionId) => deps.userService.isSessionActive(userId, sessionId),
+    (userId, roomIds) => deps.roomService.findParticipatingRoomIds(userId, roomIds),
+  );
 
   io.on('connection', (socket: AppSocket) => {
     socket.data.locale = resolveHandshakeLocale(socket.handshake.auth);
@@ -67,6 +78,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       userService: deps.userService,
       messageService: deps.messageService,
       roomKeyRepository: deps.roomKeyRepository,
+      rateLimiter: roomRateLimiter,
       onRoomCreated: ({ io: server, room, locale }) => {
         if (aiService.isAssistantRoom(room)) {
           void aiService.sendWelcomeMessage(server, room, locale);
