@@ -32,6 +32,11 @@ export interface UserSocketDeps {
   onSessionReleased?: (context: { socket: AppSocket; userId: string }) => void;
 }
 
+async function contactRooms(deps: UserSocketDeps, userId: string): Promise<string[]> {
+  const contactIds = await deps.roomService.getContactIds(userId);
+  return contactIds.map(userRoom);
+}
+
 const joinPayloadSchema = z.discriminatedUnion('mode', [
   z.object({
     mode: z.literal('register'),
@@ -227,7 +232,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
         recoveryToken,
         authMethod: 'password',
       });
-      socket.broadcast.emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
+      socket.to(await contactRooms(deps, user.id)).emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
       await deliverPendingMessages(io, deps, user.id);
       return;
     }
@@ -245,7 +250,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
     const { user, authMethod, sessionId } = resumed;
     await bindSocketSession(socket, { userId: user.id, authMethod, sessionId });
     socket.emit('user:resumed', { user: userService.toPublicUser(user), authMethod });
-    socket.broadcast.emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
+    socket.to(await contactRooms(deps, user.id)).emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
     await deliverPendingMessages(io, deps, user.id);
   } catch (error) {
     const isPayloadError = error instanceof z.ZodError;
@@ -293,7 +298,7 @@ async function handleUpdateProfile(io: AppServer, socket: AppSocket, deps: UserS
       return;
     }
 
-    io.emit('user:profile-updated', {
+    io.to(await contactRooms(deps, result.user.id)).emit('user:profile-updated', {
       userId: result.user.id,
       nickname: result.user.nickname,
       avatar: result.user.avatar,
@@ -324,7 +329,7 @@ async function handleUpdateStatusText(io: AppServer, socket: AppSocket, deps: Us
       return;
     }
 
-    io.emit('user:profile-updated', {
+    io.to(await contactRooms(deps, updated.id)).emit('user:profile-updated', {
       userId: updated.id,
       nickname: updated.nickname,
       avatar: updated.avatar,
@@ -382,7 +387,7 @@ async function markOfflineIfNoVisibleSocket(io: AppServer, deps: UserSocketDeps,
     return;
   }
 
-  io.emit('user:offline', {
+  io.to(await contactRooms(deps, updated.id)).emit('user:offline', {
     userId: updated.id,
     user: { id: updated.id, status: updated.status, lastSeen: updated.lastSeen },
   });
@@ -447,15 +452,16 @@ async function handleVisibility(io: AppServer, socket: AppSocket, deps: UserSock
     return;
   }
 
+  const presenceRooms = await contactRooms(deps, updated.id);
   if (visible) {
-    socket.broadcast.emit('user:online', {
+    socket.to(presenceRooms).emit('user:online', {
       userId: updated.id,
       nickname: updated.nickname,
       avatar: updated.avatar,
     });
     await deliverPendingMessages(io, deps, updated.id);
   } else {
-    socket.broadcast.emit('user:offline', {
+    socket.to(presenceRooms).emit('user:offline', {
       userId: updated.id,
       user: { id: updated.id, status: updated.status, lastSeen: updated.lastSeen },
     });

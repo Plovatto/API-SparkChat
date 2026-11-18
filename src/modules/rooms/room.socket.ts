@@ -12,21 +12,25 @@ import { emitToUser, joinUserSocketsToRoom, removeUserSocketsFromRoom, userRoom 
 import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService, type MessageView } from '../messages/index.js';
 import type { UserService } from '../users/index.js';
 import type { RoomKeyRepository } from './room.e2e.js';
+import type { RoomActionRateLimiter } from './room.rate-limiter.js';
 import type { RoomService } from './room.service.js';
 import type { RoomRecord } from './room.types.js';
 
 export type OnRoomCreatedHook = (context: { io: AppServer; room: RoomRecord; locale: Locale }) => void;
 export type ShouldResetInsteadOfDeleteHook = (room: RoomRecord) => boolean;
 export type OnRoomKeyPublishedHook = (context: { io: AppServer; room: RoomRecord }) => void;
+export type CanReplaceRoomKeyHook = (room: RoomRecord, userId: string) => boolean;
 
 export interface RoomSocketDeps {
   roomService: RoomService;
   userService: UserService;
   messageService: MessageService;
   roomKeyRepository: RoomKeyRepository;
+  rateLimiter: RoomActionRateLimiter;
   onRoomCreated?: OnRoomCreatedHook;
   shouldResetInsteadOfDelete?: ShouldResetInsteadOfDeleteHook;
   onRoomKeyPublished?: OnRoomKeyPublishedHook;
+  canReplaceRoomKey?: CanReplaceRoomKeyHook;
 }
 
 const ROOM_CODE_MIN_LENGTH = 4;
@@ -103,6 +107,7 @@ registerServerEvents('rooms', [
   'e2e:room-keys',
   'e2e:room-key',
   'e2e:key-request',
+  'e2e:room-key-rejected',
 ]);
 
 async function getInitialMessageViews(deps: RoomSocketDeps, room: RoomRecord, userId: string): Promise<MessageView[]> {
@@ -271,9 +276,22 @@ async function handleJoinByCode(io: AppServer, socket: AppSocket, deps: RoomSock
       return;
     }
 
+    if (!deps.rateLimiter.tryJoinAttempt(userId)) {
+      socket.emit('error', errorPayload('rateLimit.roomJoin'));
+      return;
+    }
+
     const { room, joined } = await roomService.joinByCode(normalizedCode, userId);
+    deps.rateLimiter.forgiveJoinAttempt(userId);
     await socket.join(room.id);
     await joinUserSocketsToRoom(io, userId, room.id);
+
+    const current = await roomService.getRoomById(room.id);
+    if (!current || !roomService.isParticipant(current, userId)) {
+      await removeUserSocketsFromRoom(io, userId, room.id);
+      socket.emit('error', errorPayload('room.notFound'));
+      return;
+    }
 
     if (joined) {
       const user = await userService.getUser(userId);
@@ -364,12 +382,15 @@ async function handleLeaveGroup(io: AppServer, socket: AppSocket, deps: RoomSock
     const { roomId } = roomIdPayloadSchema.parse(payload);
     const user = await userService.getUser(userId);
     const updatedRoom = await roomService.leaveGroup(roomId, userId);
+    if (!updatedRoom) {
+      return;
+    }
 
     await socket.leave(roomId);
     await removeUserSocketsFromRoom(io, userId, roomId);
     emitToUser(io, userId).emit('group:left', { roomId });
 
-    if (updatedRoom && user) {
+    if (user) {
       const remaining = await roomService.buildParticipantViews(updatedRoom);
 
       io.to(roomId).emit('group:user-left', {
@@ -409,15 +430,16 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
 
     const remaining = await roomService.buildParticipantViews(updatedRoom);
 
+    emitToUser(io, targetUserId).emit('group:left', { roomId });
+    await removeUserSocketsFromRoom(io, targetUserId, roomId);
+
     io.to(roomId).emit('group:user-left', {
       roomId,
       userId: targetUserId,
       userName: targetUser.nickname,
       participants: remaining,
+      ...(updatedRoom.roomCode ? { roomCode: updatedRoom.roomCode } : {}),
     });
-
-    emitToUser(io, targetUserId).emit('group:left', { roomId });
-    await removeUserSocketsFromRoom(io, targetUserId, roomId);
 
     const systemMessage = await messageService.createSystemMessage(
       roomId,
@@ -529,14 +551,35 @@ async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: Room
 
     const validKeys = keys.filter((key) => roomService.isParticipant(room, key.userId));
 
-    await Promise.all(validKeys.map((key) => roomKeyRepository.publish(roomId, key.userId, key.sealedKey)));
+    const hasOwnKey = validKeys.some((key) => key.userId === actingUserId);
+    const assistantRoom = deps.canReplaceRoomKey?.(room, actingUserId) === true;
+    const aloneInRoom = room.participants.length === 1;
+    const writes = validKeys.map((key) => ({
+      ...key,
+      replaceable:
+        assistantRoom ||
+        (key.userId === actingUserId ? aloneInRoom : deps.rateLimiter.hasPendingKeyRequest(key.userId, roomId)),
+    }));
 
-    for (const key of validKeys) {
+    const { rejected, stored } = await roomKeyRepository.publishBatch(roomId, writes, hasOwnKey);
+    if (rejected) {
+      socket.emit('e2e:room-key-rejected', { roomId });
+      return;
+    }
+
+    for (const key of stored) {
+      if (key.userId !== actingUserId) {
+        deps.rateLimiter.consumePendingKeyRequest(key.userId, roomId);
+      }
+    }
+    const publishedKeys = stored.map(({ userId, sealedKey }) => ({ userId, sealedKey }));
+
+    for (const key of publishedKeys) {
       const target = key.userId === actingUserId ? socket.to(userRoom(actingUserId)) : emitToUser(io, key.userId);
       target.emit('e2e:room-key', { roomId, sealedKey: key.sealedKey });
     }
 
-    if (validKeys.length > 0) {
+    if (publishedKeys.length > 0) {
       deps.onRoomKeyPublished?.({ io, room });
     }
   } catch (error) {
@@ -575,6 +618,10 @@ async function handleRequestRoomKey(socket: AppSocket, deps: RoomSocketDeps, pay
     const { roomId } = roomIdPayloadSchema.parse(payload);
     const room = await deps.roomService.getRoomById(roomId);
     if (!room || !deps.roomService.isParticipant(room, userId)) {
+      return;
+    }
+
+    if (!deps.rateLimiter.tryKeyRequest(userId, roomId)) {
       return;
     }
 

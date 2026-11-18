@@ -365,6 +365,11 @@ export class UserService {
       return;
     }
 
+    const previousPublicKey = patch.e2ePublicKey === undefined ? undefined : (await this.repository.findById(userId))?.e2ePublicKey;
+    if (previousPublicKey && previousPublicKey !== patch.e2ePublicKey) {
+      await this.repository.deleteRoomKeys(userId);
+    }
+
     await this.repository.update(userId, patch);
   }
 

@@ -42,7 +42,7 @@ describe('RoomService', () => {
 
     expect(room.type).toBe('group');
     expect(room.name).toBe('Amigos');
-    expect(room.roomCode).toMatch(/^[A-Z0-9]{8}$/);
+    expect(room.roomCode).toMatch(/^[A-Z0-9]{10}$/);
     expect(room.participants).toEqual([alice.id]);
     expect(room.admins).toEqual([alice.id]);
     expect(room.createdBy).toBe(alice.id);

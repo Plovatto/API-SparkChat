@@ -10,7 +10,12 @@ import {
   type RoomPresenceService,
   type TypingService,
 } from '../modules/messages/index.js';
-import { registerRoomSocketHandlers, type RoomKeyRepository, type RoomService } from '../modules/rooms/index.js';
+import {
+  registerRoomSocketHandlers,
+  type RoomActionRateLimiter,
+  type RoomKeyRepository,
+  type RoomService,
+} from '../modules/rooms/index.js';
 import { registerUserSocketHandlers, type LoginRateLimiter, type UserService } from '../modules/users/index.js';
 import type { AppServer, AppSocket } from './events.js';
 import { guardSessionRecovery, rejectRevokedRecovery } from './session-recovery.js';
@@ -31,12 +36,17 @@ export interface SocketDeps {
   messageRateLimiter: MessageRateLimiter;
   roomKeyRepository: RoomKeyRepository;
   aiService: AiService;
+  roomRateLimiter: RoomActionRateLimiter;
 }
 
 export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
   const { aiService } = deps;
 
-  guardSessionRecovery(io, (userId, sessionId) => deps.userService.isSessionActive(userId, sessionId));
+  guardSessionRecovery(
+    io,
+    (userId, sessionId) => deps.userService.isSessionActive(userId, sessionId),
+    (userId, roomIds) => deps.roomService.findParticipatingRoomIds(userId, roomIds),
+  );
 
   io.on('connection', (socket: AppSocket) => {
     socket.data.locale = resolveHandshakeLocale(socket.handshake.auth);
@@ -67,12 +77,14 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       userService: deps.userService,
       messageService: deps.messageService,
       roomKeyRepository: deps.roomKeyRepository,
+      rateLimiter: deps.roomRateLimiter,
       onRoomCreated: ({ io: server, room, locale }) => {
         if (aiService.isAssistantRoom(room)) {
           void aiService.sendWelcomeMessage(server, room, locale);
         }
       },
       shouldResetInsteadOfDelete: (room) => aiService.isAssistantRoom(room),
+      canReplaceRoomKey: (room) => aiService.isAssistantRoom(room),
       onRoomKeyPublished: ({ io: server, room }) => {
         if (aiService.isAssistantRoom(room)) {
           void aiService.handleRoomKeyPublished(server, room);

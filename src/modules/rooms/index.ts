@@ -1,4 +1,5 @@
 export { RoomKeyRepository } from './room.e2e.js';
+export { RoomActionRateLimiter } from './room.rate-limiter.js';
 export type { RoomClientToServerEvents, RoomServerToClientEvents } from './room.events.js';
 export { RoomRepository } from './room.repository.js';
 export { RoomService } from './room.service.js';

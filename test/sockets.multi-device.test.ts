@@ -26,6 +26,7 @@ describe('multi-device delivery', () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
+    await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
     const observer = await h.connectAs(bob);
     const phone = await h.connectAs(alice);
     const laptop = await h.connectAs(alice);
@@ -48,6 +49,7 @@ describe('multi-device delivery', () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
+    await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
     const observer = await h.connectAs(bob);
     const phone = await h.connectAs(alice);
     const laptop = await h.connectAs(alice);
