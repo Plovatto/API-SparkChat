@@ -6,6 +6,10 @@ export type SessionValidator = (userId: string, sessionId: string) => Promise<bo
 
 export type MembershipFilter = (userId: string, roomIds: string[]) => Promise<Set<string>>;
 
+type AdapterSession = Awaited<ReturnType<AppServer['sockets']['adapter']['restoreSession']>>;
+
+type RestoreSession = (pid: string, offset: string) => Promise<AdapterSession | null>;
+
 interface StoredSession {
   sid: string;
   rooms: string[];
@@ -37,10 +41,10 @@ async function keepCurrentMemberships(stored: StoredSession, filterMemberships: 
 
 export function guardSessionRecovery(io: AppServer, isSessionActive: SessionValidator, filterMemberships: MembershipFilter): void {
   const adapter = io.of('/').adapter;
-  const restoreSession = adapter.restoreSession.bind(adapter);
+  const restoreSession: RestoreSession = adapter.restoreSession.bind(adapter);
   const sessions = (adapter as unknown as { sessions?: Map<string, StoredSession> }).sessions;
 
-  adapter.restoreSession = async (pid, offset) => {
+  const guardedRestore: RestoreSession = async (pid, offset) => {
     const stored = sessions?.get(pid);
     if (stored) {
       try {
@@ -58,8 +62,13 @@ export function guardSessionRecovery(io: AppServer, isSessionActive: SessionVali
     }
 
     const data = session.data as SocketData;
-    if (!data.userId || !data.sessionId) {
+    if (!data.userId && !data.sessionId) {
       return session;
+    }
+
+    if (!data.userId || !data.sessionId || !session.rooms.includes(userRoom(data.userId))) {
+      sessions?.delete(pid);
+      return null;
     }
 
     if (await isRecoveredSessionActive(isSessionActive, data.userId, data.sessionId)) {
@@ -69,6 +78,7 @@ export function guardSessionRecovery(io: AppServer, isSessionActive: SessionVali
     const revokedData: SocketData = { sessionRevoked: true };
     return { ...session, rooms: [], missedPackets: [], data: revokedData };
   };
+  (adapter as unknown as { restoreSession: RestoreSession }).restoreSession = guardedRestore;
 }
 
 export function rejectRevokedRecovery(socket: AppSocket): boolean {

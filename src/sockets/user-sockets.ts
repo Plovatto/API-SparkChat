@@ -30,6 +30,19 @@ export function listUserSockets(io: AppServer, userId: string): AppSocket[] {
   return sockets;
 }
 
+export function findSocketsBoundToUser(io: AppServer, userId: string): AppSocket[] {
+  const found = new Map<string, AppSocket>();
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data.userId === userId) {
+      found.set(socket.id, socket);
+    }
+  }
+  for (const socket of listUserSockets(io, userId)) {
+    found.set(socket.id, socket);
+  }
+  return [...found.values()];
+}
+
 export function hasVisibleUserSocket(io: AppServer, userId: string): boolean {
   return listUserSockets(io, userId).some((socket) => socket.data.hidden !== true);
 }

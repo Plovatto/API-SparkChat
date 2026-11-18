@@ -16,7 +16,13 @@ import {
   type RoomKeyRepository,
   type RoomService,
 } from '../modules/rooms/index.js';
-import { registerUserSocketHandlers, type LoginRateLimiter, type UserService } from '../modules/users/index.js';
+import {
+  disconnectRevokedSession,
+  registerUserSocketHandlers,
+  type LoginRateLimiter,
+  type SessionRevocationNotifier,
+  type UserService,
+} from '../modules/users/index.js';
 import type { AppServer, AppSocket } from './events.js';
 import { guardSessionRecovery, rejectRevokedRecovery } from './session-recovery.js';
 import { applySocketRateLimit, DEFAULT_SOCKET_EVENT_BUDGETS, type SocketEventBudgets } from './socket-rate-limit.js';
@@ -34,6 +40,7 @@ export interface SocketDeps {
   recordingService: RecordingService;
   presenceService: RoomPresenceService;
   loginRateLimiter: LoginRateLimiter;
+  sessionRevocations: SessionRevocationNotifier;
   messageRateLimiter: MessageRateLimiter;
   roomKeyRepository: RoomKeyRepository;
   aiService: AiService;
@@ -55,6 +62,10 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
     (userId, sessionId) => deps.userService.isSessionActive(userId, sessionId),
     (userId, roomIds) => deps.roomService.findParticipatingRoomIds(userId, roomIds),
   );
+
+  deps.sessionRevocations.subscribe((revoked) => {
+    disconnectRevokedSession(io, revoked);
+  });
 
   io.on('connection', (socket: AppSocket) => {
     socket.data.locale = resolveHandshakeLocale(socket.handshake.auth);

@@ -39,7 +39,7 @@ async function groupWithLateJoiner(h: Harness, options: { carolOffline?: boolean
   const audio = await h.messageService.sendMessage({
     roomId: group.id,
     senderId: alice.user.id,
-    content: 'https://cdn.test/uploads/audio/antigo.webm',
+    content: await h.storeUpload(alice.user.id, 'uploads/audio/antigo.webm'),
     type: 'audio',
     duration: 3,
     participantIds: [alice.user.id, carol.user.id],

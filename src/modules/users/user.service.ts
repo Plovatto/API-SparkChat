@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { logger } from '../../config/logger.js';
 import { AppError } from '../../lib/app-error.js';
 import {
   ASSISTANT_USER_ID,
@@ -6,6 +7,7 @@ import {
   NICKNAME_MAX_LENGTH,
   NICKNAME_MIN_LENGTH,
   NICKNAME_MIN_LETTERS,
+  PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   type AuthMethod,
   type PublicUser,
@@ -13,7 +15,7 @@ import {
   type UserChatSettings,
   type UserTheme,
 } from './user.model.js';
-import { hashPassword, verifyPassword } from './user.password.js';
+import { hashPassword, passwordHashNeedsRehash, verifyPassword } from './user.password.js';
 import { decodeRecoveryFile, encodeRecoveryFile } from './user.recovery-file.js';
 import type { UserRepository } from './user.repository.js';
 import type { UserSessionRepository } from './user.session.repository.js';
@@ -54,6 +56,23 @@ export interface KeyfileAuthenticatedResult extends AuthenticatedResult {
   recoveryToken: string;
 }
 
+export interface ChangePasswordInput {
+  currentPassword?: string | undefined;
+  newPassword: string;
+  sessionId: string;
+}
+
+export interface UpdateProfileInput {
+  nickname: string;
+  avatar: number;
+  currentPassword?: string | undefined;
+}
+
+export interface SessionAuthentication {
+  user: UserRecord;
+  sessionId: string;
+}
+
 export interface PublishE2eKeysInput {
   publicKey?: string | undefined;
   encryptedPrivateKeyByPassword?: string | undefined;
@@ -62,6 +81,14 @@ export interface PublishE2eKeysInput {
 
 const DEFAULT_THEME = { baseTheme: 'dark', colorTheme: 'standard' };
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_MAX_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+export const KEYFILE_PASSWORD_RESET_WINDOW_MS = 10 * 60 * 1000;
+
+export function isSessionLive(session: SessionRecord, now = Date.now()): boolean {
+  const idleMs = now - new Date(session.lastUsedAt).getTime();
+  const ageMs = now - new Date(session.createdAt).getTime();
+  return idleMs <= SESSION_TTL_MS && ageMs <= SESSION_MAX_LIFETIME_MS;
+}
 
 function normalizeNickname(nickname: string): string {
   return nickname.trim().toLowerCase();
@@ -81,10 +108,14 @@ function assertValidPassword(password: string): void {
   if (password.length < PASSWORD_MIN_LENGTH) {
     throw AppError.of('user.passwordTooShort', { minLength: PASSWORD_MIN_LENGTH });
   }
+  if (password.length > PASSWORD_MAX_LENGTH) {
+    throw AppError.of('user.passwordTooLong', { maxLength: PASSWORD_MAX_LENGTH });
+  }
 }
 
 export class UserService {
   private dummyPasswordHash: Promise<string> | null = null;
+  private readonly consumedKeyfileGrants = new Map<string, number>();
 
   constructor(
     private readonly repository: UserRepository,
@@ -127,6 +158,10 @@ export class UserService {
   }
 
   async login(nickname: string, password: string, userAgent = ''): Promise<AuthenticatedResult | null> {
+    if (password.length > PASSWORD_MAX_LENGTH) {
+      return null;
+    }
+
     const user = await this.repository.findByNickname(normalizeNickname(nickname));
     if (!user || user.id === ASSISTANT_USER_ID) {
       await verifyPassword(password, await this.getDummyPasswordHash());
@@ -138,6 +173,7 @@ export class UserService {
       return null;
     }
 
+    await this.rehashPasswordIfNeeded(user, password);
     const { sessionId, sessionToken } = await this.createSession(user.id, 'password', userAgent);
     return { user, sessionId, sessionToken };
   }
@@ -163,8 +199,8 @@ export class UserService {
     return { user, sessionId, sessionToken, recoveryToken: payload.recoveryToken };
   }
 
-  async verifySession(userId: string, sessionToken: string): Promise<UserRecord | null> {
-    const session = await this.sessions.findValid(userId, hashToken(sessionToken), SESSION_TTL_MS);
+  async authenticateSession(userId: string, sessionToken: string): Promise<SessionAuthentication | null> {
+    const session = await this.findLiveSessionByToken(userId, sessionToken);
     if (!session) {
       return null;
     }
@@ -175,23 +211,24 @@ export class UserService {
     }
 
     await this.sessions.touch(session.id);
-    return user;
+    return { user, sessionId: session.id };
+  }
+
+  async verifySession(userId: string, sessionToken: string): Promise<UserRecord | null> {
+    const authenticated = await this.authenticateSession(userId, sessionToken);
+    return authenticated?.user ?? null;
   }
 
   async isSessionActive(userId: string, sessionId: string): Promise<boolean> {
     const session = await this.sessions.findByIdForUser(userId, sessionId);
-    if (!session) {
-      return false;
-    }
-
-    return Date.now() - new Date(session.lastUsedAt).getTime() <= SESSION_TTL_MS;
+    return session !== null && isSessionLive(session);
   }
 
   async resumeSession(
     userId: string,
     sessionToken: string,
   ): Promise<{ user: UserRecord; authMethod: AuthMethod; sessionId: string } | null> {
-    const session = await this.sessions.findValid(userId, hashToken(sessionToken), SESSION_TTL_MS);
+    const session = await this.findLiveSessionByToken(userId, sessionToken);
     if (!session) {
       return null;
     }
@@ -205,47 +242,55 @@ export class UserService {
     return user ? { user, authMethod: session.authMethod, sessionId: session.id } : null;
   }
 
-  async changePassword(
-    userId: string,
-    currentPassword: string | undefined,
-    newPassword: string,
-    sessionAuthMethod: AuthMethod,
-  ): Promise<PasswordChangeResult> {
+  async changePassword(userId: string, input: ChangePasswordInput): Promise<PasswordChangeResult> {
     const user = await this.repository.findById(userId);
     if (!user) {
       throw AppError.of('user.notFound');
     }
 
-    if (sessionAuthMethod === 'password') {
-      const isValid = Boolean(currentPassword) && (await verifyPassword(currentPassword ?? '', user.passwordHash));
-      if (!isValid) {
-        throw AppError.of('user.currentPasswordIncorrect');
+    assertValidPassword(input.newPassword);
+
+    let consumedGrant = false;
+    if (input.currentPassword) {
+      await this.assertCurrentPassword(user, input.currentPassword);
+    } else {
+      const session = await this.sessions.findByIdForUser(userId, input.sessionId);
+      if (!session || !this.consumeKeyfileGrant(session)) {
+        throw AppError.of('user.currentPasswordRequired');
       }
+      consumedGrant = true;
     }
 
-    assertValidPassword(newPassword);
+    try {
+      const passwordHash = await hashPassword(input.newPassword);
+      const recoveryToken = generateToken();
 
-    const passwordHash = await hashPassword(newPassword);
-    const recoveryToken = generateToken();
+      const updated = await this.repository.update(userId, {
+        passwordHash,
+        recoveryTokenHash: hashToken(recoveryToken),
+      });
+      if (!updated) {
+        throw AppError.of('user.notFound');
+      }
 
-    const updated = await this.repository.update(userId, {
-      passwordHash,
-      recoveryTokenHash: hashToken(recoveryToken),
-    });
-    if (!updated) {
-      throw AppError.of('user.notFound');
+      await this.sessions.deleteAllForUser(userId);
+
+      return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken), recoveryToken };
+    } catch (error) {
+      if (consumedGrant) {
+        this.consumedKeyfileGrants.delete(input.sessionId);
+      }
+      throw error;
     }
-
-    await this.sessions.deleteAllForUser(userId);
-
-    return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken), recoveryToken };
   }
 
-  async regenerateRecoveryFile(userId: string): Promise<PasswordChangeResult> {
+  async regenerateRecoveryFile(userId: string, currentPassword: string | undefined, currentSessionId: string): Promise<PasswordChangeResult> {
     const user = await this.repository.findById(userId);
     if (!user) {
       throw AppError.of('user.notFound');
     }
+
+    await this.assertCurrentPassword(user, currentPassword);
 
     const recoveryToken = generateToken();
     const updated = await this.repository.update(userId, { recoveryTokenHash: hashToken(recoveryToken) });
@@ -253,10 +298,12 @@ export class UserService {
       throw AppError.of('user.notFound');
     }
 
+    await this.sessions.deleteAllForUserExcept(userId, currentSessionId);
+
     return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken), recoveryToken };
   }
 
-  async updateProfile(userId: string, input: { nickname: string; avatar: number }): Promise<ProfileUpdateResult | null> {
+  async updateProfile(userId: string, input: UpdateProfileInput, currentSessionId: string): Promise<ProfileUpdateResult | null> {
     assertValidNickname(input.nickname);
 
     const current = await this.repository.findById(userId);
@@ -267,19 +314,19 @@ export class UserService {
     const nicknameNormalized = normalizeNickname(input.nickname);
     const nicknameChanged = nicknameNormalized !== current.nicknameNormalized;
 
-    if (nicknameChanged) {
-      const existing = await this.repository.findByNickname(nicknameNormalized);
-      if (existing && existing.id !== userId) {
-        throw AppError.of('user.nicknameTaken');
-      }
-    }
-
     if (!nicknameChanged) {
       const updated = await this.repository.update(userId, {
         nickname: input.nickname.trim(),
         avatar: input.avatar,
       });
       return updated ? { user: updated, recoveryFile: null, recoveryToken: null } : null;
+    }
+
+    await this.assertCurrentPassword(current, input.currentPassword);
+
+    const existing = await this.repository.findByNickname(nicknameNormalized);
+    if (existing && existing.id !== userId) {
+      throw AppError.of('user.nicknameTaken');
     }
 
     const recoveryToken = generateToken();
@@ -293,6 +340,8 @@ export class UserService {
     if (!updated) {
       return null;
     }
+
+    await this.sessions.deleteAllForUserExcept(userId, currentSessionId);
 
     return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken), recoveryToken };
   }
@@ -340,9 +389,9 @@ export class UserService {
 
   async listSessions(userId: string): Promise<SessionRecord[]> {
     const allSessions = await this.sessions.listByUser(userId);
-    const cutoff = Date.now() - SESSION_TTL_MS;
+    const now = Date.now();
 
-    return allSessions.filter((session) => new Date(session.lastUsedAt).getTime() > cutoff);
+    return allSessions.filter((session) => isSessionLive(session, now));
   }
 
   revokeSession(userId: string, sessionId: string): Promise<void> {
@@ -415,6 +464,56 @@ export class UserService {
     });
 
     return { sessionId, sessionToken };
+  }
+
+  private async findLiveSessionByToken(userId: string, sessionToken: string): Promise<SessionRecord | null> {
+    const session = await this.sessions.findByTokenForUser(userId, hashToken(sessionToken));
+    return session && isSessionLive(session) ? session : null;
+  }
+
+  private async assertCurrentPassword(user: UserRecord, currentPassword: string | undefined): Promise<void> {
+    const isValid =
+      typeof currentPassword === 'string' &&
+      currentPassword.length > 0 &&
+      currentPassword.length <= PASSWORD_MAX_LENGTH &&
+      (await verifyPassword(currentPassword, user.passwordHash));
+    if (!isValid) {
+      throw AppError.of('user.currentPasswordIncorrect');
+    }
+  }
+
+  private consumeKeyfileGrant(session: SessionRecord): boolean {
+    const now = Date.now();
+    for (const [sessionId, expiresAt] of this.consumedKeyfileGrants) {
+      if (expiresAt <= now) {
+        this.consumedKeyfileGrants.delete(sessionId);
+      }
+    }
+
+    if (session.authMethod !== 'keyfile' || this.consumedKeyfileGrants.has(session.id)) {
+      return false;
+    }
+
+    const expiresAt = new Date(session.createdAt).getTime() + KEYFILE_PASSWORD_RESET_WINDOW_MS;
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+      return false;
+    }
+
+    this.consumedKeyfileGrants.set(session.id, expiresAt);
+    return true;
+  }
+
+  private async rehashPasswordIfNeeded(user: UserRecord, password: string): Promise<void> {
+    if (!passwordHashNeedsRehash(user.passwordHash)) {
+      return;
+    }
+
+    try {
+      const passwordHash = await hashPassword(password);
+      await this.repository.update(user.id, { passwordHash });
+    } catch (err) {
+      logger.warn({ err, userId: user.id }, 'Failed to upgrade password hash');
+    }
   }
 
   private buildRecoveryFile(userId: string, recoveryToken: string): Buffer {

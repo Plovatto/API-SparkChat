@@ -11,6 +11,7 @@ export default defineConfig({
     environment: 'node',
     env: {
       LOG_LEVEL: 'silent',
+      PASSWORD_SCRYPT_COST: '16384',
       RECOVERY_FILE_SECRET: '0000000000000000000000000000000000000000000000000000000000000000',
       GEMINI_API_KEY: 'test',
       AI_ASSISTANT_PRIVATE_KEY: 'test',
