@@ -47,8 +47,8 @@ describe('user.password', () => {
     await expect(verifyPassword('anything', encodedHash(16384, 8, 'zz', '00'))).resolves.toBe(false);
   });
 
-  it('uses scrypt with N=2^17, r=8 and p=1 by default for new hashes', () => {
-    expect(DEFAULT_PASSWORD_HASH_PARAMS).toEqual({ cost: 2 ** 17, blockSize: 8, parallelization: 1 });
+  it('uses scrypt with N=2^16, r=8 and p=1 by default for new hashes', () => {
+    expect(DEFAULT_PASSWORD_HASH_PARAMS).toEqual({ cost: 2 ** 16, blockSize: 8, parallelization: 1 });
   });
 
   it('stores the scrypt parameters in the hash string', async () => {
@@ -61,7 +61,7 @@ describe('user.password', () => {
   it('verifies a hash made with the production parameters', async () => {
     const hash = await hashPassword('correct-horse-battery-staple', DEFAULT_PASSWORD_HASH_PARAMS);
 
-    expect(hash.startsWith(['scrypt', 131072, 8, 1, ''].join('$'))).toBe(true);
+    expect(hash.startsWith(['scrypt', 65536, 8, 1, ''].join('$'))).toBe(true);
     await expect(verifyPassword('correct-horse-battery-staple', hash)).resolves.toBe(true);
   });
 

@@ -25,7 +25,7 @@ const MAX_PARALLELIZATION = 16;
 
 const LEGACY_PARAMS: PasswordHashParams = { cost: 16384, blockSize: 8, parallelization: 1 };
 
-export const DEFAULT_PASSWORD_HASH_PARAMS: PasswordHashParams = { cost: 2 ** 17, blockSize: 8, parallelization: 1 };
+export const DEFAULT_PASSWORD_HASH_PARAMS: PasswordHashParams = { cost: 2 ** 16, blockSize: 8, parallelization: 1 };
 
 export function currentPasswordHashParams(): PasswordHashParams {
   return { ...DEFAULT_PASSWORD_HASH_PARAMS, cost: env.PASSWORD_SCRYPT_COST };

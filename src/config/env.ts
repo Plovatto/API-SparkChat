@@ -16,7 +16,7 @@ const envSchema = z.object({
     .min(2 ** 14)
     .max(2 ** 17)
     .refine((value) => (value & (value - 1)) === 0, 'PASSWORD_SCRYPT_COST must be a power of two')
-    .default(2 ** 17),
+    .default(2 ** 16),
   GEMINI_API_KEY: z.string().min(1),
   AI_ASSISTANT_PRIVATE_KEY: z.string().min(1),
   R2_ACCOUNT_ID: z.string().min(1),
