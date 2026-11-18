@@ -18,6 +18,7 @@ import {
 import { RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
 import { LoginRateLimiter, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
+import { SOCKET_MAX_HTTP_BUFFER_SIZE } from './sockets/socket-options.js';
 import { createR2ObjectStorage } from './storage/r2-object-storage.js';
 import { StorageQuota } from './storage/storage-quota.js';
 import { StorageUsageRepository } from './storage/storage-usage.repository.js';
@@ -27,6 +28,10 @@ import type {
   ServerToClientEvents,
   SocketData,
 } from './sockets/events.js';
+
+process.on('unhandledRejection', (reason) => {
+  logger.error({ err: reason }, 'Unhandled promise rejection');
+});
 
 await runMigrations(db);
 
@@ -51,6 +56,11 @@ const messageService = new MessageService(messageRepository, userService, object
 const roomRepository = new RoomRepository(db);
 const roomService = new RoomService(roomRepository, userService, messageService);
 const roomKeyRepository = new RoomKeyRepository(db);
+
+const { purgedParticipants, rotatedCodes } = await roomService.normalizeMembershipsAndInviteCodes();
+if (purgedParticipants > 0 || rotatedCodes > 0) {
+  logger.info({ purgedParticipants, rotatedCodes }, 'Room memberships and invite codes normalized');
+}
 
 const typingService = new TypingService();
 const recordingService = new RecordingService();
@@ -91,6 +101,7 @@ const io = new Server<
     credentials: true,
   },
   transports: ['websocket', 'polling'],
+  maxHttpBufferSize: SOCKET_MAX_HTTP_BUFFER_SIZE,
   pingInterval: 20000,
   pingTimeout: 25000,
   connectionStateRecovery: {

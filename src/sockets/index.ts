@@ -19,6 +19,7 @@ import {
 import { registerUserSocketHandlers, type LoginRateLimiter, type UserService } from '../modules/users/index.js';
 import type { AppServer, AppSocket } from './events.js';
 import { guardSessionRecovery, rejectRevokedRecovery } from './session-recovery.js';
+import { applySocketRateLimit, DEFAULT_SOCKET_EVENT_BUDGETS, type SocketEventBudgets } from './socket-rate-limit.js';
 import { handshakeAuthSchema, resolveHandshakeLocale } from './socket-locale.js';
 
 registerClientEvents('connection', {
@@ -37,6 +38,13 @@ export interface SocketDeps {
   roomKeyRepository: RoomKeyRepository;
   aiService: AiService;
   roomRateLimiter: RoomActionRateLimiter;
+  socketEventBudgets?: SocketEventBudgets;
+}
+
+function logHookFailure(hook: string) {
+  return (err: unknown) => {
+    logger.error({ err, hook }, 'Socket hook failed');
+  };
 }
 
 export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
@@ -55,6 +63,8 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
     if (rejectRevokedRecovery(socket)) {
       return;
     }
+
+    applySocketRateLimit(socket, deps.socketEventBudgets ?? DEFAULT_SOCKET_EVENT_BUDGETS);
 
     const activityServices = {
       typingService: deps.typingService,
@@ -80,14 +90,14 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       rateLimiter: deps.roomRateLimiter,
       onRoomCreated: ({ io: server, room, locale }) => {
         if (aiService.isAssistantRoom(room)) {
-          void aiService.sendWelcomeMessage(server, room, locale);
+          aiService.sendWelcomeMessage(server, room, locale).catch(logHookFailure('onRoomCreated'));
         }
       },
       shouldResetInsteadOfDelete: (room) => aiService.isAssistantRoom(room),
       canReplaceRoomKey: (room) => aiService.isAssistantRoom(room),
       onRoomKeyPublished: ({ io: server, room }) => {
         if (aiService.isAssistantRoom(room)) {
-          void aiService.handleRoomKeyPublished(server, room);
+          aiService.handleRoomKeyPublished(server, room).catch(logHookFailure('onRoomKeyPublished'));
         }
       },
     });
