@@ -123,7 +123,7 @@ describe('MessageRepository.findUndeliveredInRooms', () => {
     await messageService.sendMessage({ roomId: 'room-b', senderId: alice.id, content: 'pendente na b', participantIds: [alice.id, bob.id] });
     await messageService.sendMessage({ roomId: 'room-c', senderId: alice.id, content: 'sala não pedida' });
 
-    const pending = await messageRepository.findUndeliveredInRooms(['room-a', 'room-b'], bob.id);
+    const pending = await messageRepository.findUndeliveredInRooms([{ roomId: 'room-a' }, { roomId: 'room-b' }], bob.id);
     const byRoom = (roomId: string) => pending.filter((message) => message.roomId === roomId).map((message) => message.content);
 
     expect(pending).toHaveLength(3);
@@ -146,13 +146,13 @@ describe('MessageService.markPendingMessagesDeliveredInRooms', () => {
     await messageService.sendMessage({ roomId: 'room-b', senderId: alice.id, content: 'b2', participantIds: [alice.id, bob.id] });
 
     await userService.setStatus(bob.id, 'online');
-    const deliveredByRoom = await messageService.markPendingMessagesDeliveredInRooms(['room-a', 'room-b'], bob.id);
+    const deliveredByRoom = await messageService.markPendingMessagesDeliveredInRooms([{ roomId: 'room-a' }, { roomId: 'room-b' }], bob.id);
 
     expect(deliveredByRoom.get('room-a')?.map((message) => message.content)).toEqual(['a1']);
     expect(deliveredByRoom.get('room-b')?.map((message) => message.content)).toEqual(['b1', 'b2']);
     expect(deliveredByRoom.get('room-b')?.every((message) => message.deliveredTo.includes(bob.id) && message.status === 'delivered')).toBe(true);
 
-    const second = await messageService.markPendingMessagesDeliveredInRooms(['room-a', 'room-b'], bob.id);
+    const second = await messageService.markPendingMessagesDeliveredInRooms([{ roomId: 'room-a' }, { roomId: 'room-b' }], bob.id);
     expect(second.size).toBe(0);
   });
 });
