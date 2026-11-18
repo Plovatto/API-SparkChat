@@ -122,6 +122,40 @@ describe('media messages only accept the sender’s own unused uploads', () => {
   });
 });
 
+describe('extra attachments such as link preview images', () => {
+  it('attaches the sender’s preview image to a text message and removes it with the message', async () => {
+    const services = await buildRoomService();
+    const alice = await createUser(services, 'Alice');
+    const imageUrl = await services.storeUpload(alice.id, 'uploads/images/preview.bin', Buffer.from('1234'));
+    await services.storageQuota.recordUsage(4);
+
+    const message = await services.messageService.sendMessage({
+      roomId: 'room-1',
+      senderId: alice.id,
+      content: 'e2e:v1:texto',
+      attachmentUrls: [`${imageUrl}?e2e=1`],
+    });
+    await expect(services.uploadRegistry.find('uploads/images/preview.bin')).resolves.toMatchObject({ messageId: message.id });
+
+    await services.messageService.deleteMessage(message.id, alice.id);
+
+    expect(await services.objectStorage.getObject('uploads/images/preview.bin')).toBeNull();
+    expect(await services.uploadRegistry.find('uploads/images/preview.bin')).toBeNull();
+    expect(await services.storageUsageRepository.getBytesUsed()).toBe(0);
+  });
+
+  it('rejects an extra attachment uploaded by someone else', async () => {
+    const services = await buildRoomService();
+    const alice = await createUser(services, 'Alice');
+    const mallory = await createUser(services, 'Mallory');
+    const imageUrl = await services.storeUpload(alice.id, 'uploads/images/alice-preview.bin');
+
+    await expect(
+      services.messageService.sendMessage({ roomId: 'room-1', senderId: mallory.id, content: 'e2e:v1:x', attachmentUrls: [imageUrl] }),
+    ).rejects.toMatchObject({ code: 'message.invalidMedia' });
+  });
+});
+
 describe('deleting media messages', () => {
   it('releases the recorded size instead of the size the client claimed', async () => {
     const services = await buildRoomService();

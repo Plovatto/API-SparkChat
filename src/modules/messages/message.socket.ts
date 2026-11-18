@@ -83,6 +83,7 @@ const sendMessagePayloadSchema = z
     mentionedUserIds: z.array(z.string().trim().min(1)).max(50).optional(),
     caption: z.string().trim().max(3000).optional(),
     linkPreview: linkPreviewSchema.optional(),
+    attachmentUrls: z.array(z.string().trim().min(1).max(4000)).max(4).optional(),
   })
   .refine((data) => data.type !== 'audio' || typeof data.duration === 'number', {
     message: 'duration é obrigatório para mensagens de áudio.',
@@ -310,6 +311,7 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       fileMeta,
       caption,
       linkPreview,
+      attachmentUrls,
       mentionedUserIds: clientMentionedUserIds,
     } = parsed;
 
@@ -360,6 +362,7 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       fileMeta,
       caption,
       linkPreview,
+      attachmentUrls,
     });
     const reactivatedBefore = new Date(new Date(message.timestamp).getTime() - 1000).toISOString();
     const updatedRoom = (await roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;

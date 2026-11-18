@@ -34,6 +34,7 @@ export interface SendMessageInput {
   fileMeta?: MessageFileMeta | null | undefined;
   caption?: string | null | undefined;
   linkPreview?: MessageLinkPreview | null | undefined;
+  attachmentUrls?: string[] | undefined;
 }
 
 export interface DeleteMessageResult {
@@ -77,15 +78,17 @@ export class MessageService {
   }
 
   private attachmentKeysOf(input: SendMessageInput): string[] {
-    if (!input.type || input.type === 'text') {
-      return [];
+    const keys: string[] = [];
+    if (input.type && input.type !== 'text') {
+      keys.push(this.resolveOwnedObjectKey(input.content));
+      if (input.fileMeta?.thumbnailUrl) {
+        keys.push(this.resolveOwnedObjectKey(input.fileMeta.thumbnailUrl));
+      }
     }
-
-    const keys = [this.resolveOwnedObjectKey(input.content)];
-    if (input.fileMeta?.thumbnailUrl) {
-      keys.push(this.resolveOwnedObjectKey(input.fileMeta.thumbnailUrl));
+    for (const url of input.attachmentUrls ?? []) {
+      keys.push(this.resolveOwnedObjectKey(url));
     }
-    return keys;
+    return [...new Set(keys)];
   }
 
   async sendMessage(input: SendMessageInput): Promise<MessageRecord> {
@@ -235,29 +238,34 @@ export class MessageService {
   }
 
   private async deleteAttachmentObjects(message: MessageRecord): Promise<void> {
-    if (message.type !== 'image' && message.type !== 'audio' && message.type !== 'file') {
-      return;
-    }
-
-    const urls = [message.content, message.fileMeta?.thumbnailUrl].filter((url): url is string => Boolean(url));
+    const isMedia = message.type === 'image' || message.type === 'audio' || message.type === 'file';
+    const urls = isMedia ? [message.content, message.fileMeta?.thumbnailUrl].filter((url): url is string => Boolean(url)) : [];
     let releasedBytes = 0;
+    const handledKeys = new Set<string>();
+
+    for (const extra of await this.uploads.findByMessage(message.id)) {
+      handledKeys.add(extra.key);
+      try {
+        await this.objectStorage.deleteObject(extra.key);
+        releasedBytes += extra.size;
+        await this.uploads.remove(extra.key);
+      } catch (error) {
+        logger.error({ err: error, key: extra.key }, 'Failed to delete attachment object from storage');
+      }
+    }
 
     for (const url of urls) {
       const key = resolveObjectKey(url);
-      if (!key) {
+      if (!key || handledKeys.has(key)) {
         continue;
       }
       try {
-        const upload = await this.uploads.find(key);
-        if (upload && upload.messageId !== message.id) {
+        if (await this.uploads.find(key)) {
           continue;
         }
 
         await this.objectStorage.deleteObject(key);
-        if (upload) {
-          releasedBytes += upload.size;
-          await this.uploads.remove(key);
-        } else if (url === message.content) {
+        if (url === message.content) {
           releasedBytes += Math.min(message.fileMeta?.size ?? 0, LEGACY_RELEASE_CAP_BYTES);
         }
       } catch (error) {

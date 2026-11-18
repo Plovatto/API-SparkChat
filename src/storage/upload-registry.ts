@@ -22,6 +22,10 @@ export class UploadRegistry {
     return row ?? null;
   }
 
+  findByMessage(messageId: string): Promise<UploadRecord[]> {
+    return this.db.select().from(uploads).where(eq(uploads.messageId, messageId));
+  }
+
   async totalBytesFor(uploaderId: string): Promise<number> {
     const [row] = await this.db
       .select({ total: sql<number>`coalesce(sum(${uploads.size}), 0)` })
