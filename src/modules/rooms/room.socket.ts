@@ -551,36 +551,28 @@ async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: Room
 
     const validKeys = keys.filter((key) => roomService.isParticipant(room, key.userId));
 
-    const ownKey = validKeys.find((key) => key.userId === actingUserId);
-    const otherKeys = validKeys.filter((key) => key.userId !== actingUserId);
-    const mayReplace = (userId: string) =>
-      deps.rateLimiter.hasPendingKeyRequest(userId, roomId) || deps.canReplaceRoomKey?.(room, userId) === true;
+    const hasOwnKey = validKeys.some((key) => key.userId === actingUserId);
+    const assistantRoom = deps.canReplaceRoomKey?.(room, actingUserId) === true;
+    const aloneInRoom = room.participants.length === 1;
+    const writes = validKeys.map((key) => ({
+      ...key,
+      replaceable:
+        assistantRoom ||
+        (key.userId === actingUserId ? aloneInRoom : deps.rateLimiter.hasPendingKeyRequest(key.userId, roomId)),
+    }));
 
-    if (ownKey) {
-      const existing = await Promise.all(validKeys.map((key) => roomKeyRepository.findForUser(roomId, key.userId)));
-      const conflicted = validKeys.some((key, index) => existing[index] !== null && !mayReplace(key.userId));
-      if (conflicted) {
-        socket.emit('e2e:room-key-rejected', { roomId });
-        return;
+    const { rejected, stored } = await roomKeyRepository.publishBatch(roomId, writes, hasOwnKey);
+    if (rejected) {
+      socket.emit('e2e:room-key-rejected', { roomId });
+      return;
+    }
+
+    for (const key of stored) {
+      if (key.userId !== actingUserId) {
+        deps.rateLimiter.consumePendingKeyRequest(key.userId, roomId);
       }
     }
-
-    const storedOthers = await Promise.all(
-      otherKeys.map(async (key) => {
-        if (mayReplace(key.userId)) {
-          deps.rateLimiter.consumePendingKeyRequest(key.userId, roomId);
-          await roomKeyRepository.publish(roomId, key.userId, key.sealedKey);
-          return key;
-        }
-        return (await roomKeyRepository.publishIfAbsent(roomId, key.userId, key.sealedKey)) ? key : null;
-      }),
-    );
-    const publishedKeys = storedOthers.filter((key): key is (typeof validKeys)[number] => key !== null);
-
-    if (ownKey) {
-      await roomKeyRepository.publish(roomId, ownKey.userId, ownKey.sealedKey);
-      publishedKeys.push(ownKey);
-    }
+    const publishedKeys = stored.map(({ userId, sealedKey }) => ({ userId, sealedKey }));
 
     for (const key of publishedKeys) {
       const target = key.userId === actingUserId ? socket.to(userRoom(actingUserId)) : emitToUser(io, key.userId);

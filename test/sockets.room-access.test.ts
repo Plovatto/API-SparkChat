@@ -138,6 +138,97 @@ describe('room key publishing', () => {
     expect(phonePushes).toHaveLength(0);
   });
 
+  it('keeps exactly one key when two devices publish their own at the same time', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
+    const bob = await h.createAccount('Bob');
+    if (!group.roomCode) {
+      throw new Error('group without code');
+    }
+    await h.roomService.joinByCode(group.roomCode, bob.user.id);
+    const laptop = await h.connectAs(alice);
+    const phone = await h.connectAs(alice);
+    const rejections = [...[laptop, phone].map((client) => collectEvents(client, 'e2e:room-key-rejected'))];
+
+    laptop.emit('e2e:publish-room-key', { roomId: group.id, keys: [{ userId: alice.user.id, sealedKey: 'from-laptop' }] });
+    phone.emit('e2e:publish-room-key', { roomId: group.id, keys: [{ userId: alice.user.id, sealedKey: 'from-phone' }] });
+    await Promise.all([roundTrip(laptop), roundTrip(phone)]);
+    await settle(200);
+
+    const stored = await h.roomKeyRepository.findForUser(group.id, alice.user.id);
+    expect(['from-laptop', 'from-phone']).toContain(stored);
+    expect(rejections.flat()).toHaveLength(1);
+  });
+
+  it('lets only one of two users who open a private chat at once establish the key', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const room = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+    const rejections = [collectEvents(aliceClient, 'e2e:room-key-rejected'), collectEvents(bobClient, 'e2e:room-key-rejected')];
+
+    aliceClient.emit('e2e:publish-room-key', {
+      roomId: room.id,
+      keys: [
+        { userId: alice.user.id, sealedKey: 'k1-alice' },
+        { userId: bob.user.id, sealedKey: 'k1-bob' },
+      ],
+    });
+    bobClient.emit('e2e:publish-room-key', {
+      roomId: room.id,
+      keys: [
+        { userId: bob.user.id, sealedKey: 'k2-bob' },
+        { userId: alice.user.id, sealedKey: 'k2-alice' },
+      ],
+    });
+    await Promise.all([roundTrip(aliceClient), roundTrip(bobClient)]);
+    await settle(200);
+
+    const aliceKey = await h.roomKeyRepository.findForUser(room.id, alice.user.id);
+    const bobKey = await h.roomKeyRepository.findForUser(room.id, bob.user.id);
+    expect([aliceKey?.slice(0, 2), bobKey?.slice(0, 2)]).toSatisfy(([first, second]: string[]) => first === second);
+    expect(rejections.flat()).toHaveLength(1);
+  });
+
+  it('lets the only member of a group replace their own unreadable key', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const group = await h.roomService.createGroupRoom('Sozinha', alice.user.id);
+    await h.roomKeyRepository.publish(group.id, alice.user.id, 'unreadable');
+    const aliceClient = await h.connectAs(alice);
+    const rejected = collectEvents(aliceClient, 'e2e:room-key-rejected');
+
+    aliceClient.emit('e2e:publish-room-key', { roomId: group.id, keys: [{ userId: alice.user.id, sealedKey: 'fresh' }] });
+    await roundTrip(aliceClient);
+    await settle(50);
+
+    expect(rejected).toHaveLength(0);
+    expect(await h.roomKeyRepository.findForUser(group.id, alice.user.id)).toBe('fresh');
+  });
+
+  it('does not let a user’s own pending request unlock replacing their own key', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+    const group = await createGroup(aliceClient, 'Amigos');
+    await joinByCode(bobClient, group.roomCode);
+    await h.roomKeyRepository.publish(group.id, alice.user.id, 'existing');
+
+    const forwarded = waitForEvent(bobClient, 'e2e:key-request');
+    aliceClient.emit('e2e:request-room-key', { roomId: group.id });
+    await forwarded;
+    const rejected = waitForEvent(aliceClient, 'e2e:room-key-rejected');
+    aliceClient.emit('e2e:publish-room-key', { roomId: group.id, keys: [{ userId: alice.user.id, sealedKey: 'own-replacement' }] });
+    await rejected;
+
+    expect(await h.roomKeyRepository.findForUser(group.id, alice.user.id)).toBe('existing');
+  });
+
   it('delivers a first own key to the publisher’s other devices', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');

@@ -7,6 +7,17 @@ export interface SealedRoomKey {
   sealedKey: string;
 }
 
+export interface RoomKeyWrite {
+  userId: string;
+  sealedKey: string;
+  replaceable: boolean;
+}
+
+export interface RoomKeyBatchResult {
+  rejected: boolean;
+  stored: RoomKeyWrite[];
+}
+
 export class RoomKeyRepository {
   constructor(private readonly db: Database) {}
 
@@ -17,13 +28,32 @@ export class RoomKeyRepository {
       .onConflictDoUpdate({ target: [roomKeys.roomId, roomKeys.userId], set: { sealedKey } });
   }
 
-  async publishIfAbsent(roomId: string, userId: string, sealedKey: string): Promise<boolean> {
-    const inserted = await this.db
-      .insert(roomKeys)
-      .values({ roomId, userId, sealedKey, createdAt: new Date().toISOString() })
-      .onConflictDoNothing({ target: [roomKeys.roomId, roomKeys.userId] })
-      .returning({ userId: roomKeys.userId });
-    return inserted.length > 0;
+  publishBatch(roomId: string, writes: RoomKeyWrite[], rejectOnConflict: boolean): Promise<RoomKeyBatchResult> {
+    return this.db.transaction(async (tx) => {
+      const existingRows = writes.length
+        ? await tx
+            .select({ userId: roomKeys.userId })
+            .from(roomKeys)
+            .where(and(eq(roomKeys.roomId, roomId), inArray(roomKeys.userId, writes.map((write) => write.userId))))
+        : [];
+      const existing = new Set(existingRows.map((row) => row.userId));
+      const blocked = (write: RoomKeyWrite) => existing.has(write.userId) && !write.replaceable;
+
+      if (rejectOnConflict && writes.some(blocked)) {
+        return { rejected: true, stored: [] };
+      }
+
+      const stored = writes.filter((write) => !blocked(write));
+      const createdAt = new Date().toISOString();
+      for (const write of stored) {
+        await tx
+          .insert(roomKeys)
+          .values({ roomId, userId: write.userId, sealedKey: write.sealedKey, createdAt })
+          .onConflictDoUpdate({ target: [roomKeys.roomId, roomKeys.userId], set: { sealedKey: write.sealedKey } });
+      }
+
+      return { rejected: false, stored };
+    });
   }
 
   async findForUser(roomId: string, userId: string): Promise<string | null> {
