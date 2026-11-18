@@ -142,7 +142,7 @@ export const storageUsage = sqliteTable('storage_usage', {
 });
 
 export const linkPreviews = sqliteTable('link_previews', {
-  url: text('url').primaryKey(),
+  cacheKey: text('url').primaryKey(),
   status: text('status').$type<LinkPreviewCacheRecord['status']>().notNull(),
   title: text('title'),
   description: text('description'),

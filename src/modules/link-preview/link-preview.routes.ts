@@ -47,13 +47,13 @@ registry.registerPath({
 });
 
 registry.registerPath({
-  method: 'get',
+  method: 'post',
   path: '/api/link-preview/image',
   tags: ['LinkPreview'],
-  summary: 'Repassa (proxy) os bytes da imagem de um preview de link, sem expor o IP do cliente ao site de origem',
+  summary: 'Repassa (proxy) os bytes de uma imagem raster (PNG, JPEG, GIF ou WEBP) de um preview de link; a URL vai no corpo para não aparecer em logs',
   security: [{ sessionAuth: [] }],
   request: {
-    query: linkPreviewRequestSchema,
+    body: { content: { 'application/json': { schema: linkPreviewRequestSchema } } },
   },
   responses: {
     200: { description: 'Bytes da imagem' },
@@ -78,7 +78,7 @@ export function createLinkPreviewRouter(userService: UserService, service: LinkP
   const requireAuth = createRequireAuth(userService);
 
   router.post('/', linkPreviewRateLimiter, requireAuth, asyncHandler(controller.getPreview));
-  router.get('/image', linkPreviewRateLimiter, requireAuth, asyncHandler(controller.getImage));
+  router.post('/image', linkPreviewRateLimiter, requireAuth, asyncHandler(controller.getImage));
 
   return router;
 }

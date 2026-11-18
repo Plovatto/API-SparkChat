@@ -20,7 +20,11 @@ export async function buildTestApp(
   const userService = new UserService(userRepository, userSessionRepository, TEST_RECOVERY_FILE_SECRET);
   const loginRateLimiter = new LoginRateLimiter();
   const linkPreviewRepository = new LinkPreviewRepository(db);
-  const linkPreviewService = new LinkPreviewService(linkPreviewRepository, options.linkPreviewFetcher ?? noopLinkPreviewFetcher);
+  const linkPreviewService = new LinkPreviewService(
+    linkPreviewRepository,
+    options.linkPreviewFetcher ?? noopLinkPreviewFetcher,
+    TEST_RECOVERY_FILE_SECRET,
+  );
   const objectStorage = options.objectStorage ?? new InMemoryObjectStorage();
   const storageUsageRepository = new StorageUsageRepository(db);
   const storageQuota = options.storageQuota ?? new StorageQuota(storageUsageRepository);

@@ -1,4 +1,4 @@
-export { httpLinkPreviewFetcher } from './link-preview.fetcher.js';
+export { createHttpLinkPreviewFetcher, httpLinkPreviewFetcher } from './link-preview.fetcher.js';
 export { LinkPreviewRepository } from './link-preview.repository.js';
 export { createLinkPreviewRouter } from './link-preview.routes.js';
 export { LinkPreviewService } from './link-preview.service.js';
