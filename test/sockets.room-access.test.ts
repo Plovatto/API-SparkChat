@@ -74,6 +74,23 @@ describe('presence privacy', () => {
   });
 });
 
+describe('presence and blocks', () => {
+  it('stops sending presence between two users once one blocks the other', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const room = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
+    await h.roomService.blockUser(room.id, alice.user.id, bob.user.id);
+    const bobClient = await h.connectAs(bob);
+    const seen = collectEvents<{ userId: string }>(bobClient, 'user:online');
+
+    await h.connectAs(alice);
+    await settle(150);
+
+    expect(seen.filter((event) => event.userId === alice.user.id)).toHaveLength(0);
+  });
+});
+
 describe('room key publishing', () => {
   it('never lets a participant replace the sealed key stored for someone else', async () => {
     const h = await start();
@@ -86,6 +103,7 @@ describe('room key publishing', () => {
     const bobClient = await h.connectAs(bob);
     const pushedToAlice = collectEvents(aliceClient, 'e2e:room-key');
 
+    const rejected = waitForEvent<{ roomId: string }>(bobClient, 'e2e:room-key-rejected');
     bobClient.emit('e2e:publish-room-key', {
       roomId: room.id,
       keys: [
@@ -93,12 +111,60 @@ describe('room key publishing', () => {
         { userId: bob.user.id, sealedKey: 'sealed-for-bob' },
       ],
     });
-    await roundTrip(bobClient);
+    await expect(rejected).resolves.toEqual({ roomId: room.id });
     await settle(100);
 
     expect(await h.roomKeyRepository.findForUser(room.id, alice.user.id)).toBe('sealed-by-alice-for-alice');
-    expect(await h.roomKeyRepository.findForUser(room.id, bob.user.id)).toBe('sealed-for-bob');
+    expect(await h.roomKeyRepository.findForUser(room.id, bob.user.id)).toBeNull();
     expect(pushedToAlice).toHaveLength(0);
+  });
+
+  it('lets a participant replace their own key and tells their other devices', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const room = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
+    await h.roomKeyRepository.publish(room.id, alice.user.id, 'old-key');
+    const laptop = await h.connectAs(alice);
+    const phone = await h.connectAs(alice);
+
+    const pushed = waitForEvent<{ sealedKey: string }>(phone, 'e2e:room-key');
+    laptop.emit('e2e:publish-room-key', { roomId: room.id, keys: [{ userId: alice.user.id, sealedKey: 'new-key' }] });
+
+    await expect(pushed).resolves.toMatchObject({ sealedKey: 'new-key' });
+    expect(await h.roomKeyRepository.findForUser(room.id, alice.user.id)).toBe('new-key');
+  });
+
+  it('replaces a stored key only after its owner asked for it, and only once', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const carol = await h.createAccount('Carol');
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+    const carolClient = await h.connectAs(carol);
+    const group = await createGroup(aliceClient, 'Amigos');
+    await joinByCode(bobClient, group.roomCode);
+    await joinByCode(carolClient, group.roomCode);
+    await h.roomKeyRepository.publish(group.id, alice.user.id, 'unreadable-key');
+
+    bobClient.emit('e2e:publish-room-key', { roomId: group.id, keys: [{ userId: alice.user.id, sealedKey: 'unsolicited' }] });
+    await roundTrip(bobClient);
+    await settle(50);
+    expect(await h.roomKeyRepository.findForUser(group.id, alice.user.id)).toBe('unreadable-key');
+
+    const forwarded = waitForEvent(bobClient, 'e2e:key-request');
+    aliceClient.emit('e2e:request-room-key', { roomId: group.id });
+    await forwarded;
+
+    const delivered = waitForEvent<{ sealedKey: string }>(aliceClient, 'e2e:room-key');
+    bobClient.emit('e2e:publish-room-key', { roomId: group.id, keys: [{ userId: alice.user.id, sealedKey: 'answer-from-bob' }] });
+    await expect(delivered).resolves.toMatchObject({ sealedKey: 'answer-from-bob' });
+
+    carolClient.emit('e2e:publish-room-key', { roomId: group.id, keys: [{ userId: alice.user.id, sealedKey: 'late-answer' }] });
+    await roundTrip(carolClient);
+    await settle(50);
+    expect(await h.roomKeyRepository.findForUser(group.id, alice.user.id)).toBe('answer-from-bob');
   });
 
   it('stores and delivers the first sealed key published for a participant', async () => {
@@ -225,6 +291,41 @@ describe('group membership enforcement', () => {
     await expect(limited).resolves.toMatchObject({ code: 'rateLimit.roomJoin' });
   });
 
+  it('refuses to leave a private conversation as if it were a group, keeping the block', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const room = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
+    await h.roomService.blockUser(room.id, alice.user.id, bob.user.id);
+    const bobClient = await h.connectAs(bob);
+    const left = collectEvents(bobClient, 'group:left');
+
+    bobClient.emit('group:leave', { roomId: room.id });
+    await roundTrip(bobClient);
+    await settle(100);
+
+    const after = await h.roomService.getRoomById(room.id);
+    expect(after?.participants).toContain(bob.user.id);
+    expect(after?.blockedBy).toEqual({ [bob.user.id]: alice.user.id });
+    expect(left).toHaveLength(0);
+  });
+
+  it('counts parallel invite code attempts before they finish', async () => {
+    const h = await start();
+    const bob = await h.createAccount('Bob');
+    const bobClient = await h.connectAs(bob);
+    const errors = collectEvents<{ code: string }>(bobClient, 'error');
+
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      bobClient.emit('room:join-by-code', { roomCode: 'BURST' + String(attempt) + 'CODE' });
+    }
+    await roundTrip(bobClient);
+    await settle(300);
+
+    expect(errors.filter((error) => error.code === 'room.notFound')).toHaveLength(10);
+    expect(errors.filter((error) => error.code === 'rateLimit.roomJoin')).toHaveLength(5);
+  });
+
   it('ignores block requests inside groups', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
@@ -279,7 +380,9 @@ describe('connection state recovery and membership', () => {
     const aliceClient = await h.connectAs(alice);
     const bobClient = await h.connectAs(bob);
     const group = await createGroup(aliceClient, 'Amigos');
+    const other = await createGroup(aliceClient, 'Outro');
     await joinByCode(bobClient, group.roomCode);
+    await joinByCode(bobClient, other.roomCode);
     await Promise.all([joinVisibleRooms(aliceClient), joinVisibleRooms(bobClient)]);
 
     const warmUp = waitForEvent(bobClient, 'message:new', (event: { content: string }) => event.content === 'aquecendo');
@@ -291,8 +394,11 @@ describe('connection state recovery and membership', () => {
     const sent = waitForEvent(aliceClient, 'message:new', (event: { content: string }) => event.content === 'depois da remoção');
     aliceClient.emit('message:send', { roomId: group.id, content: 'depois da remoção' });
     await sent;
+    const stillMember = waitForEvent(aliceClient, 'message:new', (event: { content: string }) => event.content === 'na outra sala');
+    aliceClient.emit('message:send', { roomId: other.id, content: 'na outra sala' });
+    await stillMember;
 
-    const received = collectEvents<{ roomId: string }>(bobClient, 'message:new');
+    const received = collectEvents<{ roomId: string; content: string }>(bobClient, 'message:new');
     const reconnected = new Promise<void>((resolve) => bobClient.once('connect', () => resolve()));
     bobClient.connect();
     await reconnected;
@@ -308,5 +414,6 @@ describe('connection state recovery and membership', () => {
     await settle(100);
 
     expect(received.filter((message) => message.roomId === group.id)).toHaveLength(0);
+    expect(received.filter((message) => message.roomId === other.id).map((message) => message.content)).toContain('na outra sala');
   });
 });
