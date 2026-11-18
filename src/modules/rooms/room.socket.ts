@@ -557,8 +557,8 @@ async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: Room
       deps.rateLimiter.hasPendingKeyRequest(userId, roomId) || deps.canReplaceRoomKey?.(room, userId) === true;
 
     if (ownKey) {
-      const existing = await Promise.all(otherKeys.map((key) => roomKeyRepository.findForUser(roomId, key.userId)));
-      const conflicted = otherKeys.some((key, index) => existing[index] !== null && !mayReplace(key.userId));
+      const existing = await Promise.all(validKeys.map((key) => roomKeyRepository.findForUser(roomId, key.userId)));
+      const conflicted = validKeys.some((key, index) => existing[index] !== null && !mayReplace(key.userId));
       if (conflicted) {
         socket.emit('e2e:room-key-rejected', { roomId });
         return;

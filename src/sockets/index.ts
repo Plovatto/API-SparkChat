@@ -84,7 +84,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
         }
       },
       shouldResetInsteadOfDelete: (room) => aiService.isAssistantRoom(room),
-      canReplaceRoomKey: (room, userId) => aiService.isAssistantRoom(room) && aiService.isAssistantUser(userId),
+      canReplaceRoomKey: (room) => aiService.isAssistantRoom(room),
       onRoomKeyPublished: ({ io: server, room }) => {
         if (aiService.isAssistantRoom(room)) {
           void aiService.handleRoomKeyPublished(server, room);

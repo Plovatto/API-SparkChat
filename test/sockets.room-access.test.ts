@@ -119,20 +119,36 @@ describe('room key publishing', () => {
     expect(pushedToAlice).toHaveLength(0);
   });
 
-  it('lets a participant replace their own key and tells their other devices', async () => {
+  it('refuses to replace a key the publisher already has, so every device keeps the same key', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
     const room = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
-    await h.roomKeyRepository.publish(room.id, alice.user.id, 'old-key');
+    await h.roomKeyRepository.publish(room.id, alice.user.id, 'key-from-first-device');
+    const laptop = await h.connectAs(alice);
+    const phone = await h.connectAs(alice);
+    const phonePushes = collectEvents(phone, 'e2e:room-key');
+
+    const rejected = waitForEvent(laptop, 'e2e:room-key-rejected');
+    laptop.emit('e2e:publish-room-key', { roomId: room.id, keys: [{ userId: alice.user.id, sealedKey: 'competing-key' }] });
+    await rejected;
+    await settle(50);
+
+    expect(await h.roomKeyRepository.findForUser(room.id, alice.user.id)).toBe('key-from-first-device');
+    expect(phonePushes).toHaveLength(0);
+  });
+
+  it('delivers a first own key to the publisher’s other devices', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
     const laptop = await h.connectAs(alice);
     const phone = await h.connectAs(alice);
 
     const pushed = waitForEvent<{ sealedKey: string }>(phone, 'e2e:room-key');
-    laptop.emit('e2e:publish-room-key', { roomId: room.id, keys: [{ userId: alice.user.id, sealedKey: 'new-key' }] });
+    laptop.emit('e2e:publish-room-key', { roomId: group.id, keys: [{ userId: alice.user.id, sealedKey: 'first-key' }] });
 
-    await expect(pushed).resolves.toMatchObject({ sealedKey: 'new-key' });
-    expect(await h.roomKeyRepository.findForUser(room.id, alice.user.id)).toBe('new-key');
+    await expect(pushed).resolves.toMatchObject({ sealedKey: 'first-key' });
   });
 
   it('lets the user re-establish the key of a conversation with the assistant', async () => {
@@ -153,6 +169,7 @@ describe('room key publishing', () => {
     });
     const room = await h.roomService.createPrivateRoom(alice.user.id, 'assistant-not-in-tests');
     await h.roomKeyRepository.publish(room.id, 'assistant-not-in-tests', 'stale-assistant-key');
+    await h.roomKeyRepository.publish(room.id, alice.user.id, 'stale-alice-key');
     const aliceClient = await h.connectAs(alice);
     const rejected = collectEvents(aliceClient, 'e2e:room-key-rejected');
 
