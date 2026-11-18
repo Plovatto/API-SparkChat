@@ -10,13 +10,16 @@ const envSchema = z.object({
   TURSO_DATABASE_URL: z.string().optional(),
   TURSO_AUTH_TOKEN: z.string().optional(),
   RECOVERY_FILE_SECRET: z.string().min(32),
-  PASSWORD_SCRYPT_COST: z.coerce
-    .number()
-    .int()
-    .min(2 ** 14)
-    .max(2 ** 17)
-    .refine((value) => (value & (value - 1)) === 0, 'PASSWORD_SCRYPT_COST must be a power of two')
-    .default(2 ** 16),
+  PASSWORD_SCRYPT_COST: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.coerce
+      .number()
+      .int()
+      .min(2 ** 14)
+      .max(2 ** 17)
+      .refine((value) => (value & (value - 1)) === 0, 'PASSWORD_SCRYPT_COST must be a power of two')
+      .default(2 ** 16),
+  ),
   GEMINI_API_KEY: z.string().min(1),
   AI_ASSISTANT_PRIVATE_KEY: z.string().min(1),
   R2_ACCOUNT_ID: z.string().min(1),
