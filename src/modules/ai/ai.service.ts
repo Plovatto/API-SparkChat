@@ -55,6 +55,10 @@ export class AiService {
     private readonly objectStorage: ObjectStorage,
   ) {}
 
+  isAssistantUser(userId: string): boolean {
+    return userId === this.identity.userId;
+  }
+
   isAssistantRoom(room: RoomRecord): boolean {
     return room.type === 'private' && room.participants.includes(this.identity.userId);
   }

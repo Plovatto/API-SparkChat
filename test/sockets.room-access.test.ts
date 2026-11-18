@@ -135,6 +135,71 @@ describe('room key publishing', () => {
     expect(await h.roomKeyRepository.findForUser(room.id, alice.user.id)).toBe('new-key');
   });
 
+  it('lets the user re-establish the key of a conversation with the assistant', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const now = new Date().toISOString();
+    await h.userRepository.insert({
+      id: 'assistant-not-in-tests',
+      nickname: 'SparkAI',
+      nicknameNormalized: 'sparkai',
+      avatar: 0,
+      passwordHash: 'x',
+      recoveryTokenHash: 'y',
+      status: 'online',
+      statusText: null,
+      createdAt: now,
+      lastSeen: now,
+    });
+    const room = await h.roomService.createPrivateRoom(alice.user.id, 'assistant-not-in-tests');
+    await h.roomKeyRepository.publish(room.id, 'assistant-not-in-tests', 'stale-assistant-key');
+    const aliceClient = await h.connectAs(alice);
+    const rejected = collectEvents(aliceClient, 'e2e:room-key-rejected');
+
+    aliceClient.emit('e2e:publish-room-key', {
+      roomId: room.id,
+      keys: [
+        { userId: alice.user.id, sealedKey: 'fresh-for-alice' },
+        { userId: 'assistant-not-in-tests', sealedKey: 'fresh-for-assistant' },
+      ],
+    });
+    await roundTrip(aliceClient);
+    await settle(100);
+
+    expect(rejected).toHaveLength(0);
+    expect(await h.roomKeyRepository.findForUser(room.id, alice.user.id)).toBe('fresh-for-alice');
+    expect(await h.roomKeyRepository.findForUser(room.id, 'assistant-not-in-tests')).toBe('fresh-for-assistant');
+  });
+
+  it('writes nothing from a batch that would create a competing key', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const carol = await h.createAccount('Carol');
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+    const carolClient = await h.connectAs(carol);
+    const group = await createGroup(aliceClient, 'Amigos');
+    await joinByCode(bobClient, group.roomCode);
+    await joinByCode(carolClient, group.roomCode);
+    await h.roomKeyRepository.publish(group.id, bob.user.id, 'real-key-for-bob');
+
+    const rejected = waitForEvent(aliceClient, 'e2e:room-key-rejected');
+    aliceClient.emit('e2e:publish-room-key', {
+      roomId: group.id,
+      keys: [
+        { userId: alice.user.id, sealedKey: 'competing-for-alice' },
+        { userId: carol.user.id, sealedKey: 'competing-for-carol' },
+        { userId: bob.user.id, sealedKey: 'competing-for-bob' },
+      ],
+    });
+    await rejected;
+
+    expect(await h.roomKeyRepository.findForUser(group.id, alice.user.id)).toBeNull();
+    expect(await h.roomKeyRepository.findForUser(group.id, carol.user.id)).toBeNull();
+    expect(await h.roomKeyRepository.findForUser(group.id, bob.user.id)).toBe('real-key-for-bob');
+  });
+
   it('replaces a stored key only after its owner asked for it, and only once', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');

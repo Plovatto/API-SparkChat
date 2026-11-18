@@ -39,9 +39,6 @@ export function guardSessionRecovery(io: AppServer, isSessionActive: SessionVali
   const adapter = io.of('/').adapter;
   const restoreSession = adapter.restoreSession.bind(adapter);
   const sessions = (adapter as unknown as { sessions?: Map<string, StoredSession> }).sessions;
-  if (!sessions) {
-    logger.warn('Socket adapter does not expose recoverable sessions; room memberships are not rechecked on recovery');
-  }
 
   adapter.restoreSession = async (pid, offset) => {
     const stored = sessions?.get(pid);

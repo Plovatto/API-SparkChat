@@ -58,6 +58,11 @@ export class RoomActionRateLimiter {
     return true;
   }
 
+  hasPendingKeyRequest(userId: string, roomId: string): boolean {
+    const expiresAt = this.pendingKeyRequests.get(`${userId}:${roomId}`);
+    return expiresAt !== undefined && expiresAt > this.now();
+  }
+
   consumePendingKeyRequest(userId: string, roomId: string): boolean {
     const key = `${userId}:${roomId}`;
     const expiresAt = this.pendingKeyRequests.get(key);

@@ -19,6 +19,7 @@ import type { RoomRecord } from './room.types.js';
 export type OnRoomCreatedHook = (context: { io: AppServer; room: RoomRecord; locale: Locale }) => void;
 export type ShouldResetInsteadOfDeleteHook = (room: RoomRecord) => boolean;
 export type OnRoomKeyPublishedHook = (context: { io: AppServer; room: RoomRecord }) => void;
+export type CanReplaceRoomKeyHook = (room: RoomRecord, userId: string) => boolean;
 
 export interface RoomSocketDeps {
   roomService: RoomService;
@@ -29,6 +30,7 @@ export interface RoomSocketDeps {
   onRoomCreated?: OnRoomCreatedHook;
   shouldResetInsteadOfDelete?: ShouldResetInsteadOfDeleteHook;
   onRoomKeyPublished?: OnRoomKeyPublishedHook;
+  canReplaceRoomKey?: CanReplaceRoomKeyHook;
 }
 
 const ROOM_CODE_MIN_LENGTH = 4;
@@ -551,10 +553,22 @@ async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: Room
 
     const ownKey = validKeys.find((key) => key.userId === actingUserId);
     const otherKeys = validKeys.filter((key) => key.userId !== actingUserId);
+    const mayReplace = (userId: string) =>
+      deps.rateLimiter.hasPendingKeyRequest(userId, roomId) || deps.canReplaceRoomKey?.(room, userId) === true;
+
+    if (ownKey) {
+      const existing = await Promise.all(otherKeys.map((key) => roomKeyRepository.findForUser(roomId, key.userId)));
+      const conflicted = otherKeys.some((key, index) => existing[index] !== null && !mayReplace(key.userId));
+      if (conflicted) {
+        socket.emit('e2e:room-key-rejected', { roomId });
+        return;
+      }
+    }
 
     const storedOthers = await Promise.all(
       otherKeys.map(async (key) => {
-        if (deps.rateLimiter.consumePendingKeyRequest(key.userId, roomId)) {
+        if (mayReplace(key.userId)) {
+          deps.rateLimiter.consumePendingKeyRequest(key.userId, roomId);
           await roomKeyRepository.publish(roomId, key.userId, key.sealedKey);
           return key;
         }
@@ -562,11 +576,8 @@ async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: Room
       }),
     );
     const publishedKeys = storedOthers.filter((key): key is (typeof validKeys)[number] => key !== null);
-    const conflicted = publishedKeys.length < otherKeys.length;
 
-    if (ownKey && conflicted) {
-      socket.emit('e2e:room-key-rejected', { roomId });
-    } else if (ownKey) {
+    if (ownKey) {
       await roomKeyRepository.publish(roomId, ownKey.userId, ownKey.sealedKey);
       publishedKeys.push(ownKey);
     }
