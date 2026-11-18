@@ -28,6 +28,7 @@ import type { AiConversationMessage, AiRouter } from './ai.provider.js';
 import type { AiUsageLimiter } from './ai.usage-limiter.js';
 
 const ROOM_KEY_RETRY_DELAYS_MS = [0, 300, 700, 1200];
+export const AI_PENDING_WELCOME_TTL_MS = 10 * 60 * 1000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -41,6 +42,7 @@ interface PendingBatch {
 
 export class AiService {
   private readonly pendingBatchByRoom = new Map<string, PendingBatch>();
+  private readonly pendingWelcomeByRoom = new Map<string, { locale: Locale; timer: ReturnType<typeof setTimeout> }>();
 
   constructor(
     private readonly identity: AssistantIdentity,
@@ -58,12 +60,63 @@ export class AiService {
   }
 
   async sendWelcomeMessage(io: AppServer, room: RoomRecord, locale: Locale): Promise<void> {
-    const roomKey = await this.resolveRoomKey(room.id);
-    if (!roomKey) {
-      logger.warn({ roomId: room.id }, 'Não foi possível enviar a mensagem de boas-vindas do SparkAI: chave da sala indisponível');
+    this.forgetPendingWelcome(room.id);
+    try {
+      const roomKey = await this.resolveRoomKey(room.id);
+      if (!roomKey) {
+        this.waitForRoomKey(room.id, locale);
+        logger.info({ roomId: room.id }, 'Boas-vindas do SparkAI aguardando a chave da sala');
+        return;
+      }
+
+      await this.deliverWelcome(io, room, locale, roomKey);
+    } catch (error) {
+      logger.error({ err: error, roomId: room.id }, 'Falha ao enviar a mensagem de boas-vindas do SparkAI');
+    }
+  }
+
+  async handleRoomKeyPublished(io: AppServer, room: RoomRecord): Promise<void> {
+    const pending = this.pendingWelcomeByRoom.get(room.id);
+    if (!pending) {
       return;
     }
+    this.forgetPendingWelcome(room.id);
 
+    try {
+      const roomKey = await this.resolveRoomKey(room.id);
+      if (!roomKey) {
+        this.waitForRoomKey(room.id, pending.locale);
+        return;
+      }
+      await this.deliverWelcome(io, room, pending.locale, roomKey);
+    } catch (error) {
+      logger.error({ err: error, roomId: room.id }, 'Falha ao enviar a mensagem de boas-vindas do SparkAI');
+    }
+  }
+
+  private forgetPendingWelcome(roomId: string): void {
+    const pending = this.pendingWelcomeByRoom.get(roomId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      this.pendingWelcomeByRoom.delete(roomId);
+    }
+  }
+
+  private waitForRoomKey(roomId: string, locale: Locale): void {
+    const previous = this.pendingWelcomeByRoom.get(roomId);
+    if (previous) {
+      clearTimeout(previous.timer);
+    }
+    const timer = setTimeout(() => {
+      if (this.pendingWelcomeByRoom.get(roomId)?.timer === timer) {
+        this.pendingWelcomeByRoom.delete(roomId);
+      }
+    }, AI_PENDING_WELCOME_TTL_MS);
+    timer.unref?.();
+    this.pendingWelcomeByRoom.set(roomId, { locale, timer });
+  }
+
+  private async deliverWelcome(io: AppServer, room: RoomRecord, locale: Locale, roomKey: Uint8Array): Promise<void> {
     const encrypted = await encryptContent(AI_WELCOME_MESSAGES[locale], roomKey);
     const message = await this.messageService.sendMessage({
       roomId: room.id,

@@ -73,6 +73,11 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
         }
       },
       shouldResetInsteadOfDelete: (room) => aiService.isAssistantRoom(room),
+      onRoomKeyPublished: ({ io: server, room }) => {
+        if (aiService.isAssistantRoom(room)) {
+          void aiService.handleRoomKeyPublished(server, room);
+        }
+      },
     });
 
     registerMessageSocketHandlers(io, socket, {

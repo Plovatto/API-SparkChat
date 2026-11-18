@@ -17,6 +17,7 @@ import type { RoomRecord } from './room.types.js';
 
 export type OnRoomCreatedHook = (context: { io: AppServer; room: RoomRecord; locale: Locale }) => void;
 export type ShouldResetInsteadOfDeleteHook = (room: RoomRecord) => boolean;
+export type OnRoomKeyPublishedHook = (context: { io: AppServer; room: RoomRecord }) => void;
 
 export interface RoomSocketDeps {
   roomService: RoomService;
@@ -25,6 +26,7 @@ export interface RoomSocketDeps {
   roomKeyRepository: RoomKeyRepository;
   onRoomCreated?: OnRoomCreatedHook;
   shouldResetInsteadOfDelete?: ShouldResetInsteadOfDeleteHook;
+  onRoomKeyPublished?: OnRoomKeyPublishedHook;
 }
 
 const ROOM_CODE_MIN_LENGTH = 4;
@@ -532,6 +534,10 @@ async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: Room
     for (const key of validKeys) {
       const target = key.userId === actingUserId ? socket.to(userRoom(actingUserId)) : emitToUser(io, key.userId);
       target.emit('e2e:room-key', { roomId, sealedKey: key.sealedKey });
+    }
+
+    if (validKeys.length > 0) {
+      deps.onRoomKeyPublished?.({ io, room });
     }
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
