@@ -23,6 +23,10 @@ function toParticipant(user: UserRecord, isAdmin: boolean): RoomParticipant {
   };
 }
 
+function withoutBlocksInvolving(blockedBy: Record<string, string>, userId: string): Record<string, string> {
+  return Object.fromEntries(Object.entries(blockedBy).filter(([blocked, blocker]) => blocked !== userId && blocker !== userId));
+}
+
 function toParticipants(room: RoomRecord, usersById: Map<string, UserRecord>): RoomParticipant[] {
   const admins = new Set(room.admins);
   return room.participants
@@ -88,6 +92,10 @@ export class RoomService {
       return { room, joined: false };
     }
 
+    if (await this.repository.isBanned(room.id, userId)) {
+      throw AppError.of('room.notFound');
+    }
+
     const now = new Date().toISOString();
     const participants = [...room.participants, userId];
     const visibleTo = room.visibleTo.includes(userId) ? room.visibleTo : [...room.visibleTo, userId];
@@ -115,15 +123,16 @@ export class RoomService {
 
   async leaveGroup(roomId: string, userId: string): Promise<RoomRecord | null> {
     const room = await this.repository.findById(roomId);
-    if (!room || !room.participants.includes(userId)) {
+    if (!room || room.type !== 'group' || !room.participants.includes(userId)) {
       return null;
     }
 
     const participants = room.participants.filter((id) => id !== userId);
     const visibleTo = room.visibleTo.filter((id) => id !== userId);
     const admins = room.admins.filter((id) => id !== userId);
+    const blockedBy = withoutBlocksInvolving(room.blockedBy, userId);
 
-    return this.repository.update(roomId, { participants, visibleTo, admins });
+    return this.repository.update(roomId, { participants, visibleTo, admins, blockedBy });
   }
 
   async promoteAdmin(roomId: string, actingUserId: string, targetUserId: string): Promise<RoomRecord | null> {
@@ -168,8 +177,10 @@ export class RoomService {
     const participants = room.participants.filter((id) => id !== targetUserId);
     const visibleTo = room.visibleTo.filter((id) => id !== targetUserId);
     const admins = room.admins.filter((id) => id !== targetUserId);
+    const blockedBy = withoutBlocksInvolving(room.blockedBy, targetUserId);
 
-    return this.repository.update(roomId, { participants, visibleTo, admins });
+    await this.repository.ban(roomId, targetUserId, actingUserId);
+    return this.repository.update(roomId, { participants, visibleTo, admins, blockedBy, roomCode: generateRoomCode() });
   }
 
   async blockUser(roomId: string, userId: string, blockedUserId: string): Promise<RoomRecord | null> {
@@ -178,7 +189,12 @@ export class RoomService {
       return null;
     }
 
-    if (userId === blockedUserId || !room.participants.includes(userId) || !room.participants.includes(blockedUserId)) {
+    if (
+      room.type !== 'private' ||
+      userId === blockedUserId ||
+      !room.participants.includes(userId) ||
+      !room.participants.includes(blockedUserId)
+    ) {
       return null;
     }
 
@@ -199,6 +215,15 @@ export class RoomService {
     const blockedBy = { ...room.blockedBy };
     delete blockedBy[blockedUserId];
     return this.repository.update(roomId, { blockedBy });
+  }
+
+  async getContactIds(userId: string): Promise<string[]> {
+    const contactIds = await this.repository.findContactIds(userId);
+    return contactIds.includes(userId) ? contactIds : [...contactIds, userId];
+  }
+
+  findParticipatingRoomIds(userId: string, roomIds: string[]): Promise<Set<string>> {
+    return this.repository.findParticipatingRoomIds(userId, roomIds);
   }
 
   getRoomById(roomId: string): Promise<RoomRecord | null> {

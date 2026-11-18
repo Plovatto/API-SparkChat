@@ -7,6 +7,7 @@ import { AiRouter } from '@/modules/ai/ai.provider.js';
 import { AiService } from '@/modules/ai/ai.service.js';
 import { AiUsageLimiter } from '@/modules/ai/ai.usage-limiter.js';
 import { MessageRateLimiter, RecordingService, RoomPresenceService, TypingService } from '@/modules/messages/index.js';
+import { RoomActionRateLimiter } from '@/modules/rooms/index.js';
 import { LoginRateLimiter } from '@/modules/users/index.js';
 import type { AppServer } from '@/sockets/events.js';
 import { registerSocketHandlers } from '@/sockets/index.js';
@@ -18,6 +19,7 @@ export type TestClient = ClientSocket;
 
 export interface SocketHarnessOptions {
   messageRateLimiter?: MessageRateLimiter;
+  roomRateLimiter?: RoomActionRateLimiter;
   connectionStateRecovery?: boolean;
 }
 
@@ -53,6 +55,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     presenceService,
     loginRateLimiter: new LoginRateLimiter(),
     messageRateLimiter: options.messageRateLimiter ?? new MessageRateLimiter(),
+    roomRateLimiter: options.roomRateLimiter ?? new RoomActionRateLimiter(),
     roomKeyRepository: services.roomKeyRepository,
     aiService,
   });
