@@ -29,6 +29,8 @@ function isEncryptedUrl(url: string): boolean {
   }
 }
 
+const ENCRYPTION_OVERHEAD_BYTES = 64;
+
 export function guessMimeTypeFromUrl(url: string): string | null {
   const extension = path.extname(extractPathname(url)).toLowerCase();
   return EXTENSION_MIME_TYPES[extension] ?? null;
@@ -38,6 +40,7 @@ export async function loadDecryptedAttachment(
   url: string,
   roomKey: Uint8Array,
   objectStorage: ObjectStorage,
+  maxBytes: number,
 ): Promise<Buffer | null> {
   const key = resolveObjectKey(url);
   if (!key) {
@@ -45,7 +48,7 @@ export async function loadDecryptedAttachment(
   }
 
   const raw = await objectStorage.getObject(key);
-  if (!raw) {
+  if (!raw || raw.length > maxBytes + ENCRYPTION_OVERHEAD_BYTES) {
     return null;
   }
 

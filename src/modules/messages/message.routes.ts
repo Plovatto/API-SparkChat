@@ -11,6 +11,7 @@ import { createRequireAuth } from '../../middleware/auth.js';
 import { createRateLimiter } from '../../middleware/rate-limit.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import type { StorageQuota } from '../../storage/storage-quota.js';
+import type { UploadRegistry } from '../../storage/upload-registry.js';
 import type { UserService } from '../users/index.js';
 import {
   createMessageController,
@@ -113,9 +114,14 @@ const handleImageUploadError = createUploadErrorHandler('image', '5MB');
 const handleAudioUploadError = createUploadErrorHandler('audio', '8MB');
 const handleFileUploadError = createUploadErrorHandler('file', '50MB');
 
-export function createMessageRouter(userService: UserService, objectStorage: ObjectStorage, storageQuota: StorageQuota): Router {
+export function createMessageRouter(
+  userService: UserService,
+  objectStorage: ObjectStorage,
+  storageQuota: StorageQuota,
+  uploadRegistry: UploadRegistry,
+): Router {
   const router = Router();
-  const controller = createMessageController(objectStorage, storageQuota);
+  const controller = createMessageController(objectStorage, storageQuota, uploadRegistry);
   const requireAuth = createRequireAuth(userService);
 
   router.post(

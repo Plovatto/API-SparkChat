@@ -22,6 +22,10 @@ export const AI_IMAGE_JPEG_QUALITY = 70;
 
 export const AI_MAX_AUDIO_SECONDS = 60;
 export const AI_MAX_PDF_BYTES = 4 * 1024 * 1024;
+export const AI_MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+export const AI_MAX_AUDIO_BYTES = 2 * 1024 * 1024;
+export const AI_MAX_TEXT_FILE_BYTES = 1024 * 1024;
+export const AI_MAX_IMAGE_INPUT_PIXELS = 40_000_000;
 
 export const AI_BATCH_DEBOUNCE_MS = 2500;
 

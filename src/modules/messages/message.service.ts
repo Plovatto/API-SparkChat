@@ -4,6 +4,7 @@ import { AppError } from '../../lib/app-error.js';
 import { resolveObjectKey } from '../../storage/object-storage-url.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import type { StorageQuota } from '../../storage/storage-quota.js';
+import type { UploadRegistry } from '../../storage/upload-registry.js';
 import type { UserService } from '../users/index.js';
 import { nextTimestamp } from './message.clock.js';
 import type { MessageRepository, RoomDigest, RoomDigestRequest, UnreadCounts } from './message.repository.js';
@@ -38,6 +39,8 @@ export interface DeleteMessageResult {
   affectedReplies: MessageRecord[];
 }
 
+const LEGACY_RELEASE_CAP_BYTES = 50 * 1024 * 1024;
+
 const SYSTEM_SENDER_ID = 'system';
 const SYSTEM_SENDER: MessageSender = { id: SYSTEM_SENDER_ID, nickname: 'Sistema', avatar: null };
 
@@ -60,16 +63,54 @@ export class MessageService {
     private readonly userService: UserService,
     private readonly objectStorage: ObjectStorage,
     private readonly storageQuota: StorageQuota,
+    private readonly uploads: UploadRegistry,
   ) {}
 
+  private resolveOwnedObjectKey(url: string): string {
+    const key = resolveObjectKey(url);
+    if (!key || url.split('?')[0] !== this.objectStorage.publicUrl(key)) {
+      throw AppError.of('message.invalidMedia');
+    }
+    return key;
+  }
+
+  private attachmentKeysOf(input: SendMessageInput): string[] {
+    if (!input.type || input.type === 'text') {
+      return [];
+    }
+
+    const keys = [this.resolveOwnedObjectKey(input.content)];
+    if (input.fileMeta?.thumbnailUrl) {
+      keys.push(this.resolveOwnedObjectKey(input.fileMeta.thumbnailUrl));
+    }
+    return keys;
+  }
+
   async sendMessage(input: SendMessageInput): Promise<MessageRecord> {
+    const messageId = randomUUID();
+    const attachmentKeys = this.attachmentKeysOf(input);
+    if (!(await this.uploads.claim(attachmentKeys, input.senderId, messageId))) {
+      throw AppError.of('message.invalidMedia');
+    }
+
+    try {
+      return await this.insertMessage(messageId, input);
+    } catch (error) {
+      if (attachmentKeys.length > 0) {
+        await this.uploads.release(messageId);
+      }
+      throw error;
+    }
+  }
+
+  private async insertMessage(messageId: string, input: SendMessageInput): Promise<MessageRecord> {
     const deliveredTo = this.resolveOnlineRecipients(input.participantIds ?? [], input.senderId);
     const readBy = (input.viewingUserIds ?? []).filter(
       (userId) => userId !== input.senderId && deliveredTo.includes(userId),
     );
 
     const message: MessageRecord = {
-      id: randomUUID(),
+      id: messageId,
       roomId: input.roomId,
       senderId: input.senderId,
       content: input.content,
@@ -205,9 +246,17 @@ export class MessageService {
         continue;
       }
       try {
+        const upload = await this.uploads.find(key);
+        if (upload && upload.messageId !== message.id) {
+          continue;
+        }
+
         await this.objectStorage.deleteObject(key);
-        if (url === message.content) {
-          releasedBytes += message.fileMeta?.size ?? 0;
+        if (upload) {
+          releasedBytes += upload.size;
+          await this.uploads.remove(key);
+        } else if (url === message.content) {
+          releasedBytes += Math.min(message.fileMeta?.size ?? 0, LEGACY_RELEASE_CAP_BYTES);
         }
       } catch (error) {
         logger.error({ err: error, key }, 'Failed to delete attachment object from storage');

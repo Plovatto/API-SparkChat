@@ -1,5 +1,5 @@
 import sharp from 'sharp';
-import { AI_IMAGE_JPEG_QUALITY, AI_MAX_IMAGE_DIMENSION } from './ai.model.js';
+import { AI_IMAGE_JPEG_QUALITY, AI_MAX_IMAGE_DIMENSION, AI_MAX_IMAGE_INPUT_PIXELS } from './ai.model.js';
 
 export interface CompressedImage {
   mimeType: string;
@@ -7,7 +7,7 @@ export interface CompressedImage {
 }
 
 export async function compressImageForModel(buffer: Buffer): Promise<CompressedImage> {
-  const data = await sharp(buffer)
+  const data = await sharp(buffer, { limitInputPixels: AI_MAX_IMAGE_INPUT_PIXELS })
     .rotate()
     .resize({
       width: AI_MAX_IMAGE_DIMENSION,

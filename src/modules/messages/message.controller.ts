@@ -8,10 +8,12 @@ import { errorPayload } from '../../lib/app-error.js';
 import type { UploadKind } from '../../lib/error-catalog.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import { StorageQuotaExceededError, type StorageQuota } from '../../storage/storage-quota.js';
+import type { UploadRegistry } from '../../storage/upload-registry.js';
 import { verifyFileSignature } from './message.file-signature.js';
 
 const INLINE_SAFE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.mov', '.avi']);
 const UPLOAD_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+export const MAX_USER_STORAGE_BYTES = 500 * 1024 * 1024;
 
 function decodeOriginalFilename(originalname: string): string {
   return Buffer.from(originalname, 'latin1').toString('utf8');
@@ -56,12 +58,24 @@ interface UploadHandlerOptions<TResponse> {
 function createUploadHandler<TResponse>(
   objectStorage: ObjectStorage,
   storageQuota: StorageQuota,
+  uploadRegistry: UploadRegistry,
   { kind, buildKey, buildResponse, contentDisposition }: UploadHandlerOptions<TResponse>,
 ) {
   return async (req: Request, res: Response): Promise<void> => {
     const file = req.file;
+    const uploaderId = req.authenticatedUser?.id;
+    if (!uploaderId) {
+      res.status(401).json(errorPayload('auth.required'));
+      return;
+    }
+
     if (!file) {
       res.status(400).json(errorPayload('upload.missingFile', { kind }));
+      return;
+    }
+
+    if ((await uploadRegistry.totalBytesFor(uploaderId)) + file.size > MAX_USER_STORAGE_BYTES) {
+      res.status(507).json(errorPayload('upload.userQuotaExceeded'));
       return;
     }
 
@@ -88,25 +102,26 @@ function createUploadHandler<TResponse>(
       contentDisposition: contentDisposition?.(file.originalname),
       cacheControl: UPLOAD_CACHE_CONTROL,
     });
+    await uploadRegistry.register(key, uploaderId, file.size);
     await storageQuota.recordUsage(file.size);
 
     res.status(201).json(buildResponse(file, withEncryptedMarker(objectStorage.publicUrl(key), encrypted)));
   };
 }
 
-export function createMessageController(objectStorage: ObjectStorage, storageQuota: StorageQuota) {
+export function createMessageController(objectStorage: ObjectStorage, storageQuota: StorageQuota, uploadRegistry: UploadRegistry) {
   return {
-    uploadImage: createUploadHandler(objectStorage, storageQuota, {
+    uploadImage: createUploadHandler(objectStorage, storageQuota, uploadRegistry, {
       kind: 'image',
       buildKey: imageObjectKey,
       buildResponse: (file, url) => ({ url, mimeType: file.mimetype }),
     }),
-    uploadAudio: createUploadHandler(objectStorage, storageQuota, {
+    uploadAudio: createUploadHandler(objectStorage, storageQuota, uploadRegistry, {
       kind: 'audio',
       buildKey: audioObjectKey,
       buildResponse: (file, url) => ({ url, mimeType: file.mimetype }),
     }),
-    uploadFile: createUploadHandler(objectStorage, storageQuota, {
+    uploadFile: createUploadHandler(objectStorage, storageQuota, uploadRegistry, {
       kind: 'file',
       buildKey: fileObjectKey,
       contentDisposition: attachmentDispositionFor,

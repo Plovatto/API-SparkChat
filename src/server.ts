@@ -21,6 +21,8 @@ import { registerSocketHandlers } from './sockets/index.js';
 import { createR2ObjectStorage } from './storage/r2-object-storage.js';
 import { StorageQuota } from './storage/storage-quota.js';
 import { StorageUsageRepository } from './storage/storage-usage.repository.js';
+import { OrphanUploadSweeper } from './storage/orphan-upload-sweeper.js';
+import { UploadRegistry } from './storage/upload-registry.js';
 import type {
   ClientToServerEvents,
   InterServerEvents,
@@ -44,9 +46,11 @@ const objectStorage = createR2ObjectStorage({
 });
 const storageUsageRepository = new StorageUsageRepository(db);
 const storageQuota = new StorageQuota(storageUsageRepository);
+const uploadRegistry = new UploadRegistry(db);
+new OrphanUploadSweeper(uploadRegistry, objectStorage, storageQuota).start();
 
 const messageRepository = new MessageRepository(db);
-const messageService = new MessageService(messageRepository, userService, objectStorage, storageQuota);
+const messageService = new MessageService(messageRepository, userService, objectStorage, storageQuota, uploadRegistry);
 
 const roomRepository = new RoomRepository(db);
 const roomService = new RoomService(roomRepository, userService, messageService);
@@ -75,7 +79,7 @@ const aiService = new AiService(
   objectStorage,
 );
 
-const app = createApp({ userService, loginRateLimiter, linkPreviewService, objectStorage, storageQuota });
+const app = createApp({ userService, loginRateLimiter, linkPreviewService, objectStorage, storageQuota, uploadRegistry });
 const httpServer = createServer(app);
 
 const io = new Server<

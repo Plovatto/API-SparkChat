@@ -55,6 +55,7 @@ export const ERROR_CATALOG = {
     `Tipo de arquivo inválido. Envie ${UPLOAD_KIND_LABELS[kind]} ${UPLOAD_ACCEPTED_TYPES[kind]}.`,
   'upload.contentMismatch': () => 'O conteúdo do arquivo não corresponde ao tipo declarado.',
   'upload.quotaExceeded': () => 'Limite de armazenamento do servidor atingido. Tente novamente mais tarde.',
+  'upload.userQuotaExceeded': () => 'Você atingiu o seu limite de armazenamento. Apague arquivos antigos para enviar novos.',
   'linkPreview.invalidUrl': () => 'URL inválida.',
   'linkPreview.unavailable': () => 'Não foi possível gerar um preview para essa URL.',
   'linkPreview.imageUnavailable': () => 'Não foi possível carregar essa imagem.',

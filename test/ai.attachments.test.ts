@@ -44,7 +44,7 @@ describe('loadDecryptedAttachment', () => {
     await objectStorage.putObject('uploads/images/photo.png', combined, { contentType: 'image/png' });
     const url = `${objectStorage.publicUrl('uploads/images/photo.png')}?e2e=1`;
 
-    const result = await loadDecryptedAttachment(url, roomKey, objectStorage);
+    const result = await loadDecryptedAttachment(url, roomKey, objectStorage, 1024 * 1024);
     expect(result?.toString('utf8')).toBe('fake image bytes');
   });
 
@@ -62,7 +62,7 @@ describe('loadDecryptedAttachment', () => {
     await objectStorage.putObject('uploads/images/photo.png', combined, { contentType: 'image/png' });
     const url = `${objectStorage.publicUrl('uploads/images/photo.png')}?e2e=1`;
 
-    const result = await loadDecryptedAttachment(url, otherKey, objectStorage);
+    const result = await loadDecryptedAttachment(url, otherKey, objectStorage, 1024 * 1024);
     expect(result).toBeNull();
   });
 
@@ -72,7 +72,7 @@ describe('loadDecryptedAttachment', () => {
     const roomKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
     const url = `${objectStorage.publicUrl('uploads/images/missing.png')}?e2e=1`;
 
-    const result = await loadDecryptedAttachment(url, roomKey, objectStorage);
+    const result = await loadDecryptedAttachment(url, roomKey, objectStorage, 1024 * 1024);
     expect(result).toBeNull();
   });
 });

@@ -17,9 +17,12 @@ import type { AssistantIdentity } from './ai.identity.js';
 import {
   AI_BATCH_DEBOUNCE_MS,
   AI_CONTEXT_MESSAGE_LIMIT,
+  AI_MAX_AUDIO_BYTES,
   AI_MAX_AUDIO_SECONDS,
+  AI_MAX_IMAGE_BYTES,
   AI_MAX_PDF_BYTES,
   AI_MAX_TEXT_CHARS,
+  AI_MAX_TEXT_FILE_BYTES,
   AI_MAX_TEXT_FILE_CHARS,
   AI_WELCOME_MESSAGES,
 } from './ai.model.js';
@@ -344,11 +347,12 @@ export class AiService {
     }
 
     if (message.type === 'image') {
-      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage);
-      if (!raw) {
+      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage, AI_MAX_IMAGE_BYTES);
+      const compressed = raw ? await compressImageForModel(raw).catch(() => null) : null;
+      if (!compressed) {
         return { role, text: captionText ?? '[o usuário enviou uma imagem, mas não foi possível carregá-la]' };
       }
-      const { mimeType, data } = await compressImageForModel(raw);
+      const { mimeType, data } = compressed;
       return this.buildInlineMessage(captionText, [{ mimeType, data: data.toString('base64') }]);
     }
 
@@ -356,7 +360,7 @@ export class AiService {
       if ((message.duration ?? 0) > AI_MAX_AUDIO_SECONDS) {
         return { role, text: `[o usuário enviou um áudio de ${message.duration}s, longo demais para eu ouvir agora]` };
       }
-      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage);
+      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage, AI_MAX_AUDIO_BYTES);
       const mimeType = guessMimeTypeFromUrl(message.content);
       if (!raw || !mimeType) {
         return { role, text: captionText ?? '[o usuário enviou um áudio, mas não foi possível carregá-lo]' };
@@ -373,7 +377,7 @@ export class AiService {
       if ((message.fileMeta?.size ?? 0) > AI_MAX_PDF_BYTES) {
         return { role, text: `[o usuário enviou o arquivo ${name}, grande demais para eu ler agora]` };
       }
-      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage);
+      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage, AI_MAX_PDF_BYTES);
       if (!raw) {
         return { role, text: captionText ?? `[o usuário enviou o arquivo ${name}, mas não foi possível carregá-lo]` };
       }
@@ -381,7 +385,7 @@ export class AiService {
     }
 
     if (mimeType === 'text/plain' || mimeType === 'text/csv') {
-      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage);
+      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage, AI_MAX_TEXT_FILE_BYTES);
       if (!raw) {
         return { role, text: captionText ?? `[o usuário enviou o arquivo ${name}, mas não foi possível carregá-lo]` };
       }
