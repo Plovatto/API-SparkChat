@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { accountBackoffMs, LoginRateLimiter } from '@/modules/users/user.login-rate-limiter.js';
+import { accountBackoffMs, LoginRateLimiter, networkPrefix } from '@/modules/users/user.login-rate-limiter.js';
 
 describe('LoginRateLimiter', () => {
   afterEach(() => {
@@ -75,7 +75,7 @@ describe('LoginRateLimiter', () => {
     expect(limiter.isBlocked('ALICE', '127.0.0.1')).toBe(true);
   });
 
-  it('backs off a nickname attacked from many ips', () => {
+  it('backs off a nickname attacked from many addresses of one network', () => {
     vi.useFakeTimers();
     const limiter = new LoginRateLimiter();
 
@@ -83,14 +83,33 @@ describe('LoginRateLimiter', () => {
       expect(limiter.reserveAttempt('alice', `10.0.0.${i}`)).toBe(true);
     }
 
-    expect(limiter.reserveAttempt('alice', '10.0.1.1')).toBe(false);
+    expect(limiter.reserveAttempt('alice', '10.0.0.200')).toBe(false);
     vi.advanceTimersByTime(1001);
-    expect(limiter.reserveAttempt('alice', '10.0.1.1')).toBe(true);
-    expect(limiter.reserveAttempt('alice', '10.0.1.2')).toBe(false);
+    expect(limiter.reserveAttempt('alice', '10.0.0.200')).toBe(true);
+    expect(limiter.reserveAttempt('alice', '10.0.0.201')).toBe(false);
     vi.advanceTimersByTime(1001);
-    expect(limiter.reserveAttempt('alice', '10.0.1.2')).toBe(false);
+    expect(limiter.reserveAttempt('alice', '10.0.0.201')).toBe(false);
     vi.advanceTimersByTime(1000);
-    expect(limiter.reserveAttempt('alice', '10.0.1.2')).toBe(true);
+    expect(limiter.reserveAttempt('alice', '10.0.0.201')).toBe(true);
+  });
+
+  it('does not lock the owner out from another network', () => {
+    vi.useFakeTimers();
+    const limiter = new LoginRateLimiter();
+
+    for (let i = 0; i < 12; i += 1) {
+      limiter.reserveAttempt('alice', `10.0.0.${i}`);
+    }
+
+    expect(limiter.reserveAttempt('alice', '10.0.0.250')).toBe(false);
+    expect(limiter.reserveAttempt('alice', '192.168.5.9')).toBe(true);
+    expect(limiter.reserveAttempt('alice', '2001:db8:1::7')).toBe(true);
+  });
+
+  it('groups addresses by network prefix', () => {
+    expect(networkPrefix('10.1.2.3')).toBe('10.1.2');
+    expect(networkPrefix('::ffff:10.1.2.3')).toBe('10.1.2');
+    expect(networkPrefix('2001:DB8:abcd:12::1')).toBe('2001:db8:abcd');
   });
 
   it('grows the account backoff exponentially up to fifteen minutes', () => {

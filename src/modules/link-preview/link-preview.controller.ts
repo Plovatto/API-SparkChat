@@ -38,7 +38,7 @@ export function createLinkPreviewController(service: LinkPreviewService) {
   };
 
   const getImage = async (req: Request, res: Response): Promise<void> => {
-    const parsed = linkPreviewRequestSchema.safeParse(req.body);
+    const parsed = linkPreviewRequestSchema.safeParse(req.method === 'GET' ? { url: req.query.url } : req.body);
     if (!parsed.success) {
       res.status(400).json(errorPayload('linkPreview.invalidUrl'));
       return;

@@ -1,4 +1,4 @@
-import { eq, like, lt, ne, or } from 'drizzle-orm';
+import { eq, like, lt, ne, notLike, or } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { linkPreviews } from '../../database/schema.js';
 import type { LinkPreviewCacheRecord } from './link-preview.types.js';
@@ -21,6 +21,13 @@ export class LinkPreviewRepository {
   async purge(fetchedBefore: string): Promise<void> {
     await this.db
       .delete(linkPreviews)
-      .where(or(ne(linkPreviews.status, 'ok'), lt(linkPreviews.fetchedAt, fetchedBefore), like(linkPreviews.cacheKey, '%:%')));
+      .where(
+        or(
+          ne(linkPreviews.status, 'ok'),
+          lt(linkPreviews.fetchedAt, fetchedBefore),
+          like(linkPreviews.cacheKey, '%:%'),
+          notLike(linkPreviews.title, 'sealed:v1:%'),
+        ),
+      );
   }
 }

@@ -20,8 +20,17 @@ function buildKey(nickname: string, ip: string): string {
   return `${normalizeNickname(nickname)}:${ip}`;
 }
 
-function buildAccountKey(nickname: string): string {
-  return `account:${normalizeNickname(nickname)}`;
+export function networkPrefix(ip: string): string {
+  const mapped = ip.startsWith('::ffff:') ? ip.slice(7) : ip;
+  if (mapped.includes('.')) {
+    return mapped.split('.').slice(0, 3).join('.');
+  }
+  const groups = mapped.split(':');
+  return groups.slice(0, 3).join(':').toLowerCase();
+}
+
+function buildAccountKey(nickname: string, ip: string): string {
+  return `account:${normalizeNickname(nickname)}:${networkPrefix(ip)}`;
 }
 
 function buildKeyfileKey(ip: string): string {
@@ -59,7 +68,7 @@ export class LoginRateLimiter {
   private readonly resumes = new SlidingWindowCounter(RESUME_WINDOW_MS);
 
   isBlocked(nickname: string, ip: string): boolean {
-    return this.failures.count(buildKey(nickname, ip)) >= MAX_ATTEMPTS || this.isAccountBackingOff(nickname);
+    return this.failures.count(buildKey(nickname, ip)) >= MAX_ATTEMPTS || this.isAccountBackingOff(nickname, ip);
   }
 
   reserveAttempt(nickname: string, ip: string): boolean {
@@ -68,18 +77,18 @@ export class LoginRateLimiter {
     }
 
     this.failures.record(buildKey(nickname, ip));
-    this.accountFailures.record(buildAccountKey(nickname));
+    this.accountFailures.record(buildAccountKey(nickname, ip));
     return true;
   }
 
   releaseAttempt(nickname: string, ip: string): void {
     this.failures.release(buildKey(nickname, ip));
-    this.accountFailures.release(buildAccountKey(nickname));
+    this.accountFailures.release(buildAccountKey(nickname, ip));
   }
 
   registerSuccess(nickname: string, ip: string): void {
     this.failures.reset(buildKey(nickname, ip));
-    this.accountFailures.release(buildAccountKey(nickname));
+    this.accountFailures.release(buildAccountKey(nickname, ip));
   }
 
   isBlockedByIp(ip: string): boolean {
@@ -141,8 +150,8 @@ export class LoginRateLimiter {
     this.resumes.reset(buildResumeSocketKey(socketId));
   }
 
-  private isAccountBackingOff(nickname: string): boolean {
-    const key = buildAccountKey(nickname);
+  private isAccountBackingOff(nickname: string, ip: string): boolean {
+    const key = buildAccountKey(nickname, ip);
     const backoffMs = accountBackoffMs(this.accountFailures.count(key));
     if (backoffMs === 0) {
       return false;

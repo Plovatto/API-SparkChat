@@ -256,7 +256,7 @@ export class MessageService {
 
     for (const url of urls) {
       const key = resolveObjectKey(url);
-      if (!key || handledKeys.has(key)) {
+      if (!key || handledKeys.has(key) || url.split('?')[0] !== this.objectStorage.publicUrl(key)) {
         continue;
       }
       try {

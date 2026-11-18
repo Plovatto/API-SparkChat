@@ -95,24 +95,35 @@ describe('POST /api/link-preview', () => {
     expect(body.imageUrl).toBeNull();
   });
 
-  it('trims an oversized preview that was cached before the limits existed', async () => {
+  it('ignores an unsealed cached row and stores only sealed metadata', async () => {
     const { fetcher, calls } = createCountingFetcher(METADATA);
     const { app, authHeader, userId, linkPreviewRepository, linkPreviewService } = await setupAuthedApp(fetcher);
-    await linkPreviewRepository.upsert({
-      cacheKey: linkPreviewService.cacheKeyFor(userId, PAGE_URL),
-      status: 'ok',
-      title: 'T'.repeat(5000),
-      description: 'd'.repeat(9000),
-      imageUrl: METADATA.imageUrl,
-      siteName: 'S'.repeat(2000),
-      fetchedAt: new Date().toISOString(),
-    });
+    const cacheKey = linkPreviewService.cacheKeyFor(userId, PAGE_URL);
+    await linkPreviewRepository.upsert({ cacheKey, status: 'ok', title: 'Plain title', description: null, imageUrl: null, siteName: null, fetchedAt: new Date().toISOString() });
+
+    const response = await request(app).post('/api/link-preview').set('Authorization', authHeader).send({ url: PAGE_URL });
+
+    expect(response.status).toBe(200);
+    expect(calls()).toBe(1);
+    const stored = await linkPreviewRepository.findByKey(cacheKey);
+    expect(stored?.title?.startsWith('sealed:v1:')).toBe(true);
+    expect(JSON.stringify(stored)).not.toContain(METADATA.title);
+    expect(stored?.imageUrl).toBeNull();
+
+    const cachedResponse = await request(app).post('/api/link-preview').set('Authorization', authHeader).send({ url: PAGE_URL });
+    expect((cachedResponse.body as LinkPreviewMetadata).title).toBe(METADATA.title);
+    expect(calls()).toBe(1);
+  });
+
+  it('trims an oversized preview before returning it', async () => {
+    const { fetcher, calls } = createCountingFetcher({ ...METADATA, title: 'T'.repeat(5000), description: 'd'.repeat(9000), siteName: 'S'.repeat(2000) });
+    const { app, authHeader } = await setupAuthedApp(fetcher);
 
     const response = await request(app).post('/api/link-preview').set('Authorization', authHeader).send({ url: PAGE_URL });
     const body = response.body as LinkPreviewMetadata;
 
     expect(response.status).toBe(200);
-    expect(calls()).toBe(0);
+    expect(calls()).toBe(1);
     expect(encryptedLength(body.title)).toBeLessThanOrEqual(LINK_PREVIEW_ENCRYPTED_LIMITS.title);
     expect(encryptedLength(body.description ?? '')).toBeLessThanOrEqual(LINK_PREVIEW_ENCRYPTED_LIMITS.description);
     expect(encryptedLength(body.siteName ?? '')).toBeLessThanOrEqual(LINK_PREVIEW_ENCRYPTED_LIMITS.siteName);
@@ -189,7 +200,7 @@ describe('POST /api/link-preview', () => {
     const errorKey = linkPreviewService.cacheKeyFor('user', 'https://example.com/broken');
     const base = { title: 'T', description: null, imageUrl: null, siteName: null };
     await linkPreviewRepository.upsert({ ...base, cacheKey: PAGE_URL, status: 'ok', fetchedAt: new Date().toISOString() });
-    await linkPreviewRepository.upsert({ ...base, cacheKey: freshKey, status: 'ok', fetchedAt: new Date().toISOString() });
+    await linkPreviewRepository.upsert({ ...base, title: 'sealed:v1:opaque', cacheKey: freshKey, status: 'ok', fetchedAt: new Date().toISOString() });
     await linkPreviewRepository.upsert({ ...base, cacheKey: expiredKey, status: 'ok', fetchedAt: '2020-01-01T00:00:00.000Z' });
     await linkPreviewRepository.upsert({ ...base, cacheKey: errorKey, status: 'error', fetchedAt: new Date().toISOString() });
 
@@ -236,15 +247,14 @@ describe('POST /api/link-preview/image', () => {
     expect(response.body).toEqual({ message: 'Não foi possível carregar essa imagem.', code: 'linkPreview.imageUnavailable' });
   });
 
-  it('no longer accepts the image URL in a query string', async () => {
+  it('still answers the query string form for the client deployed before the POST route', async () => {
     const { app, authHeader } = await setupAuthedApp();
 
-    const response = await request(app)
-      .get('/api/link-preview/image')
-      .set('Authorization', authHeader)
-      .query({ url: 'https://example.com/cover.jpg' });
+    const missing = await request(app).get('/api/link-preview/image').set('Authorization', authHeader);
+    const unauthenticated = await request(app).get('/api/link-preview/image').query({ url: 'https://example.com/cover.jpg' });
 
-    expect(response.status).toBe(404);
+    expect(missing.status).toBe(400);
+    expect(unauthenticated.status).toBe(401);
   });
 });
 

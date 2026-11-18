@@ -79,6 +79,7 @@ export function createLinkPreviewRouter(userService: UserService, service: LinkP
 
   router.post('/', linkPreviewRateLimiter, requireAuth, asyncHandler(controller.getPreview));
   router.post('/image', linkPreviewRateLimiter, requireAuth, asyncHandler(controller.getImage));
+  router.get('/image', linkPreviewRateLimiter, requireAuth, asyncHandler(controller.getImage));
 
   return router;
 }

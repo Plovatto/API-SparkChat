@@ -15,10 +15,10 @@ export class StorageUsageRepository {
   async addBytes(delta: number): Promise<void> {
     await this.db
       .insert(storageUsage)
-      .values({ id: GLOBAL_ROW_ID, bytesUsed: delta })
+      .values({ id: GLOBAL_ROW_ID, bytesUsed: Math.max(0, delta) })
       .onConflictDoUpdate({
         target: storageUsage.id,
-        set: { bytesUsed: sql`${storageUsage.bytesUsed} + ${delta}` },
+        set: { bytesUsed: sql`max(0, ${storageUsage.bytesUsed} + ${delta})` },
       });
   }
 }
