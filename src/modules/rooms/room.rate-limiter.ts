@@ -1,5 +1,7 @@
 const MAX_JOIN_ATTEMPTS = 10;
 const JOIN_ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
+const MAX_GROUP_CREATIONS = 10;
+const GROUP_CREATION_WINDOW_MS = 60 * 60 * 1000;
 export const KEY_REQUEST_INTERVAL_MS = 30 * 1000;
 const PENDING_KEY_REQUEST_TTL_MS = 2 * 60 * 1000;
 const MAX_TRACKED_ENTRIES = 10_000;
@@ -17,6 +19,7 @@ function pruneExpired(entries: Map<string, number>, now: number): void {
 
 export class RoomActionRateLimiter {
   private readonly joinAttempts = new Map<string, number[]>();
+  private readonly groupCreations = new Map<string, number[]>();
   private readonly keyRequestCooldowns = new Map<string, number>();
   private readonly pendingKeyRequests = new Map<string, number>();
 
@@ -31,6 +34,18 @@ export class RoomActionRateLimiter {
     }
     recent.push(now);
     this.joinAttempts.set(userId, recent);
+    return true;
+  }
+
+  tryCreateGroup(userId: string): boolean {
+    const now = this.now();
+    const recent = (this.groupCreations.get(userId) ?? []).filter((timestamp) => timestamp > now - GROUP_CREATION_WINDOW_MS);
+    if (recent.length >= MAX_GROUP_CREATIONS) {
+      this.groupCreations.set(userId, recent);
+      return false;
+    }
+    recent.push(now);
+    this.groupCreations.set(userId, recent);
     return true;
   }
 

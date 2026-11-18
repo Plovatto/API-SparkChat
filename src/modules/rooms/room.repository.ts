@@ -1,7 +1,8 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/sqlite-core';
+import { and, eq, inArray, isNull, ne, notExists, or, sql, type SQL } from 'drizzle-orm';
+import { alias, type SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import type { Database } from '../../database/turso-client.js';
 import { roomBans, roomParticipants, rooms } from '../../database/schema.js';
+import { generateRoomCode, ROOM_CODE_LENGTH } from './room.codes.js';
 import type { RoomRecord } from './room.types.js';
 
 type RoomRow = typeof rooms.$inferSelect;
@@ -47,8 +48,30 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
 
 const rp2 = alias(roomParticipants, 'rp2');
 
+export interface ParticipantPatch {
+  isVisible?: boolean;
+  isAdmin?: boolean;
+  blockedByUserId?: string | null;
+  deletedAt?: string | null;
+  reactivatedAt?: string | null;
+}
+
+export interface RemoveParticipantOptions {
+  bannedBy?: string;
+  rotateRoomCode?: boolean;
+}
+
 export class RoomRepository {
   constructor(private readonly db: Database) {}
+
+  private notBanned(roomIdColumn: SQLiteColumn, userIdColumn: SQLiteColumn): SQL {
+    return notExists(
+      this.db
+        .select({ userId: roomBans.userId })
+        .from(roomBans)
+        .where(and(eq(roomBans.roomId, roomIdColumn), eq(roomBans.userId, userIdColumn))),
+    );
+  }
 
   async findById(id: string): Promise<RoomRecord | null> {
     const [[room], participants] = await Promise.all([
@@ -60,11 +83,15 @@ export class RoomRepository {
   }
 
   private getParticipants(roomId: string): Promise<ParticipantRow[]> {
-    return this.db.select().from(roomParticipants).where(eq(roomParticipants.roomId, roomId)).orderBy(sql`rowid`);
+    return this.db
+      .select()
+      .from(roomParticipants)
+      .where(and(eq(roomParticipants.roomId, roomId), this.notBanned(roomParticipants.roomId, roomParticipants.userId)))
+      .orderBy(sql`rowid`);
   }
 
   async insert(room: RoomRecord): Promise<RoomRecord> {
-    await this.db.insert(rooms).values({
+    const roomInsert = this.db.insert(rooms).values({
       id: room.id,
       type: room.type,
       name: room.name,
@@ -73,38 +100,118 @@ export class RoomRepository {
       createdAt: room.createdAt,
     });
 
-    await this.syncParticipants(room);
+    const participantInserts = room.participants.map((userId) =>
+      this.db.insert(roomParticipants).values({
+        roomId: room.id,
+        userId,
+        isVisible: room.visibleTo.includes(userId),
+        isAdmin: room.admins.includes(userId),
+        blockedByUserId: room.blockedBy[userId] ?? null,
+        blockedAt: room.blockedBy[userId] ? room.createdAt : null,
+        deletedAt: room.deletedAt[userId] ?? null,
+        reactivatedAt: room.reactivatedAt?.[userId] ?? null,
+        joinedAt: room.joinedAt?.[userId] ?? null,
+      }),
+    );
+
+    await this.db.batch([roomInsert, ...participantInserts]);
 
     return room;
   }
 
-  async update(id: string, patch: Partial<RoomRecord>): Promise<RoomRecord | null> {
-    const current = await this.findById(id);
-    if (!current) {
-      return null;
+  async addParticipant(roomId: string, userId: string, joinedAt: string): Promise<boolean> {
+    const result = await this.db.run(sql`
+      insert into ${roomParticipants} (room_id, user_id, is_visible, is_admin, joined_at)
+      select ${roomId}, ${userId}, 1, 0, ${joinedAt}
+      where exists (select 1 from ${rooms} where id = ${roomId})
+        and not exists (select 1 from ${roomBans} where room_id = ${roomId} and user_id = ${userId})
+      on conflict do nothing
+    `);
+
+    return result.rowsAffected > 0;
+  }
+
+  async updateParticipant(
+    roomId: string,
+    userId: string,
+    patch: ParticipantPatch,
+    options: { onlyIfBlockedBy?: string } = {},
+  ): Promise<boolean> {
+    const values: Partial<typeof roomParticipants.$inferInsert> = { ...patch };
+    if (patch.blockedByUserId !== undefined) {
+      values.blockedAt = patch.blockedByUserId ? new Date().toISOString() : null;
     }
 
-    const merged: RoomRecord = { ...current, ...patch };
-    const { id: _id, participants, admins, visibleTo, blockedBy, deletedAt, reactivatedAt, joinedAt, ...columns } =
-      patch;
+    if (Object.keys(values).length === 0) {
+      return false;
+    }
 
-    const touchesParticipants =
-      participants !== undefined ||
-      admins !== undefined ||
-      visibleTo !== undefined ||
-      blockedBy !== undefined ||
-      deletedAt !== undefined ||
-      reactivatedAt !== undefined ||
-      joinedAt !== undefined;
+    const result = await this.db
+      .update(roomParticipants)
+      .set(values)
+      .where(
+        and(
+          eq(roomParticipants.roomId, roomId),
+          eq(roomParticipants.userId, userId),
+          options.onlyIfBlockedBy !== undefined ? eq(roomParticipants.blockedByUserId, options.onlyIfBlockedBy) : undefined,
+        ),
+      );
 
-    await Promise.all([
-      Object.keys(columns).length > 0
-        ? this.db.update(rooms).set(columns).where(eq(rooms.id, id))
-        : Promise.resolve(),
-      touchesParticipants ? this.syncParticipants(merged) : Promise.resolve(),
-    ]);
+    return result.rowsAffected > 0;
+  }
 
-    return merged;
+  async revealToHiddenParticipants(roomId: string, reactivatedAt: string): Promise<void> {
+    await this.db
+      .update(roomParticipants)
+      .set({ isVisible: true, reactivatedAt })
+      .where(and(eq(roomParticipants.roomId, roomId), eq(roomParticipants.isVisible, false)));
+  }
+
+  async removeParticipant(roomId: string, userId: string, options: RemoveParticipantOptions = {}): Promise<boolean> {
+    const deletion = this.db
+      .delete(roomParticipants)
+      .where(and(eq(roomParticipants.roomId, roomId), eq(roomParticipants.userId, userId)));
+    const clearBlocks = this.db
+      .update(roomParticipants)
+      .set({ blockedByUserId: null, blockedAt: null })
+      .where(and(eq(roomParticipants.roomId, roomId), eq(roomParticipants.blockedByUserId, userId)));
+    const ban =
+      options.bannedBy !== undefined
+        ? [
+            this.db
+              .insert(roomBans)
+              .values({ roomId, userId, bannedBy: options.bannedBy, bannedAt: new Date().toISOString() })
+              .onConflictDoNothing({ target: [roomBans.roomId, roomBans.userId] }),
+          ]
+        : [];
+    const rotate = options.rotateRoomCode
+      ? [this.db.update(rooms).set({ roomCode: generateRoomCode() }).where(eq(rooms.id, roomId))]
+      : [];
+
+    const [deleted] = await this.db.batch([deletion, clearBlocks, ...ban, ...rotate]);
+    return deleted.rowsAffected > 0;
+  }
+
+  async rotateLegacyRoomCodes(): Promise<number> {
+    const legacy = await this.db
+      .select({ id: rooms.id })
+      .from(rooms)
+      .where(and(eq(rooms.type, 'group'), or(isNull(rooms.roomCode), ne(sql`length(${rooms.roomCode})`, ROOM_CODE_LENGTH))));
+
+    for (const { id } of legacy) {
+      await this.db.update(rooms).set({ roomCode: generateRoomCode() }).where(eq(rooms.id, id));
+    }
+
+    return legacy.length;
+  }
+
+  async purgeBannedParticipants(): Promise<number> {
+    const result = await this.db
+      .delete(roomParticipants)
+      .where(
+        sql`exists (select 1 from ${roomBans} where ${roomBans.roomId} = ${roomParticipants.roomId} and ${roomBans.userId} = ${roomParticipants.userId})`,
+      );
+    return result.rowsAffected;
   }
 
   async findByRoomCode(roomCode: string): Promise<RoomRecord | null> {
@@ -117,21 +224,6 @@ export class RoomRepository {
     return toRoomRecord(room, await this.getParticipants(room.id));
   }
 
-  async ban(roomId: string, userId: string, bannedBy: string): Promise<void> {
-    await this.db
-      .insert(roomBans)
-      .values({ roomId, userId, bannedBy, bannedAt: new Date().toISOString() })
-      .onConflictDoNothing({ target: [roomBans.roomId, roomBans.userId] });
-  }
-
-  async isBanned(roomId: string, userId: string): Promise<boolean> {
-    const [row] = await this.db
-      .select({ userId: roomBans.userId })
-      .from(roomBans)
-      .where(and(eq(roomBans.roomId, roomId), eq(roomBans.userId, userId)));
-    return row !== undefined;
-  }
-
   async findParticipatingRoomIds(userId: string, roomIds: string[]): Promise<Set<string>> {
     if (roomIds.length === 0) {
       return new Set();
@@ -140,7 +232,13 @@ export class RoomRepository {
     const rows = await this.db
       .select({ roomId: roomParticipants.roomId })
       .from(roomParticipants)
-      .where(and(eq(roomParticipants.userId, userId), inArray(roomParticipants.roomId, roomIds)));
+      .where(
+        and(
+          eq(roomParticipants.userId, userId),
+          inArray(roomParticipants.roomId, roomIds),
+          this.notBanned(roomParticipants.roomId, roomParticipants.userId),
+        ),
+      );
     return new Set(rows.map((row) => row.roomId));
   }
 
@@ -154,6 +252,8 @@ export class RoomRepository {
           eq(roomParticipants.userId, userId),
           sql`coalesce(${rp2.blockedByUserId}, '') <> ${userId}`,
           sql`coalesce(${roomParticipants.blockedByUserId}, '') <> ${rp2.userId}`,
+          this.notBanned(roomParticipants.roomId, roomParticipants.userId),
+          this.notBanned(rp2.roomId, rp2.userId),
         ),
       );
     return rows.map((row) => row.userId);
@@ -185,7 +285,8 @@ export class RoomRepository {
           eq(roomParticipants.userId, userId),
           eq(roomParticipants.isVisible, true),
         ),
-      );
+      )
+      .where(this.notBanned(roomParticipants.roomId, roomParticipants.userId));
 
     if (visibleRooms.length === 0) {
       return [];
@@ -195,7 +296,7 @@ export class RoomRepository {
     const participantRows = await this.db
       .select()
       .from(roomParticipants)
-      .where(inArray(roomParticipants.roomId, roomIds))
+      .where(and(inArray(roomParticipants.roomId, roomIds), this.notBanned(roomParticipants.roomId, roomParticipants.userId)))
       .orderBy(sql`rowid`);
 
     const participantsByRoom = new Map<string, ParticipantRow[]>();
@@ -209,59 +310,5 @@ export class RoomRepository {
     }
 
     return visibleRooms.map(({ room }) => toRoomRecord(room, participantsByRoom.get(room.id) ?? []));
-  }
-
-  private async syncParticipants(room: RoomRecord): Promise<void> {
-    const existing = await this.db.select().from(roomParticipants).where(eq(roomParticipants.roomId, room.id));
-    const existingById = new Map(existing.map((row) => [row.userId, row]));
-    const participantIds = new Set(room.participants);
-
-    const deletions = existing
-      .filter((row) => !participantIds.has(row.userId))
-      .map((row) =>
-        this.db
-          .delete(roomParticipants)
-          .where(and(eq(roomParticipants.roomId, room.id), eq(roomParticipants.userId, row.userId))),
-      );
-
-    const upserts = [...participantIds].map((userId) => {
-      const previous = existingById.get(userId);
-      const blockedByUserId = room.blockedBy[userId] ?? null;
-      const blockedAt = blockedByUserId
-        ? previous?.blockedByUserId === blockedByUserId
-          ? previous.blockedAt
-          : new Date().toISOString()
-        : null;
-
-      const values = {
-        roomId: room.id,
-        userId,
-        isVisible: room.visibleTo.includes(userId),
-        isAdmin: room.admins.includes(userId),
-        blockedByUserId,
-        blockedAt,
-        deletedAt: room.deletedAt[userId] ?? null,
-        reactivatedAt: room.reactivatedAt?.[userId] ?? null,
-        joinedAt: room.joinedAt?.[userId] ?? null,
-      };
-
-      return previous
-        ? this.db
-            .update(roomParticipants)
-            .set(values)
-            .where(and(eq(roomParticipants.roomId, room.id), eq(roomParticipants.userId, userId)))
-        : this.db.insert(roomParticipants).values(values);
-    });
-
-    const statements = [...deletions, ...upserts];
-    if (statements.length === 0) {
-      return;
-    }
-    if (statements.length === 1) {
-      await statements[0];
-      return;
-    }
-
-    await this.db.batch(statements as [(typeof statements)[number], ...(typeof statements)[number][]]);
   }
 }
