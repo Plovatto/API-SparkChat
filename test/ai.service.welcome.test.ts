@@ -52,7 +52,7 @@ async function setup() {
     return Promise.all(messages.map((message) => decryptContent(message.content, roomKey)));
   };
 
-  return { aiService, room, publishKey, welcomeTexts };
+  return { aiService, room, publishKey, welcomeTexts, messageService };
 }
 
 afterEach(() => {
@@ -109,5 +109,54 @@ describe('AiService welcome and the room key', () => {
     await publishKey();
     await aiService.handleRoomKeyPublished(io, room);
     expect(await welcomeTexts()).toEqual([]);
+  });
+
+  it('a publish that comes before the assistant key keeps the welcome waiting', async () => {
+    const { aiService, room, publishKey, welcomeTexts } = await setup();
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const io = createFakeServer();
+
+    const sending = aiService.sendWelcomeMessage(io, room, 'pt');
+    await vi.advanceTimersByTimeAsync(PAST_KEY_RETRIES_MS);
+    await sending;
+    const early = aiService.handleRoomKeyPublished(io, room);
+    await vi.advanceTimersByTimeAsync(PAST_KEY_RETRIES_MS);
+    await early;
+    expect(await welcomeTexts()).toEqual([]);
+
+    await publishKey();
+    await aiService.handleRoomKeyPublished(io, room);
+    expect(await welcomeTexts()).toEqual([AI_WELCOME_MESSAGES.pt]);
+  });
+
+  it('a new welcome replaces a pending one instead of sending both', async () => {
+    const { aiService, room, publishKey, welcomeTexts } = await setup();
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const io = createFakeServer();
+
+    const first = aiService.sendWelcomeMessage(io, room, 'pt');
+    await vi.advanceTimersByTimeAsync(PAST_KEY_RETRIES_MS);
+    await first;
+    await publishKey();
+    await aiService.sendWelcomeMessage(io, room, 'en');
+    await aiService.handleRoomKeyPublished(io, room);
+    expect(await welcomeTexts()).toEqual([AI_WELCOME_MESSAGES.en]);
+  });
+
+  it('a failed delivery is logged and never rejects', async () => {
+    const { aiService, room, publishKey, messageService } = await setup();
+    vi.spyOn(messageService, 'sendMessage').mockRejectedValue(new Error('db down'));
+    await publishKey();
+    await expect(aiService.sendWelcomeMessage(createFakeServer(), room, 'pt')).resolves.toBeUndefined();
+
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const io = createFakeServer();
+    const other = await setup();
+    vi.spyOn(other.messageService, 'sendMessage').mockRejectedValue(new Error('db down'));
+    const sending = other.aiService.sendWelcomeMessage(io, other.room, 'pt');
+    await vi.advanceTimersByTimeAsync(PAST_KEY_RETRIES_MS);
+    await sending;
+    await other.publishKey();
+    await expect(other.aiService.handleRoomKeyPublished(io, other.room)).resolves.toBeUndefined();
   });
 });

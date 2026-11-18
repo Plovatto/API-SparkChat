@@ -60,14 +60,19 @@ export class AiService {
   }
 
   async sendWelcomeMessage(io: AppServer, room: RoomRecord, locale: Locale): Promise<void> {
-    const roomKey = await this.resolveRoomKey(room.id);
-    if (!roomKey) {
-      this.waitForRoomKey(room.id, locale);
-      logger.info({ roomId: room.id }, 'Boas-vindas do SparkAI aguardando a chave da sala');
-      return;
-    }
+    this.forgetPendingWelcome(room.id);
+    try {
+      const roomKey = await this.resolveRoomKey(room.id);
+      if (!roomKey) {
+        this.waitForRoomKey(room.id, locale);
+        logger.info({ roomId: room.id }, 'Boas-vindas do SparkAI aguardando a chave da sala');
+        return;
+      }
 
-    await this.deliverWelcome(io, room, locale, roomKey);
+      await this.deliverWelcome(io, room, locale, roomKey);
+    } catch (error) {
+      logger.error({ err: error, roomId: room.id }, 'Falha ao enviar a mensagem de boas-vindas do SparkAI');
+    }
   }
 
   async handleRoomKeyPublished(io: AppServer, room: RoomRecord): Promise<void> {
@@ -75,15 +80,26 @@ export class AiService {
     if (!pending) {
       return;
     }
-    this.pendingWelcomeByRoom.delete(room.id);
-    clearTimeout(pending.timer);
+    this.forgetPendingWelcome(room.id);
 
-    const roomKey = await this.resolveRoomKey(room.id);
-    if (!roomKey) {
-      logger.warn({ roomId: room.id }, 'Não foi possível enviar a mensagem de boas-vindas do SparkAI: chave da sala indisponível');
-      return;
+    try {
+      const roomKey = await this.resolveRoomKey(room.id);
+      if (!roomKey) {
+        this.waitForRoomKey(room.id, pending.locale);
+        return;
+      }
+      await this.deliverWelcome(io, room, pending.locale, roomKey);
+    } catch (error) {
+      logger.error({ err: error, roomId: room.id }, 'Falha ao enviar a mensagem de boas-vindas do SparkAI');
     }
-    await this.deliverWelcome(io, room, pending.locale, roomKey);
+  }
+
+  private forgetPendingWelcome(roomId: string): void {
+    const pending = this.pendingWelcomeByRoom.get(roomId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      this.pendingWelcomeByRoom.delete(roomId);
+    }
   }
 
   private waitForRoomKey(roomId: string, locale: Locale): void {
