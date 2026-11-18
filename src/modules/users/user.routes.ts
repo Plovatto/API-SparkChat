@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { errorResponseSchema } from '../../docs/common-schemas.js';
 import { registry } from '../../docs/registry.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
+import { createRequireAuth } from '../../middleware/auth.js';
 import {
   createUserController,
   keyfileLoginResponseSchema,
@@ -13,6 +14,7 @@ import {
 import { keyfileUpload } from './user.keyfile-upload.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
 import type { UserService } from './user.service.js';
+import type { SessionRevocationNotifier } from './user.session-revocations.js';
 
 registry.registerPath({
   method: 'post',
@@ -71,6 +73,23 @@ registry.registerPath({
 });
 
 registry.registerPath({
+  method: 'post',
+  path: '/api/users/logout',
+  tags: ['Users'],
+  summary: 'Encerra a sessão atual e desconecta os sockets ligados a ela',
+  security: [{ sessionAuth: [] }],
+  responses: {
+    204: {
+      description: 'Sessão encerrada',
+    },
+    401: {
+      description: 'Token de sessão ausente, inválido ou expirado',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+  },
+});
+
+registry.registerPath({
   method: 'get',
   path: '/api/users/nickname-availability',
   tags: ['Users'],
@@ -90,12 +109,18 @@ registry.registerPath({
   },
 });
 
-export function createUserRouter(userService: UserService, loginRateLimiter: LoginRateLimiter): Router {
+export function createUserRouter(
+  userService: UserService,
+  loginRateLimiter: LoginRateLimiter,
+  sessionRevocations: SessionRevocationNotifier,
+): Router {
   const router = Router();
-  const controller = createUserController(userService, loginRateLimiter);
+  const controller = createUserController(userService, loginRateLimiter, sessionRevocations);
+  const requireAuth = createRequireAuth(userService);
 
   router.post('/login', asyncHandler(controller.login));
   router.post('/login-with-keyfile', keyfileUpload.single('keyfile'), asyncHandler(controller.loginWithKeyfile));
+  router.post('/logout', requireAuth, asyncHandler(controller.logout));
   router.get('/nickname-availability', asyncHandler(controller.checkNicknameAvailability));
 
   return router;

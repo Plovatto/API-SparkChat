@@ -16,7 +16,7 @@ import {
   TypingService,
 } from './modules/messages/index.js';
 import { RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
-import { LoginRateLimiter, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
+import { LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import { createR2ObjectStorage } from './storage/r2-object-storage.js';
 import { StorageQuota } from './storage/storage-quota.js';
@@ -34,6 +34,7 @@ const userRepository = new UserRepository(db);
 const userSessionRepository = new UserSessionRepository(db);
 const userService = new UserService(userRepository, userSessionRepository, env.RECOVERY_FILE_SECRET);
 const loginRateLimiter = new LoginRateLimiter();
+const sessionRevocations = new SessionRevocationNotifier();
 
 const objectStorage = createR2ObjectStorage({
   accountId: env.R2_ACCOUNT_ID,
@@ -76,7 +77,7 @@ const aiService = new AiService(
   objectStorage,
 );
 
-const app = createApp({ userService, loginRateLimiter, linkPreviewService, objectStorage, storageQuota });
+const app = createApp({ userService, loginRateLimiter, sessionRevocations, linkPreviewService, objectStorage, storageQuota });
 const httpServer = createServer(app);
 
 const io = new Server<
@@ -107,6 +108,7 @@ registerSocketHandlers(io, {
   recordingService,
   presenceService,
   loginRateLimiter,
+  sessionRevocations,
   messageRateLimiter,
   roomRateLimiter,
   roomKeyRepository,

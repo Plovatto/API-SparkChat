@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { sessions } from '../../database/schema.js';
 import type { SessionRecord } from './user.types.js';
@@ -23,19 +23,13 @@ export class UserSessionRepository {
     return record;
   }
 
-  async findValid(userId: string, tokenHash: string, maxAgeMs: number): Promise<SessionRecord | null> {
+  async findByTokenForUser(userId: string, tokenHash: string): Promise<SessionRecord | null> {
     const [row] = await this.db
       .select()
       .from(sessions)
       .where(and(eq(sessions.userId, userId), eq(sessions.tokenHash, tokenHash)));
 
-    if (!row) {
-      return null;
-    }
-
-    const record = toRecord(row);
-    const age = Date.now() - new Date(record.lastUsedAt).getTime();
-    return age <= maxAgeMs ? record : null;
+    return row ? toRecord(row) : null;
   }
 
   async findByIdForUser(userId: string, sessionId: string): Promise<SessionRecord | null> {
@@ -58,6 +52,10 @@ export class UserSessionRepository {
 
   async deleteAllForUser(userId: string): Promise<void> {
     await this.db.delete(sessions).where(eq(sessions.userId, userId));
+  }
+
+  async deleteAllForUserExcept(userId: string, keepSessionId: string): Promise<void> {
+    await this.db.delete(sessions).where(and(eq(sessions.userId, userId), ne(sessions.id, keepSessionId)));
   }
 
   async deleteByIdForUser(userId: string, sessionId: string): Promise<void> {

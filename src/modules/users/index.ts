@@ -8,7 +8,9 @@ export { decodeRecoveryFile, encodeRecoveryFile } from './user.recovery-file.js'
 export { UserRepository } from './user.repository.js';
 export { createUserRouter } from './user.routes.js';
 export { UserSessionRepository } from './user.session.repository.js';
+export { SessionRevocationNotifier } from './user.session-revocations.js';
+export type { RevokedSession } from './user.session-revocations.js';
 export { UserService } from './user.service.js';
-export { registerUserSocketHandlers } from './user.socket.js';
+export { disconnectRevokedSession, registerUserSocketHandlers } from './user.socket.js';
 export { constantTimeEqual, generateToken, hashToken } from './user.token.js';
 export type { UserRecord } from './user.types.js';

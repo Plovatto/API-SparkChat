@@ -190,3 +190,57 @@ describe('GET /api/users/nickname-availability', () => {
     expect(response.body).toEqual({ status: 'taken' });
   });
 });
+
+describe('POST /api/users/login under parallel load', () => {
+  it('lets at most five parallel guesses for the same nickname reach the password check', async () => {
+    const { app, userService } = await buildTestApp();
+    await userService.registerAccount({ nickname: 'Parallel', avatar: 0, password: PASSWORD });
+    const loginSpy = vi.spyOn(userService, 'login');
+
+    const responses = await Promise.all(
+      Array.from({ length: 20 }, () => request(app).post('/api/users/login').send({ nickname: 'Parallel', password: 'wrong-password' })),
+    );
+
+    expect(responses.filter((response) => response.status === 401)).toHaveLength(5);
+    expect(responses.filter((response) => response.status === 429)).toHaveLength(15);
+    expect(loginSpy).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe('POST /api/users/logout', () => {
+  it('returns 401 without a session token', async () => {
+    const { app } = await buildTestApp();
+
+    const response = await request(app).post('/api/users/logout');
+
+    expect(response.status).toBe(401);
+    expect(response.body).toMatchObject({ code: 'auth.required' });
+  });
+
+  it('revokes only the current session, notifies the socket layer and answers 204', async () => {
+    const { app, userService, sessionRevocations } = await buildTestApp();
+    const { user, sessionToken, sessionId } = await userService.registerAccount({ nickname: 'Leaving', avatar: 0, password: PASSWORD });
+    const other = await userService.login('Leaving', PASSWORD);
+    const notified: { userId: string; sessionId: string }[] = [];
+    sessionRevocations.subscribe((revoked) => notified.push(revoked));
+
+    const response = await request(app).post('/api/users/logout').set('Authorization', `Bearer ${user.id}:${sessionToken}`);
+
+    expect(response.status).toBe(204);
+    expect(notified).toEqual([{ userId: user.id, sessionId }]);
+    await expect(userService.isSessionActive(user.id, sessionId)).resolves.toBe(false);
+    await expect(userService.isSessionActive(user.id, other?.sessionId ?? '')).resolves.toBe(true);
+
+    const again = await request(app).post('/api/users/logout').set('Authorization', `Bearer ${user.id}:${sessionToken}`);
+    expect(again.status).toBe(401);
+  });
+
+  it('is documented in the OpenAPI document', async () => {
+    const { app } = await buildTestApp();
+
+    const response = await request(app).get('/docs/openapi.json');
+
+    const paths = (response.body as { paths: Record<string, { post?: { security?: unknown[] } }> }).paths;
+    expect(paths['/api/users/logout']?.post?.security).toEqual([{ sessionAuth: [] }]);
+  });
+});
