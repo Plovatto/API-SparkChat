@@ -3,8 +3,6 @@ import { BlockList, isIP } from 'node:net';
 
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 
-// IPv4 rules also match the same address written as IPv4-mapped IPv6 (::ffff:7f00:1),
-// so every spelling of a private IPv4 address is caught by one list.
 const BLOCKED_IPV4_SUBNETS: [string, number][] = [
   ['0.0.0.0', 8],
   ['10.0.0.0', 8],
