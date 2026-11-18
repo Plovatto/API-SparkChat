@@ -700,6 +700,7 @@ describe('MessageService.getRoomMessagesPage', () => {
     const room = await roomService.createPrivateRoom(alice.id, bob.id);
     await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'antes de sair' });
     await roomService.deleteForUser(room.id, bob.id);
+    await new Promise((resolve) => setTimeout(resolve, 5));
     await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'depois de voltar' });
 
     const roomAfterDelete = await roomService.getRoomById(room.id);
