@@ -366,11 +366,11 @@ export class UserService {
     }
 
     const previousPublicKey = patch.e2ePublicKey === undefined ? undefined : (await this.repository.findById(userId))?.e2ePublicKey;
-    await this.repository.update(userId, patch);
-
     if (previousPublicKey && previousPublicKey !== patch.e2ePublicKey) {
       await this.repository.deleteRoomKeys(userId);
     }
+
+    await this.repository.update(userId, patch);
   }
 
   async getPublicKeys(userIds: string[]): Promise<{ userId: string; publicKey: string }[]> {

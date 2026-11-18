@@ -56,6 +56,9 @@ export async function ensureAssistantUser(userRepository: UserRepository, identi
   }
 
   if (needsUpdate(existing, identity)) {
+    if (existing.e2ePublicKey && existing.e2ePublicKey !== identity.publicKey) {
+      await userRepository.deleteRoomKeys(identity.userId);
+    }
     await userRepository.update(identity.userId, {
       e2ePublicKey: identity.publicKey,
       status: 'online',

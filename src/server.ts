@@ -15,7 +15,7 @@ import {
   RoomPresenceService,
   TypingService,
 } from './modules/messages/index.js';
-import { RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
+import { RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
 import { LoginRateLimiter, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import { createR2ObjectStorage } from './storage/r2-object-storage.js';
@@ -56,6 +56,7 @@ const typingService = new TypingService();
 const recordingService = new RecordingService();
 const presenceService = new RoomPresenceService();
 const messageRateLimiter = new MessageRateLimiter();
+const roomRateLimiter = new RoomActionRateLimiter();
 
 const linkPreviewRepository = new LinkPreviewRepository(db);
 const linkPreviewService = new LinkPreviewService(linkPreviewRepository, httpLinkPreviewFetcher);
@@ -107,6 +108,7 @@ registerSocketHandlers(io, {
   presenceService,
   loginRateLimiter,
   messageRateLimiter,
+  roomRateLimiter,
   roomKeyRepository,
   aiService,
 });

@@ -11,8 +11,8 @@ import {
   type TypingService,
 } from '../modules/messages/index.js';
 import {
-  RoomActionRateLimiter,
   registerRoomSocketHandlers,
+  type RoomActionRateLimiter,
   type RoomKeyRepository,
   type RoomService,
 } from '../modules/rooms/index.js';
@@ -36,12 +36,11 @@ export interface SocketDeps {
   messageRateLimiter: MessageRateLimiter;
   roomKeyRepository: RoomKeyRepository;
   aiService: AiService;
-  roomRateLimiter?: RoomActionRateLimiter;
+  roomRateLimiter: RoomActionRateLimiter;
 }
 
 export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
   const { aiService } = deps;
-  const roomRateLimiter = deps.roomRateLimiter ?? new RoomActionRateLimiter();
 
   guardSessionRecovery(
     io,
@@ -78,7 +77,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       userService: deps.userService,
       messageService: deps.messageService,
       roomKeyRepository: deps.roomKeyRepository,
-      rateLimiter: roomRateLimiter,
+      rateLimiter: deps.roomRateLimiter,
       onRoomCreated: ({ io: server, room, locale }) => {
         if (aiService.isAssistantRoom(room)) {
           void aiService.sendWelcomeMessage(server, room, locale);

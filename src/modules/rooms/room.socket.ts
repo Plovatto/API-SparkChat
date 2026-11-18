@@ -105,6 +105,7 @@ registerServerEvents('rooms', [
   'e2e:room-keys',
   'e2e:room-key',
   'e2e:key-request',
+  'e2e:room-key-rejected',
 ]);
 
 async function getInitialMessageViews(deps: RoomSocketDeps, room: RoomRecord, userId: string): Promise<MessageView[]> {
@@ -273,18 +274,22 @@ async function handleJoinByCode(io: AppServer, socket: AppSocket, deps: RoomSock
       return;
     }
 
-    if (deps.rateLimiter.isJoinBlocked(userId)) {
+    if (!deps.rateLimiter.tryJoinAttempt(userId)) {
       socket.emit('error', errorPayload('rateLimit.roomJoin'));
       return;
     }
 
-    const joinResult = await roomService.joinByCode(normalizedCode, userId).catch((error: unknown) => {
-      deps.rateLimiter.registerJoinFailure(userId);
-      throw error;
-    });
-    const { room, joined } = joinResult;
+    const { room, joined } = await roomService.joinByCode(normalizedCode, userId);
+    deps.rateLimiter.forgiveJoinAttempt(userId);
     await socket.join(room.id);
     await joinUserSocketsToRoom(io, userId, room.id);
+
+    const current = await roomService.getRoomById(room.id);
+    if (!current || !roomService.isParticipant(current, userId)) {
+      await removeUserSocketsFromRoom(io, userId, room.id);
+      socket.emit('error', errorPayload('room.notFound'));
+      return;
+    }
 
     if (joined) {
       const user = await userService.getUser(userId);
@@ -375,12 +380,15 @@ async function handleLeaveGroup(io: AppServer, socket: AppSocket, deps: RoomSock
     const { roomId } = roomIdPayloadSchema.parse(payload);
     const user = await userService.getUser(userId);
     const updatedRoom = await roomService.leaveGroup(roomId, userId);
+    if (!updatedRoom) {
+      return;
+    }
 
     await socket.leave(roomId);
     await removeUserSocketsFromRoom(io, userId, roomId);
     emitToUser(io, userId).emit('group:left', { roomId });
 
-    if (updatedRoom && user) {
+    if (user) {
       const remaining = await roomService.buildParticipantViews(updatedRoom);
 
       io.to(roomId).emit('group:user-left', {
@@ -541,16 +549,27 @@ async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: Room
 
     const validKeys = keys.filter((key) => roomService.isParticipant(room, key.userId));
 
-    const stored = await Promise.all(
-      validKeys.map(async (key) => {
-        if (key.userId === actingUserId) {
+    const ownKey = validKeys.find((key) => key.userId === actingUserId);
+    const otherKeys = validKeys.filter((key) => key.userId !== actingUserId);
+
+    const storedOthers = await Promise.all(
+      otherKeys.map(async (key) => {
+        if (deps.rateLimiter.consumePendingKeyRequest(key.userId, roomId)) {
           await roomKeyRepository.publish(roomId, key.userId, key.sealedKey);
           return key;
         }
         return (await roomKeyRepository.publishIfAbsent(roomId, key.userId, key.sealedKey)) ? key : null;
       }),
     );
-    const publishedKeys = stored.filter((key): key is (typeof validKeys)[number] => key !== null);
+    const publishedKeys = storedOthers.filter((key): key is (typeof validKeys)[number] => key !== null);
+    const conflicted = publishedKeys.length < otherKeys.length;
+
+    if (ownKey && conflicted) {
+      socket.emit('e2e:room-key-rejected', { roomId });
+    } else if (ownKey) {
+      await roomKeyRepository.publish(roomId, ownKey.userId, ownKey.sealedKey);
+      publishedKeys.push(ownKey);
+    }
 
     for (const key of publishedKeys) {
       const target = key.userId === actingUserId ? socket.to(userRoom(actingUserId)) : emitToUser(io, key.userId);

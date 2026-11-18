@@ -149,7 +149,13 @@ export class RoomRepository {
       .selectDistinct({ userId: rp2.userId })
       .from(roomParticipants)
       .innerJoin(rp2, eq(rp2.roomId, roomParticipants.roomId))
-      .where(eq(roomParticipants.userId, userId));
+      .where(
+        and(
+          eq(roomParticipants.userId, userId),
+          sql`coalesce(${rp2.blockedByUserId}, '') <> ${userId}`,
+          sql`coalesce(${roomParticipants.blockedByUserId}, '') <> ${rp2.userId}`,
+        ),
+      );
     return rows.map((row) => row.userId);
   }
 

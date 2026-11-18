@@ -123,7 +123,7 @@ export class RoomService {
 
   async leaveGroup(roomId: string, userId: string): Promise<RoomRecord | null> {
     const room = await this.repository.findById(roomId);
-    if (!room || !room.participants.includes(userId)) {
+    if (!room || room.type !== 'group' || !room.participants.includes(userId)) {
       return null;
     }
 

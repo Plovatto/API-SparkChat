@@ -30,14 +30,7 @@ async function keepCurrentMemberships(stored: StoredSession, filterMemberships: 
 
   const ownRoom = userRoom(userId);
   const chatRoomIds = stored.rooms.filter((room) => room !== stored.sid && !isUserRoom(room));
-
-  let memberships: Set<string>;
-  try {
-    memberships = await filterMemberships(userId, chatRoomIds);
-  } catch (err) {
-    logger.warn({ err, userId }, 'Failed to recheck room memberships of a recovered socket');
-    memberships = new Set();
-  }
+  const memberships = await filterMemberships(userId, chatRoomIds);
 
   stored.rooms = stored.rooms.filter((room) => room === stored.sid || room === ownRoom || memberships.has(room));
 }
@@ -46,11 +39,20 @@ export function guardSessionRecovery(io: AppServer, isSessionActive: SessionVali
   const adapter = io.of('/').adapter;
   const restoreSession = adapter.restoreSession.bind(adapter);
   const sessions = (adapter as unknown as { sessions?: Map<string, StoredSession> }).sessions;
+  if (!sessions) {
+    logger.warn('Socket adapter does not expose recoverable sessions; room memberships are not rechecked on recovery');
+  }
 
   adapter.restoreSession = async (pid, offset) => {
     const stored = sessions?.get(pid);
     if (stored) {
-      await keepCurrentMemberships(stored, filterMemberships);
+      try {
+        await keepCurrentMemberships(stored, filterMemberships);
+      } catch (err) {
+        logger.warn({ err }, 'Failed to recheck room memberships of a recovered socket');
+        sessions?.delete(pid);
+        return restoreSession(pid, offset);
+      }
     }
 
     const session = await restoreSession(pid, offset);
