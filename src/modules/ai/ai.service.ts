@@ -11,7 +11,7 @@ import {
 } from '../messages/index.js';
 import type { RoomKeyRepository, RoomRecord } from '../rooms/index.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
-import { guessMimeTypeFromUrl, loadDecryptedAttachment } from './ai.attachments.js';
+import { loadDecryptedAttachment, resolveAudioMimeType } from './ai.attachments.js';
 import { decryptContent, encryptContent, unsealRoomKey } from './ai.crypto.js';
 import type { AssistantIdentity } from './ai.identity.js';
 import {
@@ -360,8 +360,11 @@ export class AiService {
       if ((message.duration ?? 0) > AI_MAX_AUDIO_SECONDS) {
         return { role, text: `[o usuário enviou um áudio de ${message.duration}s, longo demais para eu ouvir agora]` };
       }
-      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage, AI_MAX_AUDIO_BYTES);
-      const mimeType = guessMimeTypeFromUrl(message.content);
+      const [raw, declaredMimeType] = await Promise.all([
+        loadDecryptedAttachment(message.content, roomKey, this.objectStorage, AI_MAX_AUDIO_BYTES),
+        message.fileMeta ? decryptContent(message.fileMeta.mimeType, roomKey) : Promise.resolve(null),
+      ]);
+      const mimeType = resolveAudioMimeType(declaredMimeType, message.content);
       if (!raw || !mimeType) {
         return { role, text: captionText ?? '[o usuário enviou um áudio, mas não foi possível carregá-lo]' };
       }

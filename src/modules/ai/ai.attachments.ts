@@ -36,6 +36,26 @@ export function guessMimeTypeFromUrl(url: string): string | null {
   return EXTENSION_MIME_TYPES[extension] ?? null;
 }
 
+const AUDIO_MIME_ALIASES: Record<string, string> = {
+  'audio/x-wav': 'audio/wav',
+  'audio/x-m4a': 'audio/mp4',
+};
+
+const SUPPORTED_AUDIO_MIME_TYPES = new Set(
+  Object.values(EXTENSION_MIME_TYPES).filter((mimeType) => mimeType.startsWith('audio/')),
+);
+
+export function resolveAudioMimeType(declaredMimeType: string | null, url: string): string | null {
+  const normalized = declaredMimeType?.split(';')[0]?.trim().toLowerCase() ?? '';
+  const canonical = AUDIO_MIME_ALIASES[normalized] ?? normalized;
+  if (SUPPORTED_AUDIO_MIME_TYPES.has(canonical)) {
+    return canonical;
+  }
+
+  const guessed = guessMimeTypeFromUrl(url);
+  return guessed?.startsWith('audio/') ? guessed : null;
+}
+
 export async function loadDecryptedAttachment(
   url: string,
   roomKey: Uint8Array,

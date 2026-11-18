@@ -1,11 +1,23 @@
 import path from 'node:path';
 import multer from 'multer';
 
+export const NEUTRAL_UPLOAD_MIME_TYPE = 'application/octet-stream';
+export const NEUTRAL_UPLOAD_EXTENSION = '.bin';
+
+export function isNeutralUpload(file: Pick<Express.Multer.File, 'mimetype' | 'originalname'>): boolean {
+  return file.mimetype === NEUTRAL_UPLOAD_MIME_TYPE && path.extname(file.originalname).toLowerCase() === NEUTRAL_UPLOAD_EXTENSION;
+}
+
 function createMediaUpload(allowedMimeTypes: Set<string>, allowedExtensions: Set<string>, maxFileSizeBytes: number) {
   return multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: maxFileSizeBytes },
     fileFilter(_req, file, callback) {
+      if (isNeutralUpload(file)) {
+        callback(null, true);
+        return;
+      }
+
       if (!allowedMimeTypes.has(file.mimetype)) {
         callback(new multer.MulterError('LIMIT_UNEXPECTED_FILE', file.fieldname));
         return;
