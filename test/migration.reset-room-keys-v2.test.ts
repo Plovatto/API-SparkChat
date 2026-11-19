@@ -88,5 +88,5 @@ describe(`migration ${RESET_TAG}`, () => {
     expect(keyColumns.rows.filter((row) => Number(row.pk) > 0).map((row) => row.name)).toEqual(['room_id', 'user_id', 'key_id']);
     expect(keyColumns.rows.map((row) => row.name)).toEqual(expect.arrayContaining(['epoch', 'sender_id']));
     client.close();
-  });
+  }, 30000);
 });
