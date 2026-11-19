@@ -182,13 +182,13 @@ describe('e2e:publish-signing-key', () => {
     ).toBe(true);
   });
 
-  it('keeps room keys when a key change arrives with an invalid signing proof', async () => {
+  it('does not require a room key rotation when a key change arrives with an invalid signing proof', async () => {
     harness = await startSocketHarness();
     const h = harness;
     const { account, client } = await accountWithKey(h, 'Frank', 'pub-frank');
     const other = await h.createAccount('Grace');
     const room = await h.roomService.createPrivateRoom(account.user.id, other.user.id);
-    await h.roomKeyRepository.publish(room.id, account.user.id, 'sealed');
+    await h.establishRoomKey(room.id);
     const signing = signingIdentity(account.user.id, 'unrelated');
 
     const error = waitForEvent<{ code: string }>(client, 'error');
@@ -196,7 +196,7 @@ describe('e2e:publish-signing-key', () => {
 
     expect(await error).toMatchObject({ code: 'e2e.invalidSigningKey' });
     expect((await h.userRepository.findById(account.user.id))?.e2ePublicKey).toBe('pub-frank');
-    expect(await h.roomKeyRepository.findForUser(room.id, account.user.id)).toBe('sealed');
+    expect(await h.roomKeyRepository.getState(room.id)).toMatchObject({ currentEpoch: 1, rotationRequired: null });
   });
 
   it('rejects a different signing key through e2e:publish-keys once one is stored', async () => {

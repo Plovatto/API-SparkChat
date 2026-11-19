@@ -4,7 +4,7 @@ import type { MessageRecord, MessageService } from '../messages/index.js';
 import type { UserRecord, UserService } from '../users/index.js';
 import { generateRoomCode } from './room.codes.js';
 import type { RoomRepository } from './room.repository.js';
-import type { RoomParticipant, RoomRecord, RoomSummary } from './room.types.js';
+import { MAX_GROUP_MEMBERS, type RoomParticipant, type RoomRecord, type RoomSummary } from './room.types.js';
 
 export interface JoinByCodeResult {
   room: RoomRecord;
@@ -88,9 +88,16 @@ export class RoomService {
       return { room, joined: false };
     }
 
+    if (room.participants.length >= MAX_GROUP_MEMBERS) {
+      throw AppError.of('room.groupFull', { maxMembers: MAX_GROUP_MEMBERS });
+    }
+
     const added = await this.repository.addParticipant(room.id, userId, new Date().toISOString());
     const current = await this.repository.findById(room.id);
     if (!current || !current.participants.includes(userId)) {
+      if (current && current.participants.length >= MAX_GROUP_MEMBERS) {
+        throw AppError.of('room.groupFull', { maxMembers: MAX_GROUP_MEMBERS });
+      }
       throw AppError.of('room.notFound');
     }
 
@@ -340,6 +347,9 @@ export class RoomService {
         isBlockedBy,
         userBlocked,
         isMutuallyBlocked: isBlockedBy && userBlocked,
+        currentEpoch: room.currentEpoch ?? 0,
+        currentKeyId: room.currentKeyId ?? null,
+        rotationRequiredEpoch: room.rotationRequired ?? null,
       };
     });
   }

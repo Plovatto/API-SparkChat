@@ -3,7 +3,6 @@ const JOIN_ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
 const MAX_GROUP_CREATIONS = 10;
 const GROUP_CREATION_WINDOW_MS = 60 * 60 * 1000;
 export const KEY_REQUEST_INTERVAL_MS = 30 * 1000;
-const PENDING_KEY_REQUEST_TTL_MS = 2 * 60 * 1000;
 const MAX_TRACKED_ENTRIES = 10_000;
 
 function pruneExpired(entries: Map<string, number>, now: number): void {
@@ -21,7 +20,6 @@ export class RoomActionRateLimiter {
   private readonly joinAttempts = new Map<string, number[]>();
   private readonly groupCreations = new Map<string, number[]>();
   private readonly keyRequestCooldowns = new Map<string, number>();
-  private readonly pendingKeyRequests = new Map<string, number>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -61,7 +59,6 @@ export class RoomActionRateLimiter {
     const now = this.now();
     const key = `${userId}:${roomId}`;
     pruneExpired(this.keyRequestCooldowns, now);
-    pruneExpired(this.pendingKeyRequests, now);
 
     const cooldownUntil = this.keyRequestCooldowns.get(key);
     if (cooldownUntil !== undefined && cooldownUntil > now) {
@@ -69,19 +66,6 @@ export class RoomActionRateLimiter {
     }
 
     this.keyRequestCooldowns.set(key, now + KEY_REQUEST_INTERVAL_MS);
-    this.pendingKeyRequests.set(key, now + PENDING_KEY_REQUEST_TTL_MS);
     return true;
-  }
-
-  hasPendingKeyRequest(userId: string, roomId: string): boolean {
-    const expiresAt = this.pendingKeyRequests.get(`${userId}:${roomId}`);
-    return expiresAt !== undefined && expiresAt > this.now();
-  }
-
-  consumePendingKeyRequest(userId: string, roomId: string): boolean {
-    const key = `${userId}:${roomId}`;
-    const expiresAt = this.pendingKeyRequests.get(key);
-    this.pendingKeyRequests.delete(key);
-    return expiresAt !== undefined && expiresAt > this.now();
   }
 }

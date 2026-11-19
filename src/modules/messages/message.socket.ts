@@ -14,6 +14,7 @@ import { LINK_PREVIEW_ENCRYPTED_LIMITS } from '../link-preview/index.js';
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
 import { emitMessageUpdate } from './message.broadcast.js';
+import { resolveMessageKeyId } from './message.encrypted-fields.js';
 import { parseMentionedUserIds } from './message.mentions.js';
 import type { MessageRateLimiter } from './message.rate-limiter.js';
 import { messageViewSchema, messagesListPayloadSchema, newMessagePayloadSchema } from './message.schemas.js';
@@ -55,13 +56,13 @@ const activityEvents = {
 } as const satisfies Record<ActivityKind, string>;
 
 const fileMetaSchema = z.object({
-  name: z.string().trim().min(1).max(700),
-  mimeType: z.string().trim().min(1).max(400),
+  name: z.string().trim().min(1).max(740),
+  mimeType: z.string().trim().min(1).max(440),
   size: z.number().int().positive(),
   thumbnailUrl: z.string().trim().min(1).max(4000).optional(),
 });
 
-const SIGNED_ENVELOPE_MARGIN = 128;
+const SIGNED_ENVELOPE_MARGIN = 160;
 
 const linkPreviewSchema = z.object({
   url: z.string().trim().min(1).max(LINK_PREVIEW_ENCRYPTED_LIMITS.url + SIGNED_ENVELOPE_MARGIN),
@@ -81,10 +82,10 @@ const sendMessagePayloadSchema = z
     duration: z.number().int().positive().optional(),
     replyToMessageId: z.string().trim().min(1).optional(),
     clientTempId: clientTempIdSchema.optional(),
-    messageId: z.string().uuid().optional(),
+    messageId: z.string().uuid(),
     fileMeta: fileMetaSchema.optional(),
     mentionedUserIds: z.array(z.string().trim().min(1)).max(50).optional(),
-    caption: z.string().trim().max(3300).optional(),
+    caption: z.string().trim().max(3340).optional(),
     linkPreview: linkPreviewSchema.optional(),
     attachmentUrls: z.array(z.string().trim().min(1).max(4000)).max(4).optional(),
   })
@@ -92,8 +93,8 @@ const sendMessagePayloadSchema = z
     message: 'duration é obrigatório para mensagens de áudio.',
     path: ['duration'],
   })
-  .refine((data) => data.type !== 'file' || data.fileMeta !== undefined, {
-    message: 'fileMeta é obrigatório para mensagens do tipo file.',
+  .refine((data) => data.type === 'text' || data.fileMeta !== undefined, {
+    message: 'fileMeta é obrigatório para mensagens com anexo.',
     path: ['fileMeta'],
   });
 
@@ -329,6 +330,12 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       return;
     }
 
+    const keyId = resolveMessageKeyId({ type, content, caption, fileMeta, linkPreview });
+    if (!keyId) {
+      socket.emit('error', { ...errorPayload('message.unsupportedEncryption'), clientTempId });
+      return;
+    }
+
     const room = await roomService.getRoomById(roomId);
 
     if (!room || !roomService.isParticipant(room, userId)) {
@@ -338,6 +345,11 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
 
     if (roomService.isBlocked(room, userId)) {
       socket.emit('error', { ...errorPayload('message.blocked'), clientTempId });
+      return;
+    }
+
+    if (room.rotationRequired !== undefined || room.currentKeyId !== keyId) {
+      socket.emit('error', { ...errorPayload('message.staleRoomKey'), clientTempId });
       return;
     }
 

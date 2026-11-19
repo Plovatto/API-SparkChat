@@ -179,6 +179,11 @@ function recoveryPatch(pair: { recoveryVerifier: string; encryptedPrivateKeyByRe
   };
 }
 
+export interface RoomRotationNotice {
+  roomId: string;
+  epoch: number;
+}
+
 export class UserService {
   private dummyPasswordHash: Promise<string> | null = null;
   private readonly consumedKeyfileGrants = new Map<string, number>();
@@ -570,7 +575,7 @@ export class UserService {
     return this.sessions.deleteByIdForUser(userId, sessionId);
   }
 
-  async publishE2eKeys(userId: string, input: PublishE2eKeysInput): Promise<void> {
+  async publishE2eKeys(userId: string, input: PublishE2eKeysInput): Promise<RoomRotationNotice[]> {
     const patch: Partial<UserRecord> = {};
     if (input.publicKey !== undefined) {
       patch.e2ePublicKey = input.publicKey;
@@ -584,7 +589,7 @@ export class UserService {
 
     const hasSigning = input.signingPublicKey !== undefined && input.keySignature !== undefined;
     if (Object.keys(patch).length === 0 && !hasSigning) {
-      return;
+      return [];
     }
 
     const current = await this.repository.findById(userId);
@@ -621,10 +626,11 @@ export class UserService {
 
     const previousPublicKey = patch.e2ePublicKey === undefined ? undefined : current?.e2ePublicKey;
     if (previousPublicKey && previousPublicKey !== patch.e2ePublicKey) {
-      await this.repository.deleteRoomKeys(userId);
+      return this.repository.updateIdentityRequiringRotation(userId, patch);
     }
 
     await this.repository.update(userId, patch);
+    return [];
   }
 
   async publishSigningKey(userId: string, input: { signingPublicKey: string; keySignature: string }): Promise<void> {

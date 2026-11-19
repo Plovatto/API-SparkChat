@@ -3,6 +3,8 @@ import type { UserStatus } from '../users/index.js';
 
 export type RoomType = 'private' | 'group';
 
+export const MAX_GROUP_MEMBERS = 150;
+
 export interface RoomRecord {
   id: string;
   type: RoomType;
@@ -17,6 +19,9 @@ export interface RoomRecord {
   deletedAt: Record<string, string>;
   reactivatedAt?: Record<string, string> | undefined;
   joinedAt?: Record<string, string> | undefined;
+  currentEpoch?: number | undefined;
+  currentKeyId?: string | undefined;
+  rotationRequired?: number | undefined;
 }
 
 export interface RoomParticipant {
@@ -44,4 +49,7 @@ export interface RoomSummary {
   isBlockedBy: boolean;
   userBlocked: boolean;
   isMutuallyBlocked: boolean;
+  currentEpoch: number;
+  currentKeyId: string | null;
+  rotationRequiredEpoch: number | null;
 }

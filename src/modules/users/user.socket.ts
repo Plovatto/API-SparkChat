@@ -11,7 +11,7 @@ import { runSocketHandler } from '../../sockets/socket-handler.js';
 import { bindSocketSession, clearSocketSession, requireSocketUserId } from '../../sockets/socket-session.js';
 import { findSocketsBoundToUser, hasVisibleUserSocket, userRoom } from '../../sockets/user-sockets.js';
 import { emitMessageUpdate, type MessageService } from '../messages/index.js';
-import type { RoomService } from '../rooms/index.js';
+import { notifyRoomRotations, type RoomService } from '../rooms/index.js';
 import { authSaltSchema, authVersionOf, clientSecretSchema } from './user.credentials.js';
 import { describeDevice } from './user.device.js';
 import { getPublicKeysPayloadSchema, publishE2eKeysPayloadSchema, publishSigningKeyPayloadSchema, wrappedPrivateKeySchema } from './user.e2e-keys.js';
@@ -221,7 +221,7 @@ export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, dep
   });
 
   socket.on('e2e:publish-keys', (payload) => {
-    runSocketHandler(socket, 'e2e:publish-keys', () => handlePublishE2eKeys(socket, deps, payload));
+    runSocketHandler(socket, 'e2e:publish-keys', () => handlePublishE2eKeys(io, socket, deps, payload));
   });
 
   socket.on('e2e:publish-signing-key', (payload) => {
@@ -719,7 +719,7 @@ async function handleDisconnect(io: AppServer, socket: AppSocket, deps: UserSock
   await markOfflineIfNoVisibleSocket(io, deps, userId);
 }
 
-async function handlePublishE2eKeys(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+async function handlePublishE2eKeys(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
   const userId = requireSocketUserId(socket);
   if (!userId) {
     return;
@@ -727,7 +727,8 @@ async function handlePublishE2eKeys(socket: AppSocket, deps: UserSocketDeps, pay
 
   try {
     const input = publishE2eKeysPayloadSchema.parse(payload);
-    await deps.userService.publishE2eKeys(userId, input);
+    const rotations = await deps.userService.publishE2eKeys(userId, input);
+    notifyRoomRotations(io, rotations);
   } catch (error) {
     socket.emit('error', { ...extractErrorPayload(error), event: 'e2e:publish-keys' });
   }

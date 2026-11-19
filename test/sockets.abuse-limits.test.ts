@@ -1,8 +1,10 @@
 import { roomParticipants } from '@/database/schema.js';
+import { MAX_ROOM_KEY_BATCH } from '@/modules/rooms/room.socket.js';
 import { userChatSettingsSchema, userThemeSchema } from '@/modules/users/user.model.js';
 import { SOCKET_MAX_HTTP_BUFFER_SIZE } from '@/sockets/socket-options.js';
 import { createEventLimiter, DEFAULT_SOCKET_EVENT_BUDGETS } from '@/sockets/socket-rate-limit.js';
 import { afterEach, describe, expect, it } from 'vitest';
+import { fakeEnvelope, newKeyId } from './support/room-keys.js';
 import { collectEvents, settle, startSocketHarness, waitForDisconnect, waitForEvent, type TestClient } from './support/socket-harness.js';
 
 type Harness = Awaited<ReturnType<typeof startSocketHarness>>;
@@ -46,11 +48,12 @@ function largestValidMessageSend(): number {
     type: 'text',
     duration: 999999,
     replyToMessageId: ID,
+    messageId: ID,
     clientTempId: `temp-${ID}`,
     mentionedUserIds: Array.from({ length: 50 }, () => ID),
-    caption: fill(3000),
-    fileMeta: { name: fill(500), mimeType: fill(200), size: 123456789, thumbnailUrl: fill(4000) },
-    linkPreview: { url: fill(4000), title: fill(4000), description: fill(8000), imageUrl: fill(4000), siteName: fill(1000) },
+    caption: fill(3340),
+    fileMeta: { name: fill(740), mimeType: fill(440), size: 123456789, thumbnailUrl: fill(4000) },
+    linkPreview: { url: fill(4160), title: fill(4160), description: fill(8160), imageUrl: fill(4160), siteName: fill(1160) },
   };
   return Buffer.byteLength(`42${JSON.stringify(['message:send', payload])}`);
 }
@@ -59,6 +62,17 @@ describe('socket payload size limit', () => {
   it('leaves at least 25% headroom over the largest valid message:send', () => {
     expect(largestValidMessageSend() * 1.25).toBeLessThan(SOCKET_MAX_HTTP_BUFFER_SIZE);
     expect(SOCKET_MAX_HTTP_BUFFER_SIZE).toBeLessThanOrEqual(128 * 1024);
+  });
+
+  it('fits a full room key batch for the largest group a rotation supports', () => {
+    const keyId = newKeyId();
+    const keys = Array.from({ length: MAX_ROOM_KEY_BATCH }, () => ({
+      userId: ID,
+      sealedKey: fakeEnvelope({ roomId: ID, keyId, epoch: 999999, senderId: ID, recipientId: ID }),
+    }));
+    const frame = `42${JSON.stringify(['e2e:publish-room-key', { roomId: ID, keyId, epoch: 999999, keys }])}`;
+
+    expect(Buffer.byteLength(frame)).toBeLessThan(SOCKET_MAX_HTTP_BUFFER_SIZE);
   });
 
   it('disconnects a client that sends a frame above the limit', async () => {

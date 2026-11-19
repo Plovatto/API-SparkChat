@@ -242,7 +242,7 @@ describe('assistant attachment limits', () => {
     const objectStorage = new InMemoryObjectStorage();
     await objectStorage.putObject('uploads/files/huge.txt', Buffer.alloc(4096), { contentType: 'text/plain' });
 
-    const result = await loadDecryptedAttachment(objectStorage.publicUrl('uploads/files/huge.txt'), new Uint8Array(32), objectStorage, 1024);
+    const result = await loadDecryptedAttachment(objectStorage.publicUrl('uploads/files/huge.txt'), () => Promise.resolve(new Uint8Array(32)), objectStorage, 1024);
 
     expect(result).toBeNull();
   });

@@ -11,6 +11,7 @@ const SAMPLE_PARAMS: Partial<Record<ErrorCode, object>> = {
   'upload.invalidType': { kind: 'file' },
   'internal.routeNotFound': { method: 'GET', path: '/api/x' },
   'e2e.lookupTooLarge': { maxItems: 200 },
+  'room.groupFull': { maxMembers: 150 },
 };
 
 const CODE_PATTERN = /^(auth|user|room|message|e2e|upload|linkPreview|rateLimit|validation|internal)\.[a-z][A-Za-z]+$/;

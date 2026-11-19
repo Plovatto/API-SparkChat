@@ -33,19 +33,4 @@ describe('RoomActionRateLimiter', () => {
     now += KEY_REQUEST_INTERVAL_MS + 1;
     expect(limiter.tryKeyRequest('alice', 'room-1')).toBe(true);
   });
-
-  it('remembers a pending key request only once and only for a while', () => {
-    let now = 1_000_000;
-    const limiter = new RoomActionRateLimiter(() => now);
-
-    expect(limiter.consumePendingKeyRequest('alice', 'room-1')).toBe(false);
-    limiter.tryKeyRequest('alice', 'room-1');
-    expect(limiter.consumePendingKeyRequest('alice', 'room-1')).toBe(true);
-    expect(limiter.consumePendingKeyRequest('alice', 'room-1')).toBe(false);
-
-    now += KEY_REQUEST_INTERVAL_MS + 1;
-    limiter.tryKeyRequest('alice', 'room-1');
-    now += 10 * 60 * 1000;
-    expect(limiter.consumePendingKeyRequest('alice', 'room-1')).toBe(false);
-  });
 });

@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { roomParticipants, rooms } from '@/database/schema.js';
 import { buildRoomService } from './support/build-room-service.js';
+import { establishFakeGeneration } from './support/room-keys.js';
 
 type Services = Awaited<ReturnType<typeof buildRoomService>>;
 
@@ -71,7 +72,7 @@ describe('room membership changes', () => {
     const services = await buildRoomService();
     const { roomService, roomKeyRepository, db } = services;
     const { alice, bob, group } = await groupWithMember(services);
-    await roomKeyRepository.publish(group.id, bob.id, 'sealed-for-bob');
+    await establishFakeGeneration(roomKeyRepository, group.id, alice.id, [alice.id, bob.id]);
     await roomService.removeMember(group.id, alice.id, bob.id);
     await db.insert(roomParticipants).values({ roomId: group.id, userId: bob.id, isVisible: true, isAdmin: true });
 

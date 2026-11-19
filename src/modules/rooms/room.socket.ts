@@ -9,18 +9,19 @@ import { runSocketHandler } from '../../sockets/socket-handler.js';
 import { socketLocale } from '../../sockets/socket-locale.js';
 import { exceedsLookupLimit, E2E_LOOKUP_MAX_ITEMS, lookupTooLargePayload } from '../../sockets/id-lookup.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
-import { emitToUser, joinUserSocketsToRoom, removeUserSocketsFromRoom, userRoom } from '../../sockets/user-sockets.js';
+import { emitToUser, joinUserSocketsToRoom, removeUserSocketsFromRoom } from '../../sockets/user-sockets.js';
 import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService, type MessageView } from '../messages/index.js';
 import { NICKNAME_MAX_LENGTH, type UserService } from '../users/index.js';
-import type { RoomKeyRepository } from './room.e2e.js';
+import type { RoomKeyPublishMode, RoomKeyPublishOutcome, RoomKeyRepository } from './room.e2e.js';
+import { KEY_ID_PATTERN, matchesEnvelope, parseRoomKeyEnvelope } from './room.key-envelope.js';
 import type { RoomActionRateLimiter } from './room.rate-limiter.js';
 import type { RoomService } from './room.service.js';
-import type { RoomRecord } from './room.types.js';
+import { MAX_GROUP_MEMBERS, type RoomRecord } from './room.types.js';
+import { notifyRoomRotations } from './room.rotation.js';
 
 export type OnRoomCreatedHook = (context: { io: AppServer; room: RoomRecord; locale: Locale }) => void;
 export type ShouldResetInsteadOfDeleteHook = (room: RoomRecord) => boolean;
 export type OnRoomKeyPublishedHook = (context: { io: AppServer; room: RoomRecord }) => void;
-export type CanReplaceRoomKeyHook = (room: RoomRecord, userId: string) => boolean;
 
 export interface RoomSocketDeps {
   roomService: RoomService;
@@ -31,14 +32,14 @@ export interface RoomSocketDeps {
   onRoomCreated?: OnRoomCreatedHook;
   shouldResetInsteadOfDelete?: ShouldResetInsteadOfDeleteHook;
   onRoomKeyPublished?: OnRoomKeyPublishedHook;
-  canReplaceRoomKey?: CanReplaceRoomKeyHook;
 }
 
 const ROOM_CODE_MIN_LENGTH = 8;
 const ROOM_CODE_MAX_LENGTH = 12;
 const ROOM_CODE_INPUT_MAX_LENGTH = 64;
 const ROOM_NAME_MAX_LENGTH = 64;
-const MAX_SEALED_KEY_LENGTH = 2000;
+const MAX_SEALED_KEY_LENGTH = 1000;
+export const MAX_ROOM_KEY_BATCH = MAX_GROUP_MEMBERS;
 
 const createPrivateRoomPayloadSchema = z.object({
   targetNickname: z.string().trim().min(1).max(NICKNAME_MAX_LENGTH),
@@ -64,6 +65,8 @@ const memberActionPayloadSchema = z.object({
 
 const publishRoomKeyPayloadSchema = z.object({
   roomId: z.string().trim().min(1),
+  keyId: z.string().regex(KEY_ID_PATTERN),
+  epoch: z.number().int().min(1),
   keys: z
     .array(
       z.object({
@@ -72,7 +75,7 @@ const publishRoomKeyPayloadSchema = z.object({
       }),
     )
     .min(1)
-    .max(50),
+    .max(MAX_ROOM_KEY_BATCH),
 });
 
 const getRoomKeysPayloadSchema = z.object({
@@ -92,6 +95,7 @@ registerClientEvents('rooms', {
   'user:block': blockPayloadSchema,
   'user:unblock': blockPayloadSchema,
   'e2e:publish-room-key': publishRoomKeyPayloadSchema,
+  'e2e:share-room-key': publishRoomKeyPayloadSchema,
   'e2e:get-room-keys': getRoomKeysPayloadSchema,
   'e2e:request-room-key': roomIdPayloadSchema,
 });
@@ -112,7 +116,25 @@ registerServerEvents('rooms', [
   'e2e:room-key',
   'e2e:key-request',
   'e2e:room-key-rejected',
+  'e2e:rotation-required',
 ]);
+
+const REJECTION_CODES = {
+  stale: 'e2e.roomKeyStale',
+  incomplete: 'e2e.roomKeyIncomplete',
+  conflict: 'e2e.roomKeyConflict',
+} as const satisfies Partial<Record<RoomKeyPublishOutcome, string>>;
+
+function announceRotation(io: AppServer, room: RoomRecord): void {
+  if (room.rotationRequired !== undefined) {
+    notifyRoomRotations(io, [{ roomId: room.id, epoch: room.rotationRequired, memberIds: room.participants }]);
+  }
+}
+
+const PUBLISH_EVENTS = {
+  generation: 'e2e:publish-room-key',
+  share: 'e2e:share-room-key',
+} as const satisfies Record<RoomKeyPublishMode, string>;
 
 async function getInitialMessageViews(deps: RoomSocketDeps, room: RoomRecord, userId: string): Promise<MessageView[]> {
   const after = deps.roomService.getVisibilityCutoff(room, userId);
@@ -166,7 +188,11 @@ export function registerRoomSocketHandlers(io: AppServer, socket: AppSocket, dep
   });
 
   socket.on('e2e:publish-room-key', (payload) => {
-    runSocketHandler(socket, 'e2e:publish-room-key', () => handlePublishRoomKey(io, socket, deps, payload));
+    runSocketHandler(socket, 'e2e:publish-room-key', () => handlePublishRoomKey(io, socket, deps, payload, 'generation'));
+  });
+
+  socket.on('e2e:share-room-key', (payload) => {
+    runSocketHandler(socket, 'e2e:share-room-key', () => handlePublishRoomKey(io, socket, deps, payload, 'share'));
   });
 
   socket.on('e2e:get-room-keys', (payload) => {
@@ -413,6 +439,7 @@ async function handleLeaveGroup(io: AppServer, socket: AppSocket, deps: RoomSock
     await socket.leave(roomId);
     await removeUserSocketsFromRoom(io, userId, roomId);
     emitToUser(io, userId).emit('group:left', { roomId });
+    announceRotation(io, updatedRoom);
 
     if (user) {
       const remaining = await roomService.buildParticipantViews(updatedRoom);
@@ -448,7 +475,13 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
     ]);
 
     const updatedRoom = await roomService.removeMember(roomId, actingUserId, targetUserId);
-    if (!updatedRoom || !actingUser || !targetUser) {
+    if (!updatedRoom) {
+      return;
+    }
+
+    await removeUserSocketsFromRoom(io, targetUserId, roomId);
+    announceRotation(io, updatedRoom);
+    if (!actingUser || !targetUser) {
       return;
     }
 
@@ -558,7 +591,13 @@ async function handleUnblockUser(io: AppServer, socket: AppSocket, deps: RoomSoc
   }
 }
 
-async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+async function handlePublishRoomKey(
+  io: AppServer,
+  socket: AppSocket,
+  deps: RoomSocketDeps,
+  payload: unknown,
+  mode: RoomKeyPublishMode,
+): Promise<void> {
   const actingUserId = requireSocketUserId(socket);
   if (!actingUserId) {
     return;
@@ -567,45 +606,47 @@ async function handlePublishRoomKey(io: AppServer, socket: AppSocket, deps: Room
   const { roomService, roomKeyRepository } = deps;
 
   try {
-    const { roomId, keys } = publishRoomKeyPayloadSchema.parse(payload);
+    const { roomId, keyId, epoch, keys } = publishRoomKeyPayloadSchema.parse(payload);
     const room = await roomService.getRoomById(roomId);
     if (!room || !roomService.isParticipant(room, actingUserId)) {
       return;
     }
 
-    const validKeys = keys.filter((key) => roomService.isParticipant(room, key.userId));
+    const reject = async (code: (typeof REJECTION_CODES)[keyof typeof REJECTION_CODES] | 'e2e.invalidRoomKeyEnvelope') => {
+      const state = await roomKeyRepository.getState(roomId);
+      socket.emit('e2e:room-key-rejected', {
+        roomId,
+        keyId,
+        epoch,
+        event: PUBLISH_EVENTS[mode],
+        currentEpoch: state?.currentEpoch ?? 0,
+        currentKeyId: state?.currentKeyId ?? null,
+        rotationRequiredEpoch: state?.rotationRequired ?? null,
+        ...errorPayload(code),
+      });
+    };
 
-    const hasOwnKey = validKeys.some((key) => key.userId === actingUserId);
-    const assistantRoom = deps.canReplaceRoomKey?.(room, actingUserId) === true;
-    const aloneInRoom = room.participants.length === 1;
-    const writes = validKeys.map((key) => ({
-      ...key,
-      replaceable:
-        assistantRoom ||
-        (key.userId === actingUserId ? aloneInRoom : deps.rateLimiter.hasPendingKeyRequest(key.userId, roomId)),
-    }));
-
-    const { rejected, stored } = await roomKeyRepository.publishBatch(roomId, writes, hasOwnKey);
-    if (rejected) {
-      socket.emit('e2e:room-key-rejected', { roomId });
+    const envelopesValid = keys.every((key) => {
+      const envelope = parseRoomKeyEnvelope(key.sealedKey);
+      return envelope !== null && matchesEnvelope(envelope, { roomId, keyId, epoch, senderId: actingUserId, recipientId: key.userId });
+    });
+    if (!envelopesValid) {
+      await reject('e2e.invalidRoomKeyEnvelope');
       return;
     }
 
-    for (const key of stored) {
-      if (key.userId !== actingUserId) {
-        deps.rateLimiter.consumePendingKeyRequest(key.userId, roomId);
-      }
-    }
-    const publishedKeys = stored.map(({ userId, sealedKey }) => ({ userId, sealedKey }));
-
-    for (const key of publishedKeys) {
-      const target = key.userId === actingUserId ? socket.to(userRoom(actingUserId)) : emitToUser(io, key.userId);
-      target.emit('e2e:room-key', { roomId, sealedKey: key.sealedKey });
+    const outcome = await roomKeyRepository.publish({ mode, roomId, keyId, epoch, senderId: actingUserId, keys });
+    if (outcome !== 'generation' && outcome !== 'share') {
+      await reject(REJECTION_CODES[outcome]);
+      return;
     }
 
-    if (publishedKeys.length > 0) {
-      deps.onRoomKeyPublished?.({ io, room });
+    for (const key of keys) {
+      emitToUser(io, key.userId).emit('e2e:room-key', { roomId, keyId, epoch, senderId: actingUserId, sealedKey: key.sealedKey });
     }
+
+    const updatedRoom = (await roomService.getRoomById(roomId)) ?? room;
+    deps.onRoomKeyPublished?.({ io, room: updatedRoom });
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
