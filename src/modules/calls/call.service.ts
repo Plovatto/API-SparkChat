@@ -1,8 +1,8 @@
 import { logger } from '../../config/logger.js';
 import { AppError } from '../../lib/app-error.js';
 import type { AppServer } from '../../sockets/events.js';
-import { userRoom } from '../../sockets/user-sockets.js';
-import { systemEvent, type MessageService } from '../messages/index.js';
+import { emitToUser, joinUserSocketsToRoom, listUserSockets, userRoom } from '../../sockets/user-sockets.js';
+import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService } from '../messages/index.js';
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import { ASSISTANT_USER_ID } from '../users/index.js';
 import { estimateRelayBytes, monthKey, type CallBudget } from './call-budget.js';
@@ -191,10 +191,6 @@ export class CallService {
     if (!accepted) {
       const current = await this.repository.findById(call.id);
       if (current && (current.state === 'accepted' || current.state === 'active')) {
-        if (current.acceptedDeviceId === actor.socketId) {
-          return;
-        }
-        this.io.to(actor.socketId).emit('call:answered-elsewhere', { callId: call.id });
         return;
       }
       throw AppError.of('call.invalidState');
@@ -471,10 +467,35 @@ export class CallService {
             durationSec: String(Math.max(0, Math.round((Date.parse(call.endedAt ?? call.answeredAt) - Date.parse(call.answeredAt)) / 1000))),
           })
         : systemEvent('call.missed', base);
+      const room = await this.roomService.getRoomById(call.roomId);
       const message = await this.messageService.createSystemMessage(call.roomId, event);
       this.io.to(call.roomId).emit('message:new', await this.messageService.toView(message));
+      if (room) {
+        await this.revealRoom(room, message.timestamp);
+      }
     } catch (err) {
       logger.error({ err, callId: call.id }, 'Failed to record call system message');
+    }
+  }
+
+  private async revealRoom(room: RoomRecord, messageTimestamp: string): Promise<void> {
+    const newlyVisible = room.participants.filter((id) => !room.visibleTo.includes(id));
+    if (newlyVisible.length === 0) {
+      return;
+    }
+    const reactivatedBefore = new Date(new Date(messageTimestamp).getTime() - 1000).toISOString();
+    const updated = (await this.roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;
+    for (const userId of newlyVisible) {
+      if (listUserSockets(this.io, userId).length === 0) {
+        continue;
+      }
+      const after = this.roomService.getVisibilityCutoff(updated, userId);
+      const [summary, { messages: page }] = await Promise.all([
+        this.roomService.buildSummary(updated, userId),
+        this.messageService.getRoomMessagesPage(room.id, { after, limit: INITIAL_MESSAGES_LIMIT }),
+      ]);
+      await joinUserSocketsToRoom(this.io, userId, room.id);
+      emitToUser(this.io, userId).emit('room:new', { room: summary, messages: await this.messageService.toViews(page) });
     }
   }
 
