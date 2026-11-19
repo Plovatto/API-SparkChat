@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { GIF_UPLOAD_TTL_MS } from '@/modules/messages/message.upload.js';
-import { ExpiredUploadSweeper } from '@/storage/expired-upload-sweeper.js';
+import { EXPIRED_UPLOAD_SWEEP_LIMITS, ExpiredUploadSweeper } from '@/storage/expired-upload-sweeper.js';
 import type { ObjectStorage } from '@/storage/object-storage.js';
 import { ORPHAN_UPLOAD_MAX_AGE_MS, OrphanUploadSweeper } from '@/storage/orphan-upload-sweeper.js';
 import { buildRoomService } from './support/build-room-service.js';
@@ -57,7 +57,7 @@ describe('ExpiredUploadSweeper', () => {
     expect(await services.storageUsageRepository.getBytesUsed()).toBe(usageBefore - 'attached'.length - 'loose'.length);
   });
 
-  it('removes at most 100 uploads per sweep', async () => {
+  it('keeps sweeping batches of 100 while they come back full', async () => {
     const services = await buildRoomService();
     const alice = await createUser(services, 'Alice');
     for (let index = 0; index < 101; index += 1) {
@@ -65,8 +65,27 @@ describe('ExpiredUploadSweeper', () => {
     }
     const sweeper = new ExpiredUploadSweeper(services.uploadRegistry, services.objectStorage, services.storageQuota, afterExpiry);
 
-    expect(await sweeper.sweep()).toBe(100);
+    expect(await sweeper.sweep()).toBe(101);
+    expect(await sweeper.sweep()).toBe(0);
+  });
+
+  it('stops after the maximum number of batches in one run', async () => {
+    const services = await buildRoomService();
+    const alice = await createUser(services, 'Alice');
+    for (let index = 0; index < 7; index += 1) {
+      await storeGif(services, alice.id, `uploads/gifs/${index}.bin`, Buffer.from('x'), inThirtyDays());
+    }
+    const sweeper = new ExpiredUploadSweeper(services.uploadRegistry, services.objectStorage, services.storageQuota, afterExpiry, {
+      batchSize: 2,
+      maxBatches: 3,
+    });
+
+    expect(await sweeper.sweep()).toBe(6);
     expect(await sweeper.sweep()).toBe(1);
+  });
+
+  it('defaults to at most 20 batches of 100 per run', () => {
+    expect(EXPIRED_UPLOAD_SWEEP_LIMITS).toEqual({ batchSize: 100, maxBatches: 20 });
   });
 
   it('keeps going when one object cannot be deleted', async () => {
@@ -163,5 +182,51 @@ describe('gif messages', () => {
 
     expect(await orphanSweeper.sweep()).toBe(1);
     expect(await services.storageUsageRepository.getBytesUsed()).toBe(0);
+  });
+
+  it('reject a gif upload anywhere but as the content of an image message', async () => {
+    const services = await buildRoomService();
+    const alice = await createUser(services, 'Alice');
+    const imageUrl = await services.storeUpload(alice.id, 'uploads/images/photo.bin');
+    const gifUrl = await storeGif(services, alice.id, 'uploads/gifs/misused.bin', Buffer.from('gif'), inThirtyDays());
+    const fileMeta = { name: 'x', mimeType: 'application/octet-stream', size: 3 };
+    const attempts = [
+      { roomId: 'room-1', senderId: alice.id, content: gifUrl, type: 'audio' as const, duration: 1, fileMeta },
+      { roomId: 'room-1', senderId: alice.id, content: gifUrl, type: 'file' as const, fileMeta },
+      { roomId: 'room-1', senderId: alice.id, content: imageUrl, type: 'image' as const, fileMeta: { ...fileMeta, thumbnailUrl: gifUrl } },
+      { roomId: 'room-1', senderId: alice.id, content: 'oi', type: 'text' as const, attachmentUrls: [gifUrl] },
+      { roomId: 'room-1', senderId: alice.id, content: imageUrl, type: 'image' as const, attachmentUrls: [gifUrl] },
+    ];
+
+    for (const attempt of attempts) {
+      await expect(services.messageService.sendMessage(attempt)).rejects.toMatchObject({ code: 'message.invalidMedia' });
+    }
+    await expect(services.uploadRegistry.find('uploads/gifs/misused.bin')).resolves.toMatchObject({ messageId: null });
+    await expect(services.uploadRegistry.find('uploads/images/photo.bin')).resolves.toMatchObject({ messageId: null });
+  });
+
+  it('release the quota only once when the sweeper removed the row during deletion', async () => {
+    const services = await buildRoomService();
+    const alice = await createUser(services, 'Alice');
+    const url = await storeGif(services, alice.id, 'uploads/gifs/race.bin', Buffer.from('12345'), inThirtyDays());
+    const message = await services.messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: url, type: 'image' });
+    await services.storageQuota.recordUsage(7);
+    const storage = services.objectStorage;
+    const originalDelete = storage.deleteObject.bind(storage);
+    const sweeperStorage: ObjectStorage = {
+      publicUrl: (key) => storage.publicUrl(key),
+      getObject: (key) => storage.getObject(key),
+      putObject: (key, body, options) => storage.putObject(key, body, options),
+      deleteObject: originalDelete,
+    };
+    const sweeper = new ExpiredUploadSweeper(services.uploadRegistry, sweeperStorage, services.storageQuota, afterExpiry);
+    storage.deleteObject = async (key: string) => {
+      await sweeper.sweep();
+      await originalDelete(key);
+    };
+
+    await services.messageService.deleteMessage(message.id, alice.id);
+
+    expect(await services.storageUsageRepository.getBytesUsed()).toBe(7);
   });
 });
