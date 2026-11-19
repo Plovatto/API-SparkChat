@@ -230,3 +230,23 @@ export const callUsage = sqliteTable('call_usage', {
   month: text('month').primaryKey(),
   estimatedBytes: integer('estimated_bytes').notNull().default(0),
 });
+
+export const pushSubscriptions = sqliteTable(
+  'push_subscriptions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    endpoint: text('endpoint').notNull().unique(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    userAgent: text('user_agent'),
+    createdAt: text('created_at').notNull(),
+    lastUsedAt: text('last_used_at').notNull(),
+  },
+  (table) => [index('push_subscriptions_user_id_idx').on(table.userId), index('push_subscriptions_session_id_idx').on(table.sessionId)],
+);

@@ -3,6 +3,7 @@ import { Server } from 'socket.io';
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
+import { webPushVapidConfig } from './config/web-push-env.js';
 import { db } from './database/turso-client.js';
 import { runMigrations } from './database/migrate.js';
 import { CallBudget, CallRateLimiter, CallRepository, CallService, createCloudflareTurnProvider } from './modules/calls/index.js';
@@ -17,9 +18,11 @@ import {
   RoomPresenceService,
   TypingService,
 } from './modules/messages/index.js';
+import { createWebPushSender, PushRateLimiter, PushRepository, PushService } from './modules/push/index.js';
 import { notifyRoomRotations, RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
-import { LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
+import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
+import { listUserSockets } from './sockets/user-sockets.js';
 import { SOCKET_MAX_HTTP_BUFFER_SIZE } from './sockets/socket-options.js';
 import { createR2ObjectStorage } from './storage/r2-object-storage.js';
 import { StorageQuota } from './storage/storage-quota.js';
@@ -139,7 +142,21 @@ const turnProvider =
   env.CLOUDFLARE_TURN_KEY_ID && env.CLOUDFLARE_TURN_API_TOKEN
     ? createCloudflareTurnProvider({ keyId: env.CLOUDFLARE_TURN_KEY_ID, apiToken: env.CLOUDFLARE_TURN_API_TOKEN })
     : null;
-const callService = new CallService(io, callRepository, roomService, messageService, new CallBudget(callRepository), new CallRateLimiter(), turnProvider);
+const vapid = webPushVapidConfig(env);
+const pushService = new PushService({
+  publicKey: vapid?.publicKey ?? null,
+  sender: vapid ? createWebPushSender(vapid) : null,
+  repository: new PushRepository(db),
+  limiter: new PushRateLimiter(),
+  isUserConnected: (userId) => listUserSockets(io, userId).length > 0,
+  isSessionLive: (session, now) => isSessionLive(session, now),
+});
+pushService.startMaintenance();
+logger.info(`Web Push: ${pushService.enabled ? 'enabled' : 'disabled (WEB_PUSH_* not set)'}`);
+
+const callService = new CallService(io, callRepository, roomService, messageService, new CallBudget(callRepository), new CallRateLimiter(), turnProvider, {
+  push: pushService,
+});
 callService.startMaintenance();
 
 registerSocketHandlers(io, {
@@ -156,6 +173,7 @@ registerSocketHandlers(io, {
   roomKeyRepository,
   aiService,
   callService,
+  pushService,
 });
 
 httpServer.listen(env.PORT, () => {

@@ -867,6 +867,32 @@ describe('call sync and restart restore', () => {
     expect(await state).toMatchObject({ callId, state: 'ringing', role: 'callee' });
   });
 
+  it('resends the ringing invite to a callee device that opens later, and not to the caller or after accept', async () => {
+    const { h, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id, 'video');
+
+    const opened = await h.connectAs(bob);
+    const resent = waitForEvent<{ callId: string; envelope: string; kind: string }>(opened, 'call:incoming');
+    opened.emit('call:sync', {});
+    expect(await resent).toMatchObject({ callId, envelope: ENVELOPE, kind: 'video' });
+
+    const callerIncoming: unknown[] = [];
+    aliceClient.on('call:incoming', (payload) => callerIncoming.push(payload));
+    const callerState = waitForEvent(aliceClient, 'call:state');
+    aliceClient.emit('call:sync', {});
+    await callerState;
+
+    await answer(aliceClient, opened, callId);
+    const afterAccept: unknown[] = [];
+    bobClient.on('call:incoming', (payload) => afterAccept.push(payload));
+    const state = waitForEvent(bobClient, 'call:state');
+    bobClient.emit('call:sync', {});
+    await state;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(callerIncoming).toEqual([]);
+    expect(afterAccept).toEqual([]);
+  });
+
   it('survives a server restart: state comes from the database and the heartbeat has a grace period', async () => {
     const { h, alice, room, aliceClient, bobClient } = await setup();
     const callId = await ring(h, aliceClient, [bobClient], room.id);
