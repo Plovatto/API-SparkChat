@@ -37,6 +37,8 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
     e2ePublicKey: row.e2ePublicKey,
     e2eEncryptedPrivateKeyByPassword: row.e2eEncryptedPrivateKeyByPassword,
     e2eEncryptedPrivateKeyByRecovery: row.e2eEncryptedPrivateKeyByRecovery,
+    authSalt: row.authSalt ?? null,
+    authVersion: row.authVersion,
     chatSettings: row.chatSettings ?? null,
     ...(theme ? { theme } : {}),
   };
@@ -94,6 +96,8 @@ export class UserRepository {
       e2ePublicKey: user.e2ePublicKey,
       e2eEncryptedPrivateKeyByPassword: user.e2eEncryptedPrivateKeyByPassword,
       e2eEncryptedPrivateKeyByRecovery: user.e2eEncryptedPrivateKeyByRecovery,
+      authSalt: user.authSalt ?? null,
+      authVersion: user.authVersion ?? 1,
     });
 
     return user;

@@ -1,4 +1,4 @@
-import type { AuthMethod, UserChatSettings, UserStatus, UserTheme } from './user.model.js';
+import type { AuthMethod, AuthVersion, UserChatSettings, UserStatus, UserTheme } from './user.model.js';
 
 export interface UserRecord {
   id: string;
@@ -16,6 +16,8 @@ export interface UserRecord {
   e2ePublicKey?: string | null;
   e2eEncryptedPrivateKeyByPassword?: string | null;
   e2eEncryptedPrivateKeyByRecovery?: string | null;
+  authSalt?: string | null;
+  authVersion?: AuthVersion;
 }
 
 export interface SessionRecord {

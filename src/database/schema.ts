@@ -9,7 +9,7 @@ import type {
   MessageType,
 } from '../modules/messages/message.types.js';
 import type { RoomType } from '../modules/rooms/room.types.js';
-import type { AuthMethod, UserChatSettings, UserStatus } from '../modules/users/user.model.js';
+import type { AuthMethod, AuthVersion, UserChatSettings, UserStatus } from '../modules/users/user.model.js';
 
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
@@ -28,6 +28,8 @@ export const users = sqliteTable('users', {
   e2ePublicKey: text('e2e_public_key'),
   e2eEncryptedPrivateKeyByPassword: text('e2e_encrypted_private_key_by_password'),
   e2eEncryptedPrivateKeyByRecovery: text('e2e_encrypted_private_key_by_recovery'),
+  authSalt: text('auth_salt'),
+  authVersion: integer('auth_version').$type<AuthVersion>().notNull().default(1),
 });
 
 export const sessions = sqliteTable(

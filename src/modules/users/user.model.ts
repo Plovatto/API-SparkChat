@@ -35,6 +35,8 @@ export function isValidNicknameFormat(nickname: string): boolean {
 
 export type AuthMethod = 'password' | 'keyfile';
 
+export type AuthVersion = 1 | 2;
+
 const userStatusSchema = z.enum(['online', 'offline']).openapi('UserStatus');
 
 export type UserStatus = z.infer<typeof userStatusSchema>;
