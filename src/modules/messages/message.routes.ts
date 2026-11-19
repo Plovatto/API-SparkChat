@@ -18,16 +18,29 @@ import {
   fileUploadResponseSchema,
   mediaUploadResponseSchema,
 } from './message.controller.js';
-import { audioUpload, fileUpload, imageUpload } from './message.upload.js';
+import { audioUpload, fileUpload, gifUpload, imageUpload } from './message.upload.js';
 
 const uploadRateLimiter = createRateLimiter({
   limit: 20,
   code: 'rateLimit.upload',
 });
 
+const gifUploadPerMinuteLimiter = createRateLimiter({
+  limit: 30,
+  code: 'rateLimit.gifUpload',
+  perUser: true,
+});
+
+const gifUploadPerDayLimiter = createRateLimiter({
+  limit: 600,
+  windowMs: 24 * 60 * 60 * 1000,
+  code: 'rateLimit.gifUpload',
+  perUser: true,
+});
+
 function registerUploadPath(
   path: string,
-  fieldName: 'image' | 'audio' | 'file',
+  fieldName: 'image' | 'audio' | 'file' | 'gif',
   summary: string,
   maxSizeDescription: string,
   responseSchema: z.ZodTypeAny,
@@ -93,6 +106,13 @@ registerUploadPath(
   'Nenhum arquivo enviado, tipo de arquivo inválido ou arquivo maior que 50MB',
   fileUploadResponseSchema,
 );
+registerUploadPath(
+  '/api/messages/upload/gif',
+  'gif',
+  'Envia um GIF já criptografado (application/octet-stream, extensão .bin, campo encrypted=1) e retorna sua URL para uso em uma mensagem do tipo image; o GIF expira em 30 dias e não conta na cota do usuário',
+  'Nenhum GIF enviado, envio não criptografado ou tamanho diferente de 256 KiB, 512 KiB, 1 MiB ou 2 MiB mais 40 bytes',
+  mediaUploadResponseSchema,
+);
 
 function createUploadErrorHandler(kind: UploadKind, maxSize: string) {
   return function handleUploadError(err: unknown, _req: Request, res: Response, next: NextFunction): void {
@@ -113,6 +133,20 @@ function createUploadErrorHandler(kind: UploadKind, maxSize: string) {
 const handleImageUploadError = createUploadErrorHandler('image', '5MB');
 const handleAudioUploadError = createUploadErrorHandler('audio', '8MB');
 const handleFileUploadError = createUploadErrorHandler('file', '50MB');
+
+function handleGifUploadError(err: unknown, _req: Request, res: Response, next: NextFunction): void {
+  if (!(err instanceof multer.MulterError)) {
+    next(err);
+    return;
+  }
+
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    res.status(400).json(errorPayload('upload.invalidGifSize'));
+    return;
+  }
+
+  res.status(400).json(errorPayload('upload.invalidType', { kind: 'gif' }));
+}
 
 export function createMessageRouter(
   userService: UserService,
@@ -149,6 +183,16 @@ export function createMessageRouter(
     fileUpload.single('file'),
     handleFileUploadError,
     asyncHandler(controller.uploadFile),
+  );
+
+  router.post(
+    '/upload/gif',
+    requireAuth,
+    gifUploadPerMinuteLimiter,
+    gifUploadPerDayLimiter,
+    gifUpload.single('gif'),
+    handleGifUploadError,
+    asyncHandler(controller.uploadGif),
   );
 
   return router;

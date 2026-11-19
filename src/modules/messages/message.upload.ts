@@ -90,3 +90,25 @@ const maxFileSizeBytes = 50 * 1024 * 1024;
 export const imageUpload = createMediaUpload(allowedImageMimeTypes, allowedImageExtensions, maxImageSizeBytes);
 export const audioUpload = createMediaUpload(allowedAudioMimeTypes, allowedAudioExtensions, maxAudioSizeBytes);
 export const fileUpload = createMediaUpload(allowedFileMimeTypes, allowedFileExtensions, maxFileSizeBytes);
+
+const ENCRYPTION_OVERHEAD_BYTES = 40;
+const GIF_PADDED_SIZE_STEPS = [256 * 1024, 512 * 1024, 1024 * 1024, 2 * 1024 * 1024];
+
+export const GIF_UPLOAD_SIZES: readonly number[] = GIF_PADDED_SIZE_STEPS.map((step) => step + ENCRYPTION_OVERHEAD_BYTES);
+export const GIF_UPLOAD_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function isAllowedGifUploadSize(size: number): boolean {
+  return GIF_UPLOAD_SIZES.includes(size);
+}
+
+export const gifUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: Math.max(...GIF_UPLOAD_SIZES) },
+  fileFilter(_req, file, callback) {
+    if (isNeutralUpload(file)) {
+      callback(null, true);
+      return;
+    }
+    callback(new multer.MulterError('LIMIT_UNEXPECTED_FILE', file.fieldname));
+  },
+});
