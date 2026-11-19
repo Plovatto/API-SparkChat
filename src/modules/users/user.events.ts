@@ -5,6 +5,8 @@ import type { AuthMethod, AuthVersion, PublicUser, SessionSummary, UserChatSetti
 export interface E2ePublicKeyEntry {
   userId: string;
   publicKey: string;
+  signingPublicKey?: string;
+  keySignature?: string;
 }
 
 export interface UserServerToClientEvents {
@@ -35,6 +37,8 @@ export interface UserServerToClientEvents {
     publicKey: string | null;
     encryptedPrivateKeyByPassword: string | null;
     encryptedPrivateKeyByRecovery: string | null;
+    signingPublicKey: string | null;
+    keySignature: string | null;
     authVersion: AuthVersion;
   }) => void;
   error: (payload: ErrorPayload & { clientTempId?: string | undefined; event?: string | undefined }) => void;
@@ -80,6 +84,7 @@ export interface UserClientToServerEvents {
     encryptedPrivateKeyByPassword?: string;
     encryptedPrivateKeyByRecovery?: string;
   }) => void;
+  'e2e:publish-signing-key': (payload: { signingPublicKey: string; keySignature: string }) => void;
   'e2e:get-public-keys': (payload: { userIds: string[] }) => void;
   'e2e:get-my-keys': () => void;
   'user:set-locale': (payload: { locale: Locale }) => void;

@@ -14,6 +14,8 @@ export interface UserRecord {
   theme?: UserTheme;
   chatSettings?: UserChatSettings | null;
   e2ePublicKey?: string | null;
+  e2eSigningPublicKey?: string | null;
+  e2eKeySignature?: string | null;
   e2eEncryptedPrivateKeyByPassword?: string | null;
   e2eEncryptedPrivateKeyByRecovery?: string | null;
   authSalt?: string | null;

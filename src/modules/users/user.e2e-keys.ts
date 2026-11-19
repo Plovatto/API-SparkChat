@@ -21,6 +21,11 @@ export const publishE2eKeysPayloadSchema = z
   );
 
 
+export const publishSigningKeyPayloadSchema = z.object({
+  signingPublicKey: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  keySignature: z.string().regex(/^[A-Za-z0-9_-]{86}$/),
+});
+
 export const getPublicKeysPayloadSchema = z.object({
   userIds: z.array(z.string().trim().min(1)).min(1).max(E2E_LOOKUP_MAX_ITEMS),
 });

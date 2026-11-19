@@ -14,7 +14,7 @@ import { emitMessageUpdate, type MessageService } from '../messages/index.js';
 import type { RoomService } from '../rooms/index.js';
 import { authSaltSchema, authVersionOf, clientSecretSchema } from './user.credentials.js';
 import { describeDevice } from './user.device.js';
-import { getPublicKeysPayloadSchema, publishE2eKeysPayloadSchema, wrappedPrivateKeySchema } from './user.e2e-keys.js';
+import { getPublicKeysPayloadSchema, publishE2eKeysPayloadSchema, publishSigningKeyPayloadSchema, wrappedPrivateKeySchema } from './user.e2e-keys.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
 import {
   type AuthMethod,
@@ -118,7 +118,7 @@ const authFailedPayloadSchema = errorPayloadSchema.extend({
 
 const errorEventPayloadSchema = errorPayloadSchema.extend({
   clientTempId: z.string().optional().openapi({ description: 'Presente quando o erro se refere a um message:send que trouxe clientTempId' }),
-  event: z.string().optional().openapi({ description: 'Evento de origem, presente nos erros das consultas de chaves E2EE, de e2e:publish-keys e de user:upgrade-credentials' }),
+  event: z.string().optional().openapi({ description: 'Evento de origem, presente nos erros das consultas de chaves E2EE, de e2e:publish-keys, de e2e:publish-signing-key e de user:upgrade-credentials' }),
 });
 
 registerClientEvents('users', {
@@ -136,6 +136,7 @@ registerClientEvents('users', {
   'user:list-sessions': null,
   'user:revoke-session': revokeSessionPayloadSchema,
   'e2e:publish-keys': publishE2eKeysPayloadSchema,
+  'e2e:publish-signing-key': publishSigningKeyPayloadSchema,
   'e2e:get-public-keys': getPublicKeysPayloadSchema,
   'e2e:get-my-keys': null,
 });
@@ -221,6 +222,10 @@ export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, dep
 
   socket.on('e2e:publish-keys', (payload) => {
     runSocketHandler(socket, 'e2e:publish-keys', () => handlePublishE2eKeys(socket, deps, payload));
+  });
+
+  socket.on('e2e:publish-signing-key', (payload) => {
+    runSocketHandler(socket, 'e2e:publish-signing-key', () => handlePublishSigningKey(socket, deps, payload));
   });
 
   socket.on('e2e:get-public-keys', (payload) => {
@@ -728,6 +733,20 @@ async function handlePublishE2eKeys(socket: AppSocket, deps: UserSocketDeps, pay
   }
 }
 
+async function handlePublishSigningKey(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
+  if (!userId) {
+    return;
+  }
+
+  try {
+    const input = publishSigningKeyPayloadSchema.parse(payload);
+    await deps.userService.publishSigningKey(userId, input);
+  } catch (error) {
+    socket.emit('error', { ...extractErrorPayload(error), event: 'e2e:publish-signing-key' });
+  }
+}
+
 async function handleGetPublicKeys(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
   const userId = requireSocketUserId(socket);
   if (!userId) {
@@ -764,6 +783,8 @@ async function handleGetMyKeys(socket: AppSocket, deps: UserSocketDeps): Promise
     publicKey: user.e2ePublicKey ?? null,
     encryptedPrivateKeyByPassword: user.e2eEncryptedPrivateKeyByPassword ?? null,
     encryptedPrivateKeyByRecovery: user.e2eEncryptedPrivateKeyByRecovery ?? null,
+    signingPublicKey: user.e2eSigningPublicKey ?? null,
+    keySignature: user.e2eKeySignature ?? null,
     authVersion: authVersionOf(user),
   });
 }

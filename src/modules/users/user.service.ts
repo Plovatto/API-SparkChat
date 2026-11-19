@@ -17,11 +17,13 @@ import {
 } from './user.model.js';
 import { authVersionOf, deriveFakeSaltKey, fakeAuthSalt, isAuthSalt, isClientSecret } from './user.credentials.js';
 import { hashPassword, passwordHashNeedsRehash, verifyPassword } from './user.password.js';
+import { verifyIdentityBinding } from './user.signing-key.js';
 import { decodeRecoveryFile, encodeRecoveryFile } from './user.recovery-file.js';
 import type { UserRepository } from './user.repository.js';
 import type { UserSessionRepository } from './user.session.repository.js';
 import { constantTimeEqual, generateToken, hashToken } from './user.token.js';
 import type { SessionRecord, UserRecord } from './user.types.js';
+import type { E2ePublicKeyEntry } from './user.events.js';
 
 export interface RegisterAccountInput {
   nickname: string;
@@ -597,18 +599,54 @@ export class UserService {
     if (previousPublicKey && previousPublicKey !== patch.e2ePublicKey) {
       await this.repository.deleteRoomKeys(userId);
     }
+    if (patch.e2ePublicKey !== undefined && patch.e2ePublicKey !== current?.e2ePublicKey) {
+      patch.e2eSigningPublicKey = null;
+      patch.e2eKeySignature = null;
+    }
 
     await this.repository.update(userId, patch);
   }
 
-  async getPublicKeys(userIds: string[]): Promise<{ userId: string; publicKey: string }[]> {
+  async publishSigningKey(userId: string, input: { signingPublicKey: string; keySignature: string }): Promise<void> {
+    const current = await this.repository.findById(userId);
+    if (!current?.e2ePublicKey) {
+      throw AppError.of('e2e.invalidSigningKey');
+    }
+
+    const valid = verifyIdentityBinding({
+      userId,
+      publicKey: current.e2ePublicKey,
+      signingPublicKey: input.signingPublicKey,
+      keySignature: input.keySignature,
+    });
+    if (!valid) {
+      throw AppError.of('e2e.invalidSigningKey');
+    }
+
+    if (current.e2eSigningPublicKey) {
+      if (current.e2eSigningPublicKey === input.signingPublicKey) {
+        return;
+      }
+      throw AppError.of('e2e.signingKeyLocked');
+    }
+
+    await this.repository.update(userId, { e2eSigningPublicKey: input.signingPublicKey, e2eKeySignature: input.keySignature });
+  }
+
+  async getPublicKeys(userIds: string[]): Promise<E2ePublicKeyEntry[]> {
     const unique = [...new Set(userIds)];
     const usersById = await this.getUsersByIds(unique);
 
     return unique
       .map((id) => usersById.get(id))
       .filter((user): user is UserRecord & { e2ePublicKey: string } => Boolean(user?.e2ePublicKey))
-      .map((user) => ({ userId: user.id, publicKey: user.e2ePublicKey }));
+      .map((user) => ({
+        userId: user.id,
+        publicKey: user.e2ePublicKey,
+        ...(user.e2eSigningPublicKey && user.e2eKeySignature
+          ? { signingPublicKey: user.e2eSigningPublicKey, keySignature: user.e2eKeySignature }
+          : {}),
+      }));
   }
 
   toPublicUser(user: UserRecord): PublicUser {
