@@ -15,6 +15,7 @@ import {
   type UserChatSettings,
   type UserTheme,
 } from './user.model.js';
+import { authVersionOf, deriveFakeSaltKey, fakeAuthSalt, isAuthSalt, isClientSecret } from './user.credentials.js';
 import { hashPassword, passwordHashNeedsRehash, verifyPassword } from './user.password.js';
 import { decodeRecoveryFile, encodeRecoveryFile } from './user.recovery-file.js';
 import type { UserRepository } from './user.repository.js';
@@ -26,6 +27,8 @@ export interface RegisterAccountInput {
   nickname: string;
   avatar: number;
   password: string;
+  authSalt?: string | undefined;
+  recoveryVerifier?: string | undefined;
   userAgent?: string;
 }
 
@@ -36,31 +39,50 @@ export interface AuthenticatedResult {
 }
 
 export interface RegisteredResult extends AuthenticatedResult {
-  recoveryFile: Buffer;
-  recoveryToken: string;
+  recoveryFile: Buffer | null;
+  recoveryToken: string | null;
 }
 
 export interface ProfileUpdateResult {
   user: UserRecord;
   recoveryFile: Buffer | null;
   recoveryToken: string | null;
+  revokedOtherSessions: boolean;
 }
 
 export interface PasswordChangeResult {
   user: UserRecord;
-  recoveryFile: Buffer;
-  recoveryToken: string;
+  recoveryFile: Buffer | null;
+  recoveryToken: string | null;
 }
 
 export interface KeyfileAuthenticatedResult extends AuthenticatedResult {
   recoveryToken: string;
 }
 
-export interface ChangePasswordInput {
+export interface RecoveryCredentialsInput {
+  recoveryVerifier?: string | undefined;
+  encryptedPrivateKeyByRecovery?: string | undefined;
+}
+
+export interface ChangePasswordInput extends RecoveryCredentialsInput {
   currentPassword?: string | undefined;
   newPassword: string;
+  newAuthSalt?: string | undefined;
+  encryptedPrivateKeyByPassword?: string | undefined;
   sessionId: string;
 }
+
+export interface UpgradeCredentialsInput {
+  currentPassword: string;
+  newAuthSalt: string;
+  newAuthKey: string;
+  encryptedPrivateKeyByPassword: string;
+  recoveryVerifier: string;
+  encryptedPrivateKeyByRecovery: string;
+}
+
+export type AuthParams = { version: 1 } | { version: 2; salt: string };
 
 export interface UpdateProfileInput {
   nickname: string;
@@ -113,19 +135,75 @@ function assertValidPassword(password: string): void {
   }
 }
 
+function assertClientSecret(value: unknown): asserts value is string {
+  if (!isClientSecret(value)) {
+    throw AppError.of('user.credentialsInvalid');
+  }
+}
+
+function assertAuthSalt(value: unknown): asserts value is string {
+  if (!isAuthSalt(value)) {
+    throw AppError.of('user.credentialsInvalid');
+  }
+}
+
+function isPresent(value: string | undefined): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function readRecoveryPair(
+  input: RecoveryCredentialsInput,
+  required: boolean,
+): { recoveryVerifier: string; encryptedPrivateKeyByRecovery: string } | null {
+  const { recoveryVerifier, encryptedPrivateKeyByRecovery } = input;
+  const hasVerifier = isPresent(recoveryVerifier);
+  const hasWrap = isPresent(encryptedPrivateKeyByRecovery);
+  if (hasVerifier !== hasWrap || (required && !hasVerifier)) {
+    throw AppError.of('user.credentialsIncomplete');
+  }
+  if (!isPresent(recoveryVerifier) || !isPresent(encryptedPrivateKeyByRecovery)) {
+    return null;
+  }
+  assertClientSecret(recoveryVerifier);
+  return { recoveryVerifier, encryptedPrivateKeyByRecovery };
+}
+
+function recoveryPatch(pair: { recoveryVerifier: string; encryptedPrivateKeyByRecovery: string }): Partial<UserRecord> {
+  return {
+    recoveryTokenHash: hashToken(pair.recoveryVerifier),
+    e2eEncryptedPrivateKeyByRecovery: pair.encryptedPrivateKeyByRecovery,
+  };
+}
+
 export class UserService {
   private dummyPasswordHash: Promise<string> | null = null;
   private readonly consumedKeyfileGrants = new Map<string, number>();
+  private readonly fakeSaltKey: Buffer;
 
   constructor(
     private readonly repository: UserRepository,
     private readonly sessions: UserSessionRepository,
     private readonly recoveryFileSecret: string,
-  ) {}
+  ) {
+    this.fakeSaltKey = deriveFakeSaltKey(recoveryFileSecret);
+  }
 
   async registerAccount(input: RegisterAccountInput): Promise<RegisteredResult> {
     assertValidNickname(input.nickname);
-    assertValidPassword(input.password);
+
+    const hasAuthSalt = isPresent(input.authSalt);
+    const hasVerifier = isPresent(input.recoveryVerifier);
+    if (hasAuthSalt !== hasVerifier) {
+      throw AppError.of('user.credentialsIncomplete');
+    }
+    const isV2 = hasAuthSalt && hasVerifier;
+    if (isV2) {
+      assertClientSecret(input.password);
+      assertAuthSalt(input.authSalt);
+      assertClientSecret(input.recoveryVerifier);
+    } else {
+      assertValidPassword(input.password);
+    }
 
     const nicknameNormalized = normalizeNickname(input.nickname);
     const existing = await this.repository.findByNickname(nicknameNormalized);
@@ -135,7 +213,8 @@ export class UserService {
 
     const now = new Date().toISOString();
     const passwordHash = await hashPassword(input.password);
-    const recoveryToken = generateToken();
+    const recoveryToken = isV2 ? null : generateToken();
+    const recoverySecret = recoveryToken ?? input.recoveryVerifier ?? '';
 
     const user: UserRecord = {
       id: randomUUID(),
@@ -143,18 +222,50 @@ export class UserService {
       nicknameNormalized,
       avatar: input.avatar,
       passwordHash,
-      recoveryTokenHash: hashToken(recoveryToken),
+      recoveryTokenHash: hashToken(recoverySecret),
       status: 'online',
       statusText: null,
       createdAt: now,
       lastSeen: now,
+      authSalt: isV2 ? (input.authSalt ?? null) : null,
+      authVersion: isV2 ? 2 : 1,
     };
 
     const created = await this.repository.insert(user);
     const { sessionId, sessionToken } = await this.createSession(created.id, 'password', input.userAgent ?? '');
-    const recoveryFile = this.buildRecoveryFile(created.id, recoveryToken);
+    const recoveryFile = recoveryToken ? this.buildRecoveryFile(created.id, recoveryToken) : null;
 
     return { user: created, sessionId, sessionToken, recoveryFile, recoveryToken };
+  }
+
+  async getAuthParams(nickname: string): Promise<AuthParams> {
+    const nicknameNormalized = normalizeNickname(nickname);
+    const user = await this.repository.findByNickname(nicknameNormalized);
+    if (!user || user.id === ASSISTANT_USER_ID) {
+      return { version: 2, salt: fakeAuthSalt(this.fakeSaltKey, nicknameNormalized) };
+    }
+    if (authVersionOf(user) === 1) {
+      return { version: 1 };
+    }
+    return { version: 2, salt: user.authSalt ?? fakeAuthSalt(this.fakeSaltKey, nicknameNormalized) };
+  }
+
+  async loginWithRecovery(userId: string, recoveryKey: string, userAgent = ''): Promise<AuthenticatedResult | null> {
+    if (!isClientSecret(recoveryKey)) {
+      return null;
+    }
+
+    const user = await this.repository.findById(userId);
+    if (!user || user.id === ASSISTANT_USER_ID) {
+      return null;
+    }
+
+    if (!constantTimeEqual(hashToken(recoveryKey), user.recoveryTokenHash)) {
+      return null;
+    }
+
+    const { sessionId, sessionToken } = await this.createSession(user.id, 'keyfile', userAgent);
+    return { user, sessionId, sessionToken };
   }
 
   async login(nickname: string, password: string, userAgent = ''): Promise<AuthenticatedResult | null> {
@@ -248,7 +359,10 @@ export class UserService {
       throw AppError.of('user.notFound');
     }
 
-    assertValidPassword(input.newPassword);
+    const credentialPatch = this.buildPasswordCredentialPatch(user, input);
+    if (!credentialPatch) {
+      assertValidPassword(input.newPassword);
+    }
 
     let consumedGrant = false;
     if (input.currentPassword) {
@@ -263,11 +377,11 @@ export class UserService {
 
     try {
       const passwordHash = await hashPassword(input.newPassword);
-      const recoveryToken = generateToken();
+      const recoveryToken = credentialPatch ? null : generateToken();
 
       const updated = await this.repository.update(userId, {
         passwordHash,
-        recoveryTokenHash: hashToken(recoveryToken),
+        ...(recoveryToken ? { recoveryTokenHash: hashToken(recoveryToken) } : credentialPatch),
       });
       if (!updated) {
         throw AppError.of('user.notFound');
@@ -275,7 +389,11 @@ export class UserService {
 
       await this.sessions.deleteAllForUser(userId);
 
-      return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken), recoveryToken };
+      return {
+        user: updated,
+        recoveryFile: recoveryToken ? this.buildRecoveryFile(updated.id, recoveryToken) : null,
+        recoveryToken,
+      };
     } catch (error) {
       if (consumedGrant) {
         this.consumedKeyfileGrants.delete(input.sessionId);
@@ -284,23 +402,68 @@ export class UserService {
     }
   }
 
-  async regenerateRecoveryFile(userId: string, currentPassword: string | undefined, currentSessionId: string): Promise<PasswordChangeResult> {
+  async regenerateRecoveryFile(
+    userId: string,
+    currentPassword: string | undefined,
+    currentSessionId: string,
+    recovery: RecoveryCredentialsInput = {},
+  ): Promise<PasswordChangeResult> {
     const user = await this.repository.findById(userId);
     if (!user) {
       throw AppError.of('user.notFound');
     }
 
+    const pair = authVersionOf(user) === 2 ? readRecoveryPair(recovery, true) : null;
+
     await this.assertCurrentPassword(user, currentPassword);
 
-    const recoveryToken = generateToken();
-    const updated = await this.repository.update(userId, { recoveryTokenHash: hashToken(recoveryToken) });
+    const recoveryToken = pair ? null : generateToken();
+    const updated = await this.repository.update(userId, pair ? recoveryPatch(pair) : { recoveryTokenHash: hashToken(recoveryToken ?? '') });
     if (!updated) {
       throw AppError.of('user.notFound');
     }
 
     await this.sessions.deleteAllForUserExcept(userId, currentSessionId);
 
-    return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken), recoveryToken };
+    return {
+      user: updated,
+      recoveryFile: recoveryToken ? this.buildRecoveryFile(updated.id, recoveryToken) : null,
+      recoveryToken,
+    };
+  }
+
+  async upgradeCredentials(userId: string, input: UpgradeCredentialsInput): Promise<UserRecord> {
+    const user = await this.repository.findById(userId);
+    if (!user) {
+      throw AppError.of('user.notFound');
+    }
+
+    if (authVersionOf(user) === 2) {
+      throw AppError.of('user.credentialsAlreadyUpgraded');
+    }
+
+    assertAuthSalt(input.newAuthSalt);
+    assertClientSecret(input.newAuthKey);
+    if (!isPresent(input.encryptedPrivateKeyByPassword)) {
+      throw AppError.of('user.credentialsIncomplete');
+    }
+    const pair = readRecoveryPair(input, true);
+
+    await this.assertCurrentPassword(user, input.currentPassword);
+
+    const passwordHash = await hashPassword(input.newAuthKey);
+    const updated = await this.repository.update(userId, {
+      passwordHash,
+      authSalt: input.newAuthSalt,
+      authVersion: 2,
+      e2eEncryptedPrivateKeyByPassword: input.encryptedPrivateKeyByPassword,
+      ...(pair ? recoveryPatch(pair) : {}),
+    });
+    if (!updated) {
+      throw AppError.of('user.notFound');
+    }
+
+    return updated;
   }
 
   async updateProfile(userId: string, input: UpdateProfileInput, currentSessionId: string): Promise<ProfileUpdateResult | null> {
@@ -319,7 +482,7 @@ export class UserService {
         nickname: input.nickname.trim(),
         avatar: input.avatar,
       });
-      return updated ? { user: updated, recoveryFile: null, recoveryToken: null } : null;
+      return updated ? { user: updated, recoveryFile: null, recoveryToken: null, revokedOtherSessions: false } : null;
     }
 
     await this.assertCurrentPassword(current, input.currentPassword);
@@ -329,12 +492,12 @@ export class UserService {
       throw AppError.of('user.nicknameTaken');
     }
 
-    const recoveryToken = generateToken();
+    const recoveryToken = authVersionOf(current) === 2 ? null : generateToken();
     const updated = await this.repository.update(userId, {
       nickname: input.nickname.trim(),
       nicknameNormalized,
       avatar: input.avatar,
-      recoveryTokenHash: hashToken(recoveryToken),
+      ...(recoveryToken ? { recoveryTokenHash: hashToken(recoveryToken) } : {}),
     });
 
     if (!updated) {
@@ -343,7 +506,12 @@ export class UserService {
 
     await this.sessions.deleteAllForUserExcept(userId, currentSessionId);
 
-    return { user: updated, recoveryFile: this.buildRecoveryFile(updated.id, recoveryToken), recoveryToken };
+    return {
+      user: updated,
+      recoveryFile: recoveryToken ? this.buildRecoveryFile(updated.id, recoveryToken) : null,
+      recoveryToken,
+      revokedOtherSessions: true,
+    };
   }
 
   getUser(userId: string): Promise<UserRecord | null> {
@@ -414,7 +582,18 @@ export class UserService {
       return;
     }
 
-    const previousPublicKey = patch.e2ePublicKey === undefined ? undefined : (await this.repository.findById(userId))?.e2ePublicKey;
+    const current = await this.repository.findById(userId);
+    if (current && authVersionOf(current) === 2) {
+      const locked =
+        (patch.e2ePublicKey !== undefined && Boolean(current.e2ePublicKey)) ||
+        (patch.e2eEncryptedPrivateKeyByPassword !== undefined && Boolean(current.e2eEncryptedPrivateKeyByPassword)) ||
+        (patch.e2eEncryptedPrivateKeyByRecovery !== undefined && Boolean(current.e2eEncryptedPrivateKeyByRecovery));
+      if (locked) {
+        throw AppError.of('e2e.keysLocked');
+      }
+    }
+
+    const previousPublicKey = patch.e2ePublicKey === undefined ? undefined : current?.e2ePublicKey;
     if (previousPublicKey && previousPublicKey !== patch.e2ePublicKey) {
       await this.repository.deleteRoomKeys(userId);
     }
@@ -480,6 +659,30 @@ export class UserService {
     if (!isValid) {
       throw AppError.of('user.currentPasswordIncorrect');
     }
+  }
+
+  private buildPasswordCredentialPatch(user: UserRecord, input: ChangePasswordInput): Partial<UserRecord> | null {
+    const isV2User = authVersionOf(user) === 2;
+    const sentV2Fields = [input.newAuthSalt, input.encryptedPrivateKeyByPassword, input.recoveryVerifier, input.encryptedPrivateKeyByRecovery].some(
+      (value) => value !== undefined,
+    );
+    if (!isV2User && !sentV2Fields) {
+      return null;
+    }
+
+    if (!isPresent(input.newAuthSalt) || !isPresent(input.encryptedPrivateKeyByPassword)) {
+      throw AppError.of('user.credentialsIncomplete');
+    }
+    assertAuthSalt(input.newAuthSalt);
+    assertClientSecret(input.newPassword);
+    const pair = readRecoveryPair(input, !isV2User);
+
+    return {
+      authSalt: input.newAuthSalt,
+      authVersion: 2,
+      e2eEncryptedPrivateKeyByPassword: input.encryptedPrivateKeyByPassword,
+      ...(pair ? recoveryPatch(pair) : {}),
+    };
   }
 
   private consumeKeyfileGrant(session: SessionRecord): boolean {

@@ -93,7 +93,7 @@ describe('POST /api/users/login-with-keyfile', () => {
 
     const response = await request(app)
       .post('/api/users/login-with-keyfile')
-      .attach('keyfile', recoveryFile, { filename: 'sparkchat-keyfileuser.sparkkey' });
+      .attach('keyfile', recoveryFile ?? Buffer.alloc(0), { filename: 'sparkchat-keyfileuser.sparkkey' });
 
     expect(response.status).toBe(200);
     expect((response.body as { user: { id: string } }).user.id).toBe(user.id);
