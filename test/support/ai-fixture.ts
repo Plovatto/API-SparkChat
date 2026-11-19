@@ -7,8 +7,9 @@ import { RoomPresenceService, TypingService, type MessageRecord } from '@/module
 import type { AppServer } from '@/sockets/events.js';
 import { buildRoomService } from './build-room-service.js';
 import { createIdentity, sealEnvelope } from './room-keys.js';
+import { TEST_V2_SIGNUP } from './test-constants.js';
 
-const PASSWORD = 'correct-horse-battery-staple';
+const PASSWORD = 'correct-horse-battery-staple-0123456789abcd';
 
 export function createFakeServer(): AppServer {
   return { to: () => ({ emit: () => true }) } as unknown as AppServer;
@@ -25,8 +26,8 @@ export async function setupAssistantRoom(options: AssistantRoomOptions = {}) {
   const { userService, userRepository, roomService, roomKeyRepository, messageService, objectStorage } = services;
   const sodium = await getSodium();
 
-  const { user: alice } = await userService.registerAccount({ nickname: 'Alice', avatar: 0, password: PASSWORD });
-  const { user: assistant } = await userService.registerAccount({ nickname: 'Assistente', avatar: 1, password: PASSWORD });
+  const { user: alice } = await userService.registerAccount({ nickname: 'Alice', avatar: 0, password: PASSWORD, ...TEST_V2_SIGNUP });
+  const { user: assistant } = await userService.registerAccount({ nickname: 'Assistente', avatar: 1, password: PASSWORD, ...TEST_V2_SIGNUP });
   const aliceIdentity = await createIdentity(alice.id);
   const identity = await createIdentity(assistant.id);
   for (const party of [aliceIdentity, identity]) {

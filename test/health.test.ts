@@ -2,6 +2,7 @@ import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 import { InMemoryObjectStorage } from '@/storage/object-storage.js';
 import { buildTestApp } from './support/build-test-app.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 describe('GET /health', () => {
   it('reports the server as healthy with its uptime', async () => {
@@ -21,7 +22,7 @@ describe('GET /health', () => {
     const { user, sessionToken } = await userService.registerAccount({
       nickname: 'Crasher',
       avatar: 0,
-      password: 'correct-horse-battery-staple',
+      password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP
     });
 
     const response = await request(app)

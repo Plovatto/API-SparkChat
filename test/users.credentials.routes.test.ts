@@ -3,8 +3,6 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { buildTestApp } from './support/build-test-app.js';
 
-const PASSWORD = 'correct-horse-battery-staple';
-
 function clientSecret(): string {
   return randomBytes(32).toString('base64url');
 }
@@ -28,14 +26,15 @@ async function registerV2(userService: TestApp['userService'], nickname: string)
 }
 
 describe('POST /api/users/auth-params', () => {
-  it('returns version 1 for legacy accounts', async () => {
-    const { app, userService } = await buildTestApp();
-    await userService.registerAccount({ nickname: 'Legacy', avatar: 0, password: PASSWORD });
+  it('never answers version 1, even for an account whose row still says version 1', async () => {
+    const { app, userService, userRepository } = await buildTestApp();
+    const { user, authSalt: salt } = await registerV2(userService, 'Stale');
+    await userRepository.update(user.id, { authVersion: 1 });
 
-    const response = await request(app).post('/api/users/auth-params').send({ nickname: 'Legacy' });
+    const response = await request(app).post('/api/users/auth-params').send({ nickname: 'Stale' });
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ version: 1 });
+    expect(response.body).toEqual({ version: 2, salt });
   });
 
   it('returns the stored salt for v2 accounts', async () => {
@@ -82,30 +81,15 @@ describe('POST /api/users/auth-params', () => {
 });
 
 describe('POST /api/users/login authVersion', () => {
-  it('reports version 1 for legacy logins and version 2 for derived-key logins', async () => {
+  it('reports version 2 for derived-key logins', async () => {
     const { app, userService } = await buildTestApp();
-    await userService.registerAccount({ nickname: 'Legacy', avatar: 0, password: PASSWORD });
     const { authKey } = await registerV2(userService, 'Modern');
 
-    const legacy = await request(app).post('/api/users/login').send({ nickname: 'Legacy', password: PASSWORD });
     const modern = await request(app).post('/api/users/login').send({ nickname: 'Modern', password: authKey });
 
-    expect(legacy.status).toBe(200);
-    expect(legacy.body).toMatchObject({ authVersion: 1 });
     expect(modern.status).toBe(200);
     expect(modern.body).toMatchObject({ authVersion: 2 });
-  });
-
-  it('keeps the legacy recovery token and adds authVersion on keyfile login', async () => {
-    const { app, userService } = await buildTestApp();
-    const { recoveryFile } = await userService.registerAccount({ nickname: 'Legacy', avatar: 0, password: PASSWORD });
-
-    const response = await request(app)
-      .post('/api/users/login-with-keyfile')
-      .attach('keyfile', recoveryFile ?? Buffer.alloc(0), { filename: 'sparkchat-legacy.sparkkey' });
-
-    expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({ authVersion: 1, recoveryToken: expect.any(String) as unknown });
+    expect(modern.body).not.toHaveProperty('recoveryToken');
   });
 });
 

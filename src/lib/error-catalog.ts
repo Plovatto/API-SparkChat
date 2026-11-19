@@ -34,14 +34,11 @@ export const ERROR_CATALOG = {
   'user.nicknameInvalid': ({ minLength, maxLength, minLetters }: { minLength: number; maxLength: number; minLetters: number }) =>
     `Nickname deve ter entre ${minLength} e ${maxLength} caracteres, usando apenas letras e números, com pelo menos ${minLetters} letras.`,
   'user.nicknameTaken': () => 'Esse nickname já está em uso.',
-  'user.passwordTooShort': ({ minLength }: { minLength: number }) => `A senha deve ter pelo menos ${minLength} caracteres.`,
-  'user.passwordTooLong': ({ maxLength }: { maxLength: number }) => `A senha deve ter no máximo ${maxLength} caracteres.`,
   'user.currentPasswordIncorrect': () => 'Senha atual incorreta.',
   'user.currentPasswordRequired': () =>
     'Informe a senha atual. A troca sem a senha atual só é permitida uma vez, nos 10 minutos seguintes à entrada com o arquivo de recuperação.',
   'user.credentialsInvalid': () => 'Credenciais em formato inválido.',
   'user.credentialsIncomplete': () => 'Dados de credenciais incompletos. Atualize o aplicativo e tente novamente.',
-  'user.credentialsAlreadyUpgraded': () => 'Esta conta já usa o formato de credenciais atual.',
   'room.notFound': () => 'Sala não encontrada.',
   'room.invalidCode': () => 'Formato de código inválido.',
   'room.selfConversation': () => 'Você não pode iniciar uma conversa consigo mesmo.',

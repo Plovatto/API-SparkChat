@@ -13,8 +13,6 @@ export interface UserServerToClientEvents {
   'user:registered': (payload: {
     user: PublicUser;
     sessionToken: string;
-    recoveryFile: string | null;
-    recoveryToken: string | null;
     authMethod: AuthMethod;
   }) => void;
   'user:resumed': (payload: { user: PublicUser; authMethod: AuthMethod }) => void;
@@ -25,10 +23,9 @@ export interface UserServerToClientEvents {
     user: { id: string; status: UserStatus; lastSeen: string };
   }) => void;
   'user:profile-updated': (payload: { userId: string; nickname: string; avatar: number; statusText: string | null }) => void;
-  'user:profile-updated-success': (payload: { user: PublicUser; recoveryFile: string | null; recoveryToken: string | null }) => void;
-  'user:password-changed': (payload: { recoveryFile: string | null; recoveryToken: string | null }) => void;
-  'user:recovery-file-regenerated': (payload: { recoveryFile: string | null; recoveryToken: string | null }) => void;
-  'user:credentials-upgraded': (payload: { authVersion: AuthVersion }) => void;
+  'user:profile-updated-success': (payload: { user: PublicUser }) => void;
+  'user:password-changed': (payload: Record<string, never>) => void;
+  'user:recovery-file-regenerated': (payload: Record<string, never>) => void;
   'user:sessions': (payload: { sessions: SessionSummary[] }) => void;
   'user:session-revoked': () => void;
   'user:chat-settings-updated': (payload: { chatSettings: UserChatSettings }) => void;
@@ -47,7 +44,7 @@ export interface UserServerToClientEvents {
 export interface UserClientToServerEvents {
   'user:join': (
     payload:
-      | { mode: 'register'; nickname: string; avatar: number; password: string; authSalt?: string; recoveryVerifier?: string }
+      | { mode: 'register'; nickname: string; avatar: number; password: string; authSalt: string; recoveryVerifier: string }
       | { mode: 'resume'; userId: string; sessionToken: string },
   ) => void;
   'user:update-profile': (payload: { nickname: string; avatar: number; currentPassword?: string }) => void;
@@ -59,21 +56,13 @@ export interface UserClientToServerEvents {
   'user:change-password': (payload: {
     currentPassword?: string;
     newPassword: string;
-    newAuthSalt?: string;
-    encryptedPrivateKeyByPassword?: string;
-    recoveryVerifier?: string;
-    encryptedPrivateKeyByRecovery?: string;
-  }) => void;
-  'user:regenerate-recovery-file': (payload?: {
-    currentPassword?: string;
-    recoveryVerifier?: string;
-    encryptedPrivateKeyByRecovery?: string;
-  }) => void;
-  'user:upgrade-credentials': (payload: {
-    currentPassword: string;
     newAuthSalt: string;
-    newAuthKey: string;
     encryptedPrivateKeyByPassword: string;
+    recoveryVerifier?: string;
+    encryptedPrivateKeyByRecovery?: string;
+  }) => void;
+  'user:regenerate-recovery-file': (payload: {
+    currentPassword?: string;
     recoveryVerifier: string;
     encryptedPrivateKeyByRecovery: string;
   }) => void;

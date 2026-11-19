@@ -3,8 +3,9 @@ import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { hashToken } from '@/modules/users/index.js';
 import { buildRoomService } from './support/build-room-service.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
-const PASSWORD = 'correct-horse-battery-staple';
+const PASSWORD = 'correct-horse-battery-staple-0123456789abcd';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const scryptAsync = promisify(scrypt);
 
@@ -14,25 +15,37 @@ async function legacyHashPassword(password: string): Promise<string> {
   return `${salt.toString('hex')}:${key.toString('hex')}`;
 }
 
+const NEW_PASSWORD = 'a-brand-new-auth-key-0123456789abcdefghijkl';
+const RECOVERY_KEY = TEST_V2_SIGNUP.recoveryVerifier;
+
+function v2Change(newPassword: string) {
+  return { newPassword, newAuthSalt: 'bmV3LWF1dGgtc2FsdC0xMj', encryptedPrivateKeyByPassword: 'rewrapped-by-password' };
+}
+
 async function registerAlice(userService: Awaited<ReturnType<typeof buildRoomService>>['userService']) {
-  const result = await userService.registerAccount({ nickname: 'Alice', avatar: 0, password: PASSWORD });
-  if (!result.recoveryFile || !result.recoveryToken) {
-    throw new Error('legacy registration must return a recovery file');
+  return userService.registerAccount({ nickname: 'Alice', avatar: 0, password: PASSWORD, ...TEST_V2_SIGNUP });
+}
+
+async function loginWithRecoveryKey(userService: Awaited<ReturnType<typeof buildRoomService>>['userService'], userId: string) {
+  const result = await userService.loginWithRecovery(userId, RECOVERY_KEY);
+  if (!result) {
+    throw new Error('recovery login failed');
   }
-  return { ...result, recoveryFile: result.recoveryFile, recoveryToken: result.recoveryToken };
+  return result;
 }
 
 describe('UserService.registerAccount', () => {
-  it('creates a user with a session token and a recovery file', async () => {
+  it('creates a v2 user with a session token and no server recovery file', async () => {
     const { userService } = await buildRoomService();
 
-    const { user, sessionToken, recoveryFile, recoveryToken } = await registerAlice(userService);
+    const result = await registerAlice(userService);
 
-    expect(user.nickname).toBe('Alice');
-    expect(user.nicknameNormalized).toBe('alice');
-    expect(sessionToken).toBeTruthy();
-    expect(recoveryFile.length).toBeGreaterThan(0);
-    expect(recoveryToken).toBeTruthy();
+    expect(result.user.nickname).toBe('Alice');
+    expect(result.user.nicknameNormalized).toBe('alice');
+    expect(result.user.authVersion).toBe(2);
+    expect(result.sessionToken).toBeTruthy();
+    expect(result).not.toHaveProperty('recoveryFile');
+    expect(result).not.toHaveProperty('recoveryToken');
   });
 
   it('rejects a nickname that is already taken, regardless of case', async () => {
@@ -40,27 +53,23 @@ describe('UserService.registerAccount', () => {
     await registerAlice(userService);
 
     await expect(
-      userService.registerAccount({ nickname: 'ALICE', avatar: 1, password: PASSWORD }),
+      userService.registerAccount({ nickname: 'ALICE', avatar: 1, password: PASSWORD, ...TEST_V2_SIGNUP }),
     ).rejects.toMatchObject({ code: 'user.nicknameTaken', message: 'Esse nickname já está em uso.' });
   });
 
-  it('rejects a password shorter than the minimum length', async () => {
+  it('rejects a password that is not a derived auth key', async () => {
     const { userService } = await buildRoomService();
 
     await expect(
-      userService.registerAccount({ nickname: 'Bob', avatar: 0, password: 'short' }),
-    ).rejects.toMatchObject({
-      code: 'user.passwordTooShort',
-      message: 'A senha deve ter pelo menos 12 caracteres.',
-      params: { minLength: 12 },
-    });
+      userService.registerAccount({ nickname: 'Bob', avatar: 0, password: 'short', ...TEST_V2_SIGNUP }),
+    ).rejects.toMatchObject({ code: 'user.credentialsInvalid' });
   });
 
   it('rejects a nickname with special characters', async () => {
     const { userService } = await buildRoomService();
 
     await expect(
-      userService.registerAccount({ nickname: 'Bob!', avatar: 0, password: PASSWORD }),
+      userService.registerAccount({ nickname: 'Bob!', avatar: 0, password: PASSWORD, ...TEST_V2_SIGNUP }),
     ).rejects.toMatchObject({
       code: 'user.nicknameInvalid',
       message: 'Nickname deve ter entre 2 e 20 caracteres, usando apenas letras e números, com pelo menos 2 letras.',
@@ -72,7 +81,7 @@ describe('UserService.registerAccount', () => {
     const { userService } = await buildRoomService();
 
     await expect(
-      userService.registerAccount({ nickname: 'B1', avatar: 0, password: PASSWORD }),
+      userService.registerAccount({ nickname: 'B1', avatar: 0, password: PASSWORD, ...TEST_V2_SIGNUP }),
     ).rejects.toMatchObject({ code: 'user.nicknameInvalid' });
   });
 
@@ -82,7 +91,7 @@ describe('UserService.registerAccount', () => {
     const { user } = await userService.registerAccount({
       nickname: 'Bob123',
       avatar: 0,
-      password: PASSWORD,
+      password: PASSWORD, ...TEST_V2_SIGNUP
     });
 
     expect(user.nickname).toBe('Bob123');
@@ -159,34 +168,13 @@ describe('UserService.login', () => {
   });
 });
 
-describe('UserService.loginWithKeyfile', () => {
-  it('logs in with a valid recovery file', async () => {
-    const { userService } = await buildRoomService();
-    const { user, recoveryFile, recoveryToken: originalRecoveryToken } = await registerAlice(userService);
-
-    const result = await userService.loginWithKeyfile(recoveryFile);
-
-    expect(result?.user.id).toBe(user.id);
-    expect(result?.sessionToken).toBeTruthy();
-    expect(result?.recoveryToken).toBe(originalRecoveryToken);
-  });
-
-  it('rejects a corrupted recovery file', async () => {
-    const { userService } = await buildRoomService();
-    const { recoveryFile } = await registerAlice(userService);
-    recoveryFile[recoveryFile.length - 1] = (recoveryFile[recoveryFile.length - 1] ?? 0) ^ 0xff;
-
-    const result = await userService.loginWithKeyfile(recoveryFile);
-
-    expect(result).toBeNull();
-  });
-
+describe('UserService.loginWithRecovery sessions', () => {
   it('creates a session with the keyfile auth method', async () => {
     const { userService } = await buildRoomService();
-    const { user, recoveryFile } = await registerAlice(userService);
+    const { user } = await registerAlice(userService);
 
-    const result = await userService.loginWithKeyfile(recoveryFile);
-    const resumed = await userService.resumeSession(user.id, result?.sessionToken ?? '');
+    const result = await loginWithRecoveryKey(userService, user.id);
+    const resumed = await userService.resumeSession(user.id, result.sessionToken);
 
     expect(resumed?.authMethod).toBe('keyfile');
   });
@@ -248,7 +236,7 @@ describe('UserService.verifySession', () => {
     const { user: bob } = await userService.registerAccount({
       nickname: 'Bob',
       avatar: 0,
-      password: 'correct-horse-battery-staple',
+      password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP
     });
 
     const result = await userService.verifySession(bob.id, sessionToken);
@@ -272,7 +260,7 @@ describe('UserService.isSessionActive', () => {
   it('rejects a session id that belongs to a different user', async () => {
     const { userService } = await buildRoomService();
     const { sessionId } = await registerAlice(userService);
-    const { user: bob } = await userService.registerAccount({ nickname: 'Bob', avatar: 0, password: PASSWORD });
+    const { user: bob } = await userService.registerAccount({ nickname: 'Bob', avatar: 0, password: PASSWORD, ...TEST_V2_SIGNUP });
 
     await expect(userService.isSessionActive(bob.id, sessionId)).resolves.toBe(false);
   });
@@ -354,11 +342,11 @@ describe('UserService password hashing', () => {
     await expect(userService.login('Alice', 'x'.repeat(1025))).resolves.toBeNull();
   });
 
-  it('rejects registering with a password longer than 1024 characters', async () => {
+  it('rejects registering with a password longer than an auth key', async () => {
     const { userService } = await buildRoomService();
 
-    await expect(userService.registerAccount({ nickname: 'Longpass', avatar: 0, password: 'x'.repeat(1025) })).rejects.toMatchObject({
-      code: 'user.passwordTooLong',
+    await expect(userService.registerAccount({ nickname: 'Longpass', avatar: 0, password: 'x'.repeat(1025), ...TEST_V2_SIGNUP })).rejects.toMatchObject({
+      code: 'user.credentialsInvalid',
     });
   });
 });
@@ -369,7 +357,7 @@ describe('UserService.changePassword', () => {
     const { user, sessionId } = await registerAlice(userService);
 
     await expect(
-      userService.changePassword(user.id, { currentPassword: 'wrong-password', newPassword: 'new-password-123', sessionId }),
+      userService.changePassword(user.id, { currentPassword: 'wrong-password', ...v2Change(NEW_PASSWORD), sessionId }),
     ).rejects.toMatchObject({ code: 'user.currentPasswordIncorrect', message: 'Senha atual incorreta.' });
   });
 
@@ -377,12 +365,12 @@ describe('UserService.changePassword', () => {
     const { userService } = await buildRoomService();
     const { user, sessionId } = await registerAlice(userService);
 
-    await expect(userService.changePassword(user.id, { newPassword: 'new-password-123', sessionId })).rejects.toMatchObject({
+    await expect(userService.changePassword(user.id, { ...v2Change(NEW_PASSWORD), sessionId })).rejects.toMatchObject({
       code: 'user.currentPasswordRequired',
     });
   });
 
-  it('rotates the password, revokes every session and issues a new recovery file', async () => {
+  it('rotates the password and revokes every session', async () => {
     const { userService, userSessionRepository } = await buildRoomService();
     const { user, sessionId } = await registerAlice(userService);
     await userService.login('Alice', PASSWORD);
@@ -390,8 +378,8 @@ describe('UserService.changePassword', () => {
     const before = await userService.listSessions(user.id);
     expect(before.length).toBeGreaterThan(0);
 
-    const newPassword = 'a-brand-new-password';
-    await userService.changePassword(user.id, { currentPassword: PASSWORD, newPassword, sessionId });
+    const newPassword = NEW_PASSWORD;
+    await userService.changePassword(user.id, { currentPassword: PASSWORD, ...v2Change(newPassword), sessionId });
 
     const after = await userSessionRepository.listByUser(user.id);
     expect(after).toHaveLength(0);
@@ -403,39 +391,31 @@ describe('UserService.changePassword', () => {
     expect(newLogin).not.toBeNull();
   });
 
-  it('invalidates the old recovery file after a password change', async () => {
+  it('keeps the recovery key valid after a password change without a new recovery pair', async () => {
     const { userService } = await buildRoomService();
-    const { user, sessionId, recoveryFile: oldRecoveryFile } = await registerAlice(userService);
+    const { user, sessionId } = await registerAlice(userService);
 
-    await userService.changePassword(user.id, { currentPassword: PASSWORD, newPassword: 'a-brand-new-password', sessionId });
+    await userService.changePassword(user.id, { currentPassword: PASSWORD, ...v2Change(NEW_PASSWORD), sessionId });
 
-    const result = await userService.loginWithKeyfile(oldRecoveryFile);
-    expect(result).toBeNull();
+    expect(await userService.loginWithRecovery(user.id, RECOVERY_KEY)).not.toBeNull();
   });
 
-  it('allows one change without the current password right after a keyfile login', async () => {
+  it('allows one change without the current password right after a recovery login', async () => {
     const { userService } = await buildRoomService();
-    const { recoveryFile } = await registerAlice(userService);
-    const keyfileLogin = await userService.loginWithKeyfile(recoveryFile);
-    if (!keyfileLogin) {
-      throw new Error('keyfile login failed');
-    }
+    const { user } = await registerAlice(userService);
+    const recoveryLogin = await loginWithRecoveryKey(userService, user.id);
 
-    const newPassword = 'forgotten-password-recovery';
-    await userService.changePassword(keyfileLogin.user.id, { newPassword, sessionId: keyfileLogin.sessionId });
+    await userService.changePassword(recoveryLogin.user.id, { ...v2Change(NEW_PASSWORD), sessionId: recoveryLogin.sessionId });
 
-    const newLogin = await userService.login('Alice', newPassword);
+    const newLogin = await userService.login('Alice', NEW_PASSWORD);
     expect(newLogin).not.toBeNull();
   });
 
   it('allows the password-free change only once for the same keyfile session', async () => {
     const { userService } = await buildRoomService();
-    const { recoveryFile } = await registerAlice(userService);
-    const keyfileLogin = await userService.loginWithKeyfile(recoveryFile);
-    if (!keyfileLogin) {
-      throw new Error('keyfile login failed');
-    }
-    const input = { newPassword: 'forgotten-password-recovery', sessionId: keyfileLogin.sessionId };
+    const { user } = await registerAlice(userService);
+    const keyfileLogin = await loginWithRecoveryKey(userService, user.id);
+    const input = { ...v2Change(NEW_PASSWORD), sessionId: keyfileLogin.sessionId };
 
     const results = await Promise.allSettled([
       userService.changePassword(keyfileLogin.user.id, input),
@@ -461,78 +441,66 @@ describe('UserService.changePassword', () => {
     });
 
     await expect(
-      userService.changePassword(user.id, { newPassword: 'forgotten-password-recovery', sessionId: 'old-keyfile-session' }),
+      userService.changePassword(user.id, { ...v2Change(NEW_PASSWORD), sessionId: 'old-keyfile-session' }),
     ).rejects.toMatchObject({ code: 'user.currentPasswordRequired' });
     await expect(
-      userService.changePassword(user.id, { currentPassword: PASSWORD, newPassword: 'forgotten-password-recovery', sessionId: 'old-keyfile-session' }),
-    ).resolves.toMatchObject({ recoveryToken: expect.any(String) as string });
+      userService.changePassword(user.id, { currentPassword: PASSWORD, ...v2Change(NEW_PASSWORD), sessionId: 'old-keyfile-session' }),
+    ).resolves.toMatchObject({ id: user.id, authVersion: 2 });
   });
 
   it('does not consume the keyfile grant when the new password is invalid', async () => {
     const { userService } = await buildRoomService();
-    const { recoveryFile } = await registerAlice(userService);
-    const keyfileLogin = await userService.loginWithKeyfile(recoveryFile);
-    if (!keyfileLogin) {
-      throw new Error('keyfile login failed');
-    }
+    const { user } = await registerAlice(userService);
+    const keyfileLogin = await loginWithRecoveryKey(userService, user.id);
 
     await expect(
-      userService.changePassword(keyfileLogin.user.id, { newPassword: 'short', sessionId: keyfileLogin.sessionId }),
-    ).rejects.toMatchObject({ code: 'user.passwordTooShort' });
+      userService.changePassword(keyfileLogin.user.id, { ...v2Change('short'), sessionId: keyfileLogin.sessionId }),
+    ).rejects.toMatchObject({ code: 'user.credentialsInvalid' });
     await expect(
-      userService.changePassword(keyfileLogin.user.id, { newPassword: 'forgotten-password-recovery', sessionId: keyfileLogin.sessionId }),
-    ).resolves.toMatchObject({ recoveryToken: expect.any(String) as string });
+      userService.changePassword(keyfileLogin.user.id, { ...v2Change(NEW_PASSWORD), sessionId: keyfileLogin.sessionId }),
+    ).resolves.toMatchObject({ id: user.id });
   });
 
-  it('returns a fresh recovery token different from the one issued at registration', async () => {
-    const { userService } = await buildRoomService();
-    const { user, sessionId, recoveryToken: originalRecoveryToken } = await registerAlice(userService);
-
-    const { recoveryToken } = await userService.changePassword(user.id, { currentPassword: PASSWORD, newPassword: 'a-brand-new-password', sessionId });
-
-    expect(recoveryToken).toBeTruthy();
-    expect(recoveryToken).not.toBe(originalRecoveryToken);
-  });
 });
 
 describe('UserService.regenerateRecoveryFile', () => {
+  const NEXT_RECOVERY = { recoveryVerifier: 'next-recovery-verifier-0123456789abcdefghij', encryptedPrivateKeyByRecovery: 'rewrapped-by-recovery' };
+
   it('requires the current password', async () => {
     const { userService } = await buildRoomService();
-    const { user, sessionId, recoveryFile: oldRecoveryFile } = await registerAlice(userService);
+    const { user, sessionId } = await registerAlice(userService);
 
-    await expect(userService.regenerateRecoveryFile(user.id, undefined, sessionId)).rejects.toMatchObject({ code: 'user.currentPasswordIncorrect' });
-    await expect(userService.regenerateRecoveryFile(user.id, 'wrong-password', sessionId)).rejects.toMatchObject({
+    await expect(userService.regenerateRecoveryFile(user.id, undefined, sessionId, NEXT_RECOVERY)).rejects.toMatchObject({
       code: 'user.currentPasswordIncorrect',
     });
-    expect(await userService.loginWithKeyfile(oldRecoveryFile)).not.toBeNull();
+    await expect(userService.regenerateRecoveryFile(user.id, 'wrong-password', sessionId, NEXT_RECOVERY)).rejects.toMatchObject({
+      code: 'user.currentPasswordIncorrect',
+    });
+    expect(await userService.loginWithRecovery(user.id, RECOVERY_KEY)).not.toBeNull();
   });
 
   it('requires the current password for keyfile sessions too', async () => {
     const { userService } = await buildRoomService();
-    const { recoveryFile } = await registerAlice(userService);
-    const keyfileLogin = await userService.loginWithKeyfile(recoveryFile);
-    if (!keyfileLogin) {
-      throw new Error('keyfile login failed');
-    }
+    const { user } = await registerAlice(userService);
+    const keyfileLogin = await loginWithRecoveryKey(userService, user.id);
 
-    await expect(userService.regenerateRecoveryFile(keyfileLogin.user.id, undefined, keyfileLogin.sessionId)).rejects.toMatchObject({
+    await expect(userService.regenerateRecoveryFile(keyfileLogin.user.id, undefined, keyfileLogin.sessionId, NEXT_RECOVERY)).rejects.toMatchObject({
       code: 'user.currentPasswordIncorrect',
     });
   });
 
-  it('issues a new recovery file and revokes every other session', async () => {
+  it('replaces the recovery verifier and revokes every other session', async () => {
     const { userService, userSessionRepository } = await buildRoomService();
-    const { user, sessionId, recoveryFile: oldRecoveryFile } = await registerAlice(userService);
-    const keyfileLogin = await userService.loginWithKeyfile(oldRecoveryFile);
+    const { user, sessionId } = await registerAlice(userService);
+    await loginWithRecoveryKey(userService, user.id);
     await userService.login('Alice', PASSWORD);
-    expect(keyfileLogin).not.toBeNull();
 
-    const { recoveryFile } = await userService.regenerateRecoveryFile(user.id, PASSWORD, sessionId);
+    await userService.regenerateRecoveryFile(user.id, PASSWORD, sessionId, NEXT_RECOVERY);
 
     const after = await userSessionRepository.listByUser(user.id);
     expect(after.map((session) => session.id)).toEqual([sessionId]);
-    expect(await userService.loginWithKeyfile(oldRecoveryFile)).toBeNull();
-    expect(await userService.loginWithKeyfile(recoveryFile ?? Buffer.alloc(0))).not.toBeNull();
+    expect(await userService.loginWithRecovery(user.id, RECOVERY_KEY)).toBeNull();
+    expect(await userService.loginWithRecovery(user.id, NEXT_RECOVERY.recoveryVerifier)).not.toBeNull();
   });
 });
 
@@ -559,19 +527,18 @@ describe('UserService.listSessions', () => {
 });
 
 describe('UserService.updateProfile', () => {
-  it('updates avatar without issuing a new recovery file or asking for the password when the nickname is unchanged', async () => {
+  it('updates avatar without asking for the password when the nickname is unchanged', async () => {
     const { userService } = await buildRoomService();
     const { user, sessionId } = await registerAlice(userService);
 
     const result = await userService.updateProfile(user.id, { nickname: 'Alice', avatar: 3 }, sessionId);
 
-    expect(result?.user.avatar).toBe(3);
-    expect(result?.recoveryFile).toBeNull();
+    expect(result).toEqual({ user: expect.objectContaining({ avatar: 3 }) as unknown, revokedOtherSessions: false });
   });
 
   it('requires the current password to change the nickname', async () => {
     const { userService } = await buildRoomService();
-    const { user, sessionId, recoveryFile } = await registerAlice(userService);
+    const { user, sessionId } = await registerAlice(userService);
 
     await expect(userService.updateProfile(user.id, { nickname: 'Alicia', avatar: 0 }, sessionId)).rejects.toMatchObject({
       code: 'user.currentPasswordIncorrect',
@@ -580,28 +547,27 @@ describe('UserService.updateProfile', () => {
       userService.updateProfile(user.id, { nickname: 'Alicia', avatar: 0, currentPassword: 'wrong-password' }, sessionId),
     ).rejects.toMatchObject({ code: 'user.currentPasswordIncorrect' });
     expect((await userService.getUser(user.id))?.nickname).toBe('Alice');
-    expect(await userService.loginWithKeyfile(recoveryFile)).not.toBeNull();
   });
 
-  it('issues a new recovery file, invalidates the old one and revokes other sessions when the nickname changes', async () => {
+  it('keeps the recovery key and revokes other sessions when the nickname changes', async () => {
     const { userService, userSessionRepository } = await buildRoomService();
-    const { user, sessionId, recoveryFile: oldRecoveryFile } = await registerAlice(userService);
+    const { user, sessionId } = await registerAlice(userService);
     await userService.login('Alice', PASSWORD);
 
     const result = await userService.updateProfile(user.id, { nickname: 'Alicia', avatar: 0, currentPassword: PASSWORD }, sessionId);
 
     expect(result?.user.nickname).toBe('Alicia');
-    expect(result?.recoveryFile).not.toBeNull();
-    expect(await userService.loginWithKeyfile(oldRecoveryFile)).toBeNull();
+    expect(result).not.toHaveProperty('recoveryFile');
     const remaining = await userSessionRepository.listByUser(user.id);
     expect(remaining.map((session) => session.id).filter((id) => id === sessionId)).toEqual([sessionId]);
     expect(remaining.filter((session) => session.authMethod === 'password')).toHaveLength(1);
+    expect(await userService.loginWithRecovery(user.id, RECOVERY_KEY)).not.toBeNull();
   });
 
   it('rejects renaming to a nickname already used by someone else', async () => {
     const { userService } = await buildRoomService();
     const { user, sessionId } = await registerAlice(userService);
-    await userService.registerAccount({ nickname: 'Bob', avatar: 0, password: PASSWORD });
+    await userService.registerAccount({ nickname: 'Bob', avatar: 0, password: PASSWORD, ...TEST_V2_SIGNUP });
 
     await expect(userService.updateProfile(user.id, { nickname: 'Bob', avatar: 0, currentPassword: PASSWORD }, sessionId)).rejects.toMatchObject({
       code: 'user.nicknameTaken',
@@ -616,7 +582,7 @@ describe('UserService.updateProfile', () => {
     const result = await userService.updateProfile(user.id, { nickname: 'Alice', avatar: 5 }, sessionId);
 
     expect(result?.user.nickname).toBe('Alice');
-    expect(result?.recoveryFile).toBeNull();
+    expect(result?.revokedOtherSessions).toBe(false);
   });
 
   it('returns null when updating the profile of an unknown user', async () => {
@@ -702,7 +668,6 @@ describe('UserService.publishE2eKeys / getPublicKeys', () => {
     await userService.publishE2eKeys(user.id, {
       publicKey: 'pub-key-alice',
       encryptedPrivateKeyByPassword: 'wrapped-by-password',
-      encryptedPrivateKeyByRecovery: 'wrapped-by-recovery',
     });
 
     await userService.publishE2eKeys(user.id, { encryptedPrivateKeyByRecovery: 'rewrapped-by-recovery' });
@@ -719,7 +684,7 @@ describe('UserService.publishE2eKeys / getPublicKeys', () => {
     const { user: bob } = await userService.registerAccount({
       nickname: 'Bob',
       avatar: 0,
-      password: PASSWORD,
+      password: PASSWORD, ...TEST_V2_SIGNUP
     });
 
     await userService.publishE2eKeys(alice.id, { publicKey: 'pub-key-alice' });
@@ -734,7 +699,7 @@ describe('UserService.getUsersByIds', () => {
   it('returns every existing user keyed by id and keeps getPublicKeys in request order', async () => {
     const { userService } = await buildRoomService();
     const { user: alice } = await registerAlice(userService);
-    const { user: bob } = await userService.registerAccount({ nickname: 'Bob', avatar: 2, password: PASSWORD });
+    const { user: bob } = await userService.registerAccount({ nickname: 'Bob', avatar: 2, password: PASSWORD, ...TEST_V2_SIGNUP });
     await userService.publishE2eKeys(alice.id, { publicKey: 'pub-key-alice' });
     await userService.publishE2eKeys(bob.id, { publicKey: 'pub-key-bob' });
 

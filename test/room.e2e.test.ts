@@ -5,6 +5,7 @@ import { MAX_GROUP_MEMBERS } from '@/modules/rooms/room.types.js';
 import type { RoomKeyPublication } from '@/modules/rooms/room.e2e.js';
 import { buildRoomService } from './support/build-room-service.js';
 import { fakeEnvelope, fakeInvite, fakeRoster, newKeyId } from './support/room-keys.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 type Services = Awaited<ReturnType<typeof buildRoomService>>;
 
@@ -12,7 +13,7 @@ async function createUser(userService: Services['userService'], nickname: string
   const { user } = await userService.registerAccount({
     nickname,
     avatar: 0,
-    password: 'correct-horse-battery-staple',
+    password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP
   });
   return user;
 }

@@ -4,6 +4,7 @@ import { StorageQuota } from '@/storage/storage-quota.js';
 import { StorageUsageRepository } from '@/storage/storage-usage.repository.js';
 import { buildTestApp } from './support/build-test-app.js';
 import { createTestDb } from './support/create-test-db.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 describe('upload endpoints under a storage quota ceiling', () => {
   it('rejects an upload once it would push total usage past the configured ceiling', async () => {
@@ -13,7 +14,7 @@ describe('upload endpoints under a storage quota ceiling', () => {
     const { user, sessionToken } = await userService.registerAccount({
       nickname: 'QuotaTester',
       avatar: 0,
-      password: 'correct-horse-battery-staple',
+      password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP
     });
     const authHeader = `Bearer ${user.id}:${sessionToken}`;
 
@@ -39,7 +40,7 @@ describe('upload endpoints under a storage quota ceiling', () => {
     const { user, sessionToken } = await userService.registerAccount({
       nickname: 'QuotaTester2',
       avatar: 0,
-      password: 'correct-horse-battery-staple',
+      password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP
     });
     const authHeader = `Bearer ${user.id}:${sessionToken}`;
 

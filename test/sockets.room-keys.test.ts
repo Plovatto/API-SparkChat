@@ -294,7 +294,7 @@ describe('room key rotation', () => {
     expect(carol.user.id).toBeDefined();
   });
 
-  it('requires a rotation in every room of a member whose identity key changes', async () => {
+  it('requires a rotation in every room of a member whose identity key changes on the server', async () => {
     const h = await start();
     const { alice, bob, aliceClient, bobClient, group } = await groupWithGeneration(h);
     const privateRoom = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
@@ -303,18 +303,16 @@ describe('room key rotation', () => {
     await h.establishRoomKey(untouched.id);
     await h.userService.publishE2eKeys(bob.user.id, { publicKey: 'bob-first-key' });
     await listRooms(aliceClient);
-    const notices = collectEvents<{ roomId: string; epoch: number }>(aliceClient, 'e2e:rotation-required');
+    expect(bobClient.connected).toBe(true);
 
-    bobClient.emit('e2e:publish-keys', { publicKey: 'bob-second-key' });
-    await waitForEvent(aliceClient, 'e2e:rotation-required');
-    await settle(100);
+    const notices = await h.userRepository.updateIdentityRequiringRotation(bob.user.id, { e2ePublicKey: 'bob-second-key' });
 
     expect(notices.map((notice) => notice.roomId).sort()).toEqual([group.id, privateRoom.id].sort());
     expect(await h.roomKeyRepository.getState(privateRoom.id)).toMatchObject({ rotationRequired: 2 });
     expect(await h.roomKeyRepository.getState(untouched.id)).toMatchObject({ rotationRequired: null });
   });
 
-  it('does not require a rotation when the identity key is published again unchanged', async () => {
+  it('refuses a second identity key publish without requiring a rotation', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
@@ -322,7 +320,7 @@ describe('room key rotation', () => {
     await h.userService.publishE2eKeys(bob.user.id, { publicKey: 'bob-key' });
     await h.establishRoomKey(room.id);
 
-    expect(await h.userService.publishE2eKeys(bob.user.id, { publicKey: 'bob-key' })).toEqual([]);
+    await expect(h.userService.publishE2eKeys(bob.user.id, { publicKey: 'bob-other-key' })).rejects.toMatchObject({ code: 'e2e.keysLocked' });
     expect(await h.roomKeyRepository.getState(room.id)).toMatchObject({ rotationRequired: null });
   });
 

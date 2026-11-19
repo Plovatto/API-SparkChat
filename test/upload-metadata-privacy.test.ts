@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { InMemoryObjectStorage, type PutObjectOptions } from '@/storage/object-storage.js';
 import { buildTestApp } from './support/build-test-app.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 class RecordingObjectStorage extends InMemoryObjectStorage {
   readonly writes: { key: string; options: PutObjectOptions }[] = [];
@@ -17,7 +18,7 @@ const CIPHERTEXT = Buffer.from('opaque ciphertext that matches no file signature
 async function setup() {
   const objectStorage = new RecordingObjectStorage();
   const { app, userService } = await buildTestApp({ objectStorage });
-  const { user, sessionToken } = await userService.registerAccount({ nickname: 'Private', avatar: 0, password: 'correct-horse-battery-staple' });
+  const { user, sessionToken } = await userService.registerAccount({ nickname: 'Private', avatar: 0, password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP });
   return { app, objectStorage, authHeader: `Bearer ${user.id}:${sessionToken}` };
 }
 

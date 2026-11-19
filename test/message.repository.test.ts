@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { systemEvent } from '@/modules/messages/index.js';
 import { buildRoomService } from './support/build-room-service.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 type Services = Awaited<ReturnType<typeof buildRoomService>>;
 
@@ -8,7 +9,7 @@ async function createUser(userService: Services['userService'], nickname: string
   const { user } = await userService.registerAccount({
     nickname,
     avatar: 0,
-    password: 'correct-horse-battery-staple',
+    password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP
   });
   return user;
 }

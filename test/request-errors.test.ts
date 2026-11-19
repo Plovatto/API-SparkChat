@@ -1,5 +1,8 @@
+import type { Request, Response } from 'express';
+import multer from 'multer';
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { errorHandler } from '@/middleware/errorHandler.js';
 import { buildTestApp } from './support/build-test-app.js';
 
 describe('malformed requests', () => {
@@ -12,14 +15,13 @@ describe('malformed requests', () => {
     expect(response.body).toMatchObject({ code: 'validation.invalidPayload' });
   });
 
-  it('answers an unexpected multipart field with 400 instead of 500', async () => {
-    const { app } = await buildTestApp();
+  it('answers a multer error that reaches the global handler with 400 instead of 500', () => {
+    const json = vi.fn();
+    const status = vi.fn(() => ({ json }));
 
-    const response = await request(app)
-      .post('/api/users/login-with-keyfile')
-      .attach('not-the-keyfile', Buffer.from('x'), { filename: 'x.bin', contentType: 'application/octet-stream' });
+    errorHandler(new multer.MulterError('LIMIT_UNEXPECTED_FILE', 'unexpected'), {} as Request, { status } as unknown as Response, vi.fn());
 
-    expect(response.status).toBe(400);
-    expect(response.body).toMatchObject({ code: 'validation.invalidPayload' });
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ code: 'validation.invalidPayload' }));
   });
 });

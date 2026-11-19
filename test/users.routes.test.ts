@@ -1,8 +1,9 @@
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 import { buildTestApp } from './support/build-test-app.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
-const PASSWORD = 'correct-horse-battery-staple';
+const PASSWORD = 'correct-horse-battery-staple-0123456789abcd';
 
 describe('POST /api/users/login', () => {
   it('returns 400 when nickname or password is missing from the body', async () => {
@@ -29,6 +30,7 @@ describe('POST /api/users/login', () => {
       nickname: 'RouteTest',
       avatar: 0,
       password: PASSWORD,
+      ...TEST_V2_SIGNUP,
     });
 
     const response = await request(app).post('/api/users/login').send({ nickname: 'RouteTest', password: PASSWORD });
@@ -49,7 +51,7 @@ describe('POST /api/users/login', () => {
 
   it('returns 429 after too many failed attempts for the same nickname', async () => {
     const { app, userService } = await buildTestApp();
-    await userService.registerAccount({ nickname: 'RateLimited', avatar: 0, password: PASSWORD });
+    await userService.registerAccount({ nickname: 'RateLimited', avatar: 0, password: PASSWORD, ...TEST_V2_SIGNUP });
 
     for (let i = 0; i < 5; i += 1) {
       await request(app).post('/api/users/login').send({ nickname: 'RateLimited', password: 'wrong-password' });
@@ -62,59 +64,37 @@ describe('POST /api/users/login', () => {
   });
 });
 
-describe('POST /api/users/login-with-keyfile', () => {
-  it('returns 400 when no file is attached', async () => {
-    const { app } = await buildTestApp();
+describe('removed legacy login paths', () => {
+  it('rejects a plaintext password login with 401 without checking the stored hash', async () => {
+    const { app, userService } = await buildTestApp();
+    await userService.registerAccount({ nickname: 'Plain', avatar: 0, password: PASSWORD, ...TEST_V2_SIGNUP });
+    const login = vi.spyOn(userService, 'login');
 
-    const response = await request(app).post('/api/users/login-with-keyfile');
-
-    expect(response.status).toBe(400);
-    expect(response.body).toEqual({ message: 'Arquivo de recuperação é obrigatório!', code: 'auth.keyfileRequired' });
-  });
-
-  it('returns 401 for a corrupted file', async () => {
-    const { app } = await buildTestApp();
-
-    const response = await request(app)
-      .post('/api/users/login-with-keyfile')
-      .attach('keyfile', Buffer.from('not a real keyfile'), { filename: 'sparkchat-ghost.sparkkey' });
+    const response = await request(app).post('/api/users/login').send({ nickname: 'Plain', password: 'correct-horse-battery-staple' });
 
     expect(response.status).toBe(401);
-    expect(response.body).toEqual({ message: 'Arquivo de recuperação inválido.', code: 'auth.keyfileInvalid' });
+    expect(response.body).toMatchObject({ code: 'auth.invalidCredentials' });
+    await expect(login.mock.results[0]?.value).resolves.toBeNull();
   });
 
-  it('returns 200 with the public user and a session token for a valid keyfile', async () => {
-    const { app, userService } = await buildTestApp();
-    const { user, recoveryFile } = await userService.registerAccount({
-      nickname: 'KeyfileUser',
-      avatar: 0,
-      password: PASSWORD,
-    });
-
-    const response = await request(app)
-      .post('/api/users/login-with-keyfile')
-      .attach('keyfile', recoveryFile ?? Buffer.alloc(0), { filename: 'sparkchat-keyfileuser.sparkkey' });
-
-    expect(response.status).toBe(200);
-    expect((response.body as { user: { id: string } }).user.id).toBe(user.id);
-    expect((response.body as { recoveryToken: string }).recoveryToken).toBeTruthy();
-  });
-
-  it('returns 429 after too many failed attempts from the same ip', async () => {
+  it('answers 404 for the removed keyfile login endpoint', async () => {
     const { app } = await buildTestApp();
 
-    for (let i = 0; i < 5; i += 1) {
-      await request(app)
-        .post('/api/users/login-with-keyfile')
-        .attach('keyfile', Buffer.from('not a real keyfile'), { filename: 'sparkchat-ghost.sparkkey' });
-    }
-
     const response = await request(app)
       .post('/api/users/login-with-keyfile')
-      .attach('keyfile', Buffer.from('not a real keyfile'), { filename: 'sparkchat-ghost.sparkkey' });
+      .attach('keyfile', Buffer.from('SPRK legacy file'), { filename: 'sparkchat-ghost.sparkkey' });
 
-    expect(response.status).toBe(429);
-    expect(response.body).toEqual({ message: 'Muitas tentativas de login. Tente novamente mais tarde.', code: 'rateLimit.loginAttempts' });
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({ code: 'internal.routeNotFound' });
+  });
+
+  it('no longer documents the keyfile login endpoint', async () => {
+    const { app } = await buildTestApp();
+
+    const response = await request(app).get('/docs/openapi.json');
+    const paths = (response.body as { paths: Record<string, unknown> }).paths;
+
+    expect(paths).not.toHaveProperty('/api/users/login-with-keyfile');
   });
 });
 
@@ -129,17 +109,6 @@ describe('login failures', () => {
     expect(response.body).toEqual({ message: 'Erro ao entrar. Tente novamente!', code: 'auth.loginFailed' });
   });
 
-  it('answers auth.loginFailed when the keyfile login throws unexpectedly', async () => {
-    const { app, userService } = await buildTestApp();
-    vi.spyOn(userService, 'loginWithKeyfile').mockRejectedValue(new Error('database is locked'));
-
-    const response = await request(app)
-      .post('/api/users/login-with-keyfile')
-      .attach('keyfile', Buffer.from('anything'), { filename: 'sparkchat-ada.sparkkey' });
-
-    expect(response.status).toBe(500);
-    expect(response.body).toEqual({ message: 'Erro ao entrar. Tente novamente!', code: 'auth.loginFailed' });
-  });
 });
 
 describe('GET /api/users/nickname-availability', () => {
@@ -182,7 +151,7 @@ describe('GET /api/users/nickname-availability', () => {
 
   it('returns taken for a nickname already in use, regardless of case', async () => {
     const { app, userService } = await buildTestApp();
-    await userService.registerAccount({ nickname: 'TakenNick', avatar: 0, password: PASSWORD });
+    await userService.registerAccount({ nickname: 'TakenNick', avatar: 0, password: PASSWORD, ...TEST_V2_SIGNUP });
 
     const response = await request(app).get('/api/users/nickname-availability').query({ nickname: 'takennick' });
 
@@ -194,7 +163,7 @@ describe('GET /api/users/nickname-availability', () => {
 describe('POST /api/users/login under parallel load', () => {
   it('lets at most five parallel guesses for the same nickname reach the password check', async () => {
     const { app, userService } = await buildTestApp();
-    await userService.registerAccount({ nickname: 'Parallel', avatar: 0, password: PASSWORD });
+    await userService.registerAccount({ nickname: 'Parallel', avatar: 0, password: PASSWORD, ...TEST_V2_SIGNUP });
     const loginSpy = vi.spyOn(userService, 'login');
 
     const responses = await Promise.all(
@@ -219,7 +188,7 @@ describe('POST /api/users/logout', () => {
 
   it('revokes only the current session, notifies the socket layer and answers 204', async () => {
     const { app, userService, sessionRevocations } = await buildTestApp();
-    const { user, sessionToken, sessionId } = await userService.registerAccount({ nickname: 'Leaving', avatar: 0, password: PASSWORD });
+    const { user, sessionToken, sessionId } = await userService.registerAccount({ nickname: 'Leaving', avatar: 0, password: PASSWORD, ...TEST_V2_SIGNUP });
     const other = await userService.login('Leaving', PASSWORD);
     const notified: { userId: string; sessionId: string }[] = [];
     sessionRevocations.subscribe((revoked) => notified.push(revoked));

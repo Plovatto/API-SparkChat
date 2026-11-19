@@ -16,8 +16,9 @@ import { SOCKET_MAX_HTTP_BUFFER_SIZE } from '@/sockets/socket-options.js';
 import type { SocketEventBudgets } from '@/sockets/socket-rate-limit.js';
 import { buildRoomService } from './build-room-service.js';
 import { establishFakeGeneration, newKeyId, TEST_KEY_ID } from './room-keys.js';
+import { TEST_V2_SIGNUP } from './test-constants.js';
 
-export const TEST_PASSWORD = 'correct-horse-battery-staple';
+export const TEST_PASSWORD = 'correct-horse-battery-staple-0123456789abcd';
 
 export type TestClient = ClientSocket;
 
@@ -88,7 +89,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
   }
 
   async function createAccount(nickname: string) {
-    const { user, sessionToken, sessionId } = await services.userService.registerAccount({ nickname, avatar: 0, password: TEST_PASSWORD });
+    const { user, sessionToken, sessionId } = await services.userService.registerAccount({ nickname, avatar: 0, password: TEST_PASSWORD, ...TEST_V2_SIGNUP });
     return { user, sessionToken, sessionId };
   }
 

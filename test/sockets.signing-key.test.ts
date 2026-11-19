@@ -114,7 +114,7 @@ describe('e2e:publish-signing-key', () => {
     expect(await error).toMatchObject({ code: 'e2e.invalidSigningKey' });
   });
 
-  it('clears the signing key when a legacy account replaces its public key', async () => {
+  it('refuses to replace a published public key and keeps the signing key', async () => {
     harness = await startSocketHarness();
     const { account, client } = await accountWithKey(harness, 'Alice', 'pub-alice');
     const signing = signingIdentity(account.user.id, 'pub-alice');
@@ -122,13 +122,13 @@ describe('e2e:publish-signing-key', () => {
     await settle();
     expect((await harness.userRepository.findById(account.user.id))?.e2eSigningPublicKey).toBe(signing.signingPublicKey);
 
+    const error = waitForEvent<{ code: string }>(client, 'error');
     client.emit('e2e:publish-keys', { publicKey: 'pub-alice-new' });
-    await settle();
+    expect(await error).toMatchObject({ code: 'e2e.keysLocked' });
 
     const after = await harness.userRepository.findById(account.user.id);
-    expect(after?.e2ePublicKey).toBe('pub-alice-new');
-    expect(after?.e2eSigningPublicKey).toBeNull();
-    expect(after?.e2eKeySignature).toBeNull();
+    expect(after?.e2ePublicKey).toBe('pub-alice');
+    expect(after?.e2eSigningPublicKey).toBe(signing.signingPublicKey);
   });
 
   it('accepts the signing key together with the public key in e2e:publish-keys', async () => {
@@ -182,7 +182,7 @@ describe('e2e:publish-signing-key', () => {
     ).toBe(true);
   });
 
-  it('does not require a room key rotation when a key change arrives with an invalid signing proof', async () => {
+  it('does not require a room key rotation when a key change is refused', async () => {
     harness = await startSocketHarness();
     const h = harness;
     const { account, client } = await accountWithKey(h, 'Frank', 'pub-frank');
@@ -194,7 +194,7 @@ describe('e2e:publish-signing-key', () => {
     const error = waitForEvent<{ code: string }>(client, 'error');
     client.emit('e2e:publish-keys', { publicKey: 'pub-frank-new', signingPublicKey: signing.signingPublicKey, keySignature: signing.keySignature });
 
-    expect(await error).toMatchObject({ code: 'e2e.invalidSigningKey' });
+    expect(await error).toMatchObject({ code: 'e2e.keysLocked' });
     expect((await h.userRepository.findById(account.user.id))?.e2ePublicKey).toBe('pub-frank');
     expect(await h.roomKeyRepository.getState(room.id)).toMatchObject({ currentEpoch: 1, rotationRequired: null });
   });

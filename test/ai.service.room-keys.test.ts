@@ -6,6 +6,7 @@ import { AiRouter } from '@/modules/ai/ai.provider.js';
 import type { AiConversationMessage } from '@/modules/ai/ai.provider.js';
 import { createFakeServer, setupAssistantRoom } from './support/ai-fixture.js';
 import { createIdentity, sealEnvelope } from './support/room-keys.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 const PAST_RETRIES_MS = 5000;
 
@@ -84,7 +85,7 @@ describe('SparkAI with authenticated room keys', () => {
   it('ignores an envelope that was not sealed by a member of the room', async () => {
     const context = await setupAssistantRoom({ publishKey: false });
     vi.useFakeTimers({ toFake: ['setTimeout'] });
-    const { user: mallory } = await context.userService.registerAccount({ nickname: 'Mallory', avatar: 2, password: 'correct-horse-battery-staple' });
+    const { user: mallory } = await context.userService.registerAccount({ nickname: 'Mallory', avatar: 2, password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP });
     const malloryIdentity = await createIdentity(mallory.id);
     await context.userRepository.update(mallory.id, {
       e2ePublicKey: malloryIdentity.publicKey,
