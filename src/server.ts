@@ -90,6 +90,7 @@ const aiService = new AiService(
   aiRouter,
   aiUsageLimiter,
   objectStorage,
+  userService,
 );
 
 const app = createApp({ userService, loginRateLimiter, sessionRevocations, linkPreviewService, objectStorage, storageQuota, uploadRegistry });

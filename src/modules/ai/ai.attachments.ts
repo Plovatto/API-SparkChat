@@ -29,7 +29,8 @@ function isEncryptedUrl(url: string): boolean {
   }
 }
 
-const ENCRYPTION_OVERHEAD_BYTES = 64;
+const ATTACHMENT_KEY_ID_BYTES = 16;
+const ENCRYPTION_OVERHEAD_BYTES = ATTACHMENT_KEY_ID_BYTES + 64;
 
 export function guessMimeTypeFromUrl(url: string): string | null {
   const extension = path.extname(extractPathname(url)).toLowerCase();
@@ -56,9 +57,11 @@ export function resolveAudioMimeType(declaredMimeType: string | null, url: strin
   return guessed?.startsWith('audio/') ? guessed : null;
 }
 
+export type AttachmentKeyResolver = (keyId: string) => Promise<Uint8Array | null>;
+
 export async function loadDecryptedAttachment(
   url: string,
-  roomKey: Uint8Array,
+  resolveKey: AttachmentKeyResolver,
   objectStorage: ObjectStorage,
   maxBytes: number,
 ): Promise<Buffer | null> {
@@ -77,9 +80,19 @@ export async function loadDecryptedAttachment(
   }
 
   const sodium = await getSodium();
+  const headerLength = ATTACHMENT_KEY_ID_BYTES + sodium.crypto_secretbox_NONCEBYTES;
+  if (raw.length < headerLength + sodium.crypto_secretbox_MACBYTES) {
+    return null;
+  }
+
+  const roomKey = await resolveKey(raw.subarray(0, ATTACHMENT_KEY_ID_BYTES).toString('base64url'));
+  if (!roomKey) {
+    return null;
+  }
+
   try {
-    const nonce = raw.subarray(0, sodium.crypto_secretbox_NONCEBYTES);
-    const ciphertext = raw.subarray(sodium.crypto_secretbox_NONCEBYTES);
+    const nonce = raw.subarray(ATTACHMENT_KEY_ID_BYTES, headerLength);
+    const ciphertext = raw.subarray(headerLength);
     const plaintext = sodium.crypto_secretbox_open_easy(ciphertext, nonce, roomKey);
     return Buffer.from(plaintext);
   } catch {

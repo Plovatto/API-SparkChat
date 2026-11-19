@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { logger } from '../../config/logger.js';
 import type { Locale } from '../../lib/locale.js';
 import type { AppServer } from '../../sockets/events.js';
@@ -10,9 +11,10 @@ import {
   type TypingService,
 } from '../messages/index.js';
 import type { RoomKeyRepository, RoomRecord } from '../rooms/index.js';
+import type { UserService } from '../users/index.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import { loadDecryptedAttachment, resolveAudioMimeType } from './ai.attachments.js';
-import { decryptContent, encryptContent, unsealRoomKey } from './ai.crypto.js';
+import { getSodium, openField, openRoomKeyEnvelope, readFieldKeyId, sealField } from './ai.crypto.js';
 import type { AssistantIdentity } from './ai.identity.js';
 import {
   AI_BATCH_DEBOUNCE_MS,
@@ -31,6 +33,26 @@ import type { AiConversationMessage, AiRouter } from './ai.provider.js';
 import type { AiUsageLimiter } from './ai.usage-limiter.js';
 
 const ROOM_KEY_RETRY_DELAYS_MS = [0, 300, 700, 1200];
+const MAX_CACHED_ROOM_KEYS = 1000;
+
+const FIELD_LABELS = {
+  content: 'content',
+  caption: 'caption',
+  fileName: 'file-name',
+  fileMime: 'file-mime',
+} as const;
+
+type FieldLabel = (typeof FIELD_LABELS)[keyof typeof FIELD_LABELS];
+
+interface CurrentRoomKey {
+  keyId: string;
+  roomKey: Uint8Array;
+}
+
+interface MessageReader {
+  field(message: MessageRecord, value: string, label: FieldLabel): Promise<string | null>;
+  attachmentKey(keyId: string): Promise<Uint8Array | null>;
+}
 export const AI_PENDING_WELCOME_TTL_MS = 10 * 60 * 1000;
 
 function delay(ms: number): Promise<void> {
@@ -46,6 +68,7 @@ interface PendingBatch {
 export class AiService {
   private readonly pendingBatchByRoom = new Map<string, PendingBatch>();
   private readonly pendingWelcomeByRoom = new Map<string, { locale: Locale; timer: ReturnType<typeof setTimeout> }>();
+  private readonly roomKeyCache = new Map<string, Uint8Array>();
 
   constructor(
     private readonly identity: AssistantIdentity,
@@ -56,6 +79,7 @@ export class AiService {
     private readonly router: AiRouter,
     private readonly usageLimiter: AiUsageLimiter,
     private readonly objectStorage: ObjectStorage,
+    private readonly userService: Pick<UserService, 'getUsersByIds'>,
   ) {}
 
   isAssistantRoom(room: RoomRecord): boolean {
@@ -119,12 +143,13 @@ export class AiService {
     this.pendingWelcomeByRoom.set(roomId, { locale, timer });
   }
 
-  private async deliverWelcome(io: AppServer, room: RoomRecord, locale: Locale, roomKey: Uint8Array): Promise<void> {
-    const encrypted = await encryptContent(AI_WELCOME_MESSAGES[locale], roomKey);
+  private async deliverWelcome(io: AppServer, room: RoomRecord, locale: Locale, roomKey: CurrentRoomKey): Promise<void> {
+    const messageId = randomUUID();
     const message = await this.messageService.sendMessage({
       roomId: room.id,
       senderId: this.identity.userId,
-      content: encrypted,
+      messageId,
+      content: await this.sealText(AI_WELCOME_MESSAGES[locale], roomKey, room.id, messageId),
       type: 'text',
       participantIds: room.participants,
       viewingUserIds: this.presenceService.getViewers(room.id),
@@ -187,14 +212,15 @@ export class AiService {
         return;
       }
 
-      const history = await this.buildConversation(room.id, roomKey, new Set(batch.messageIds));
+      const history = await this.buildConversation(room.id, new Set(batch.messageIds));
       const replyText = await this.router.generateReply(history, { locale: batch.locale });
-      const encryptedReply = await encryptContent(replyText, roomKey);
+      const messageId = randomUUID();
 
       const reply = await this.messageService.sendMessage({
         roomId: room.id,
         senderId: this.identity.userId,
-        content: encryptedReply,
+        messageId,
+        content: await this.sealText(replyText, roomKey, room.id, messageId),
         type: 'text',
         participantIds: room.participants,
         viewingUserIds: this.presenceService.getViewers(room.id),
@@ -225,32 +251,104 @@ export class AiService {
     io.to(roomId).emit('message:new', await this.messageService.toView(message));
   }
 
-  private async resolveRoomKey(roomId: string): Promise<Uint8Array | null> {
+  private sealText(text: string, roomKey: CurrentRoomKey, roomId: string, messageId: string): Promise<string> {
+    return sealField(text, roomKey.roomKey, roomKey.keyId, this.identity.signingPrivateKey, {
+      roomId,
+      senderId: this.identity.userId,
+      messageId,
+      label: FIELD_LABELS.content,
+    });
+  }
+
+  private async resolveRoomKey(roomId: string): Promise<CurrentRoomKey | null> {
     for (const delayMs of ROOM_KEY_RETRY_DELAYS_MS) {
       if (delayMs > 0) {
         await delay(delayMs);
       }
 
-      const sealedKey = await this.roomKeyRepository.findForUser(roomId, this.identity.userId);
-      if (!sealedKey) {
+      const state = await this.roomKeyRepository.getState(roomId);
+      if (!state?.currentKeyId || state.rotationRequired !== null) {
         continue;
       }
 
-      const unsealed = await unsealRoomKey(sealedKey, this.identity.publicKeyBytes, this.identity.privateKey);
-      if (unsealed) {
-        return unsealed;
+      const roomKey = await this.loadRoomKey(roomId, state.currentKeyId);
+      if (roomKey) {
+        return { keyId: state.currentKeyId, roomKey };
       }
     }
 
     return null;
   }
 
-  private async buildConversation(
-    roomId: string,
-    roomKey: Uint8Array,
-    triggerMessageIds: Set<string>,
-  ): Promise<AiConversationMessage[]> {
+  private async loadRoomKey(roomId: string, keyId: string): Promise<Uint8Array | null> {
+    const cacheKey = `${roomId}:${keyId}`;
+    const cached = this.roomKeyCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const stored = await this.roomKeyRepository.findForUser(roomId, this.identity.userId, keyId);
+    if (!stored) {
+      return null;
+    }
+
+    const roomKey = await openRoomKeyEnvelope({
+      ...stored,
+      recipientId: this.identity.userId,
+      recipientPublicKey: this.identity.publicKey,
+      recipientPrivateKey: this.identity.privateKey,
+    });
+    if (!roomKey) {
+      logger.warn({ roomId, keyId, senderId: stored.senderId }, 'SparkAI descartou um envelope de chave de sala inválido');
+      return null;
+    }
+
+    if (this.roomKeyCache.size >= MAX_CACHED_ROOM_KEYS) {
+      const [oldest] = this.roomKeyCache.keys();
+      if (oldest) {
+        this.roomKeyCache.delete(oldest);
+      }
+    }
+    this.roomKeyCache.set(cacheKey, roomKey);
+    return roomKey;
+  }
+
+  private async createReader(roomId: string, messages: MessageRecord[]): Promise<MessageReader> {
+    const senderIds = [...new Set(messages.map((message) => message.senderId))].filter((id) => id !== this.identity.userId);
+    const usersById = await this.userService.getUsersByIds(senderIds);
+    const sodium = await getSodium();
+    const signingKeyOf = (senderId: string): Uint8Array | null => {
+      if (senderId === this.identity.userId) {
+        return this.identity.signingPublicKeyBytes;
+      }
+      const encoded = usersById.get(senderId)?.e2eSigningPublicKey;
+      try {
+        return encoded ? sodium.from_base64(encoded) : null;
+      } catch {
+        return null;
+      }
+    };
+    const keyFor = (value: string): Promise<Uint8Array | null> => {
+      const keyId = readFieldKeyId(value);
+      return keyId ? this.loadRoomKey(roomId, keyId) : Promise.resolve(null);
+    };
+
+    return {
+      field: async (message, value, label) => {
+        const signingKey = signingKeyOf(message.senderId);
+        const roomKey = signingKey ? await keyFor(value) : null;
+        if (!roomKey || !signingKey) {
+          return null;
+        }
+        return openField(value, roomKey, signingKey, { roomId, senderId: message.senderId, messageId: message.id, label });
+      },
+      attachmentKey: (keyId) => this.loadRoomKey(roomId, keyId),
+    };
+  }
+
+  private async buildConversation(roomId: string, triggerMessageIds: Set<string>): Promise<AiConversationMessage[]> {
     const { messages } = await this.messageService.getRoomMessagesPage(roomId, { limit: AI_CONTEXT_MESSAGE_LIMIT });
+    const reader = await this.createReader(roomId, messages);
     const conversation: AiConversationMessage[] = [];
     let mergedTrigger: AiConversationMessage | null = null;
 
@@ -262,17 +360,17 @@ export class AiService {
       const role = message.senderId === this.identity.userId ? 'model' : 'user';
 
       if (triggerMessageIds.has(message.id)) {
-        const part = await this.buildAttachedMessage(message, roomKey);
+        const part = await this.buildAttachedMessage(message, reader);
         mergedTrigger = this.mergeTriggerParts(mergedTrigger, part);
         continue;
       }
 
       if (message.type !== 'text') {
-        conversation.push({ role, text: await this.describeAttachment(message, roomKey) });
+        conversation.push({ role, text: await this.describeAttachment(message, reader) });
         continue;
       }
 
-      const plaintext = await decryptContent(message.content, roomKey);
+      const plaintext = await reader.field(message, message.content, FIELD_LABELS.content);
       if (plaintext === null) {
         continue;
       }
@@ -306,24 +404,24 @@ export class AiService {
     return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
   }
 
-  private async decryptFileName(message: MessageRecord, roomKey: Uint8Array): Promise<string> {
+  private async decryptFileName(message: MessageRecord, reader: MessageReader): Promise<string> {
     if (!message.fileMeta) {
       return 'arquivo';
     }
-    const name = await decryptContent(message.fileMeta.name, roomKey);
+    const name = await reader.field(message, message.fileMeta.name, FIELD_LABELS.fileName);
     return name ?? 'arquivo';
   }
 
-  private async decryptFileMimeType(message: MessageRecord, roomKey: Uint8Array): Promise<string> {
+  private async decryptFileMimeType(message: MessageRecord, reader: MessageReader): Promise<string> {
     if (!message.fileMeta) {
       return '';
     }
-    const mimeType = await decryptContent(message.fileMeta.mimeType, roomKey);
+    const mimeType = await reader.field(message, message.fileMeta.mimeType, FIELD_LABELS.fileMime);
     return mimeType ?? '';
   }
 
-  private async describeAttachment(message: MessageRecord, roomKey: Uint8Array): Promise<string> {
-    const caption = message.caption ? await decryptContent(message.caption, roomKey) : null;
+  private async describeAttachment(message: MessageRecord, reader: MessageReader): Promise<string> {
+    const caption = message.caption ? await reader.field(message, message.caption, FIELD_LABELS.caption) : null;
     const captionSuffix = caption ? ` com a legenda: "${this.truncateText(caption, AI_MAX_TEXT_CHARS)}"` : '';
 
     if (message.type === 'image') {
@@ -332,22 +430,24 @@ export class AiService {
     if (message.type === 'audio') {
       return `[o usuário enviou um áudio de ${message.duration ?? 0}s${captionSuffix}]`;
     }
-    const name = await this.decryptFileName(message, roomKey);
+    const name = await this.decryptFileName(message, reader);
     return `[o usuário enviou um arquivo: ${name}${captionSuffix}]`;
   }
 
-  private async buildAttachedMessage(message: MessageRecord, roomKey: Uint8Array): Promise<AiConversationMessage> {
+  private async buildAttachedMessage(message: MessageRecord, reader: MessageReader): Promise<AiConversationMessage> {
     const role = 'user' as const;
-    const caption = message.caption ? await decryptContent(message.caption, roomKey) : null;
+    const caption = message.caption ? await reader.field(message, message.caption, FIELD_LABELS.caption) : null;
     const captionText = caption ? this.truncateText(caption, AI_MAX_TEXT_CHARS) : undefined;
 
     if (message.type === 'text') {
-      const plaintext = await decryptContent(message.content, roomKey);
+      const plaintext = await reader.field(message, message.content, FIELD_LABELS.content);
       return { role, text: plaintext !== null ? this.truncateText(plaintext, AI_MAX_TEXT_CHARS) : '[mensagem ilegível]' };
     }
 
+    const attachmentKey = (keyId: string) => reader.attachmentKey(keyId);
+
     if (message.type === 'image') {
-      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage, AI_MAX_IMAGE_BYTES);
+      const raw = await loadDecryptedAttachment(message.content, attachmentKey, this.objectStorage, AI_MAX_IMAGE_BYTES);
       const compressed = raw ? await compressImageForModel(raw).catch(() => null) : null;
       if (!compressed) {
         return { role, text: captionText ?? '[o usuário enviou uma imagem, mas não foi possível carregá-la]' };
@@ -361,8 +461,8 @@ export class AiService {
         return { role, text: `[o usuário enviou um áudio de ${message.duration}s, longo demais para eu ouvir agora]` };
       }
       const [raw, declaredMimeType] = await Promise.all([
-        loadDecryptedAttachment(message.content, roomKey, this.objectStorage, AI_MAX_AUDIO_BYTES),
-        message.fileMeta ? decryptContent(message.fileMeta.mimeType, roomKey) : Promise.resolve(null),
+        loadDecryptedAttachment(message.content, attachmentKey, this.objectStorage, AI_MAX_AUDIO_BYTES),
+        message.fileMeta ? reader.field(message, message.fileMeta.mimeType, FIELD_LABELS.fileMime) : Promise.resolve(null),
       ]);
       const mimeType = resolveAudioMimeType(declaredMimeType, message.content);
       if (!raw || !mimeType) {
@@ -372,15 +472,15 @@ export class AiService {
     }
 
     const [mimeType, name] = await Promise.all([
-      this.decryptFileMimeType(message, roomKey),
-      this.decryptFileName(message, roomKey),
+      this.decryptFileMimeType(message, reader),
+      this.decryptFileName(message, reader),
     ]);
 
     if (mimeType === 'application/pdf') {
       if ((message.fileMeta?.size ?? 0) > AI_MAX_PDF_BYTES) {
         return { role, text: `[o usuário enviou o arquivo ${name}, grande demais para eu ler agora]` };
       }
-      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage, AI_MAX_PDF_BYTES);
+      const raw = await loadDecryptedAttachment(message.content, attachmentKey, this.objectStorage, AI_MAX_PDF_BYTES);
       if (!raw) {
         return { role, text: captionText ?? `[o usuário enviou o arquivo ${name}, mas não foi possível carregá-lo]` };
       }
@@ -388,7 +488,7 @@ export class AiService {
     }
 
     if (mimeType === 'text/plain' || mimeType === 'text/csv') {
-      const raw = await loadDecryptedAttachment(message.content, roomKey, this.objectStorage, AI_MAX_TEXT_FILE_BYTES);
+      const raw = await loadDecryptedAttachment(message.content, attachmentKey, this.objectStorage, AI_MAX_TEXT_FILE_BYTES);
       if (!raw) {
         return { role, text: captionText ?? `[o usuário enviou o arquivo ${name}, mas não foi possível carregá-lo]` };
       }

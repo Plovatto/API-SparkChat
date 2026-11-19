@@ -47,6 +47,12 @@ describe('resolveObjectKey', () => {
   });
 });
 
+const KEY_ID_BYTES = Buffer.alloc(16, 7);
+
+function keyring(roomKey: Uint8Array) {
+  return (keyId: string) => Promise.resolve(keyId === KEY_ID_BYTES.toString('base64url') ? roomKey : null);
+}
+
 describe('loadDecryptedAttachment', () => {
   it('decrypts a sealed attachment written with the room key', async () => {
     const objectStorage = new InMemoryObjectStorage();
@@ -56,12 +62,12 @@ describe('loadDecryptedAttachment', () => {
 
     const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
     const ciphertext = sodium.crypto_secretbox_easy(plaintext, nonce, roomKey);
-    const combined = Buffer.concat([Buffer.from(nonce), Buffer.from(ciphertext)]);
+    const combined = Buffer.concat([KEY_ID_BYTES, Buffer.from(nonce), Buffer.from(ciphertext)]);
 
     await objectStorage.putObject('uploads/images/photo.png', combined, { contentType: 'image/png' });
     const url = `${objectStorage.publicUrl('uploads/images/photo.png')}?e2e=1`;
 
-    const result = await loadDecryptedAttachment(url, roomKey, objectStorage, 1024 * 1024);
+    const result = await loadDecryptedAttachment(url, keyring(roomKey), objectStorage, 1024 * 1024);
     expect(result?.toString('utf8')).toBe('fake image bytes');
   });
 
@@ -74,12 +80,12 @@ describe('loadDecryptedAttachment', () => {
 
     const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
     const ciphertext = sodium.crypto_secretbox_easy(plaintext, nonce, roomKey);
-    const combined = Buffer.concat([Buffer.from(nonce), Buffer.from(ciphertext)]);
+    const combined = Buffer.concat([KEY_ID_BYTES, Buffer.from(nonce), Buffer.from(ciphertext)]);
 
     await objectStorage.putObject('uploads/images/photo.png', combined, { contentType: 'image/png' });
     const url = `${objectStorage.publicUrl('uploads/images/photo.png')}?e2e=1`;
 
-    const result = await loadDecryptedAttachment(url, otherKey, objectStorage, 1024 * 1024);
+    const result = await loadDecryptedAttachment(url, keyring(otherKey), objectStorage, 1024 * 1024);
     expect(result).toBeNull();
   });
 
@@ -89,7 +95,29 @@ describe('loadDecryptedAttachment', () => {
     const roomKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
     const url = `${objectStorage.publicUrl('uploads/images/missing.png')}?e2e=1`;
 
-    const result = await loadDecryptedAttachment(url, roomKey, objectStorage, 1024 * 1024);
+    const result = await loadDecryptedAttachment(url, keyring(roomKey), objectStorage, 1024 * 1024);
     expect(result).toBeNull();
+  });
+
+  it('reads the key id from the first 16 bytes and returns null when that generation is unknown', async () => {
+    const objectStorage = new InMemoryObjectStorage();
+    const sodium = await getSodium();
+    const roomKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
+    const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
+    const ciphertext = sodium.crypto_secretbox_easy(Buffer.from('bytes'), nonce, roomKey);
+    const otherKeyId = Buffer.alloc(16, 9);
+    await objectStorage.putObject('uploads/images/other.png', Buffer.concat([otherKeyId, Buffer.from(nonce), Buffer.from(ciphertext)]), {
+      contentType: 'image/png',
+    });
+    await objectStorage.putObject('uploads/images/short.png', Buffer.alloc(20), { contentType: 'image/png' });
+
+    const requested: string[] = [];
+    const resolver = (keyId: string) => {
+      requested.push(keyId);
+      return Promise.resolve(null);
+    };
+    expect(await loadDecryptedAttachment(objectStorage.publicUrl('uploads/images/other.png') + '?e2e=1', resolver, objectStorage, 1024)).toBeNull();
+    expect(requested).toEqual([otherKeyId.toString('base64url')]);
+    expect(await loadDecryptedAttachment(objectStorage.publicUrl('uploads/images/short.png') + '?e2e=1', keyring(roomKey), objectStorage, 1024)).toBeNull();
   });
 });
