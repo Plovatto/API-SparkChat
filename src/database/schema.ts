@@ -196,3 +196,35 @@ export const linkPreviews = sqliteTable('link_previews', {
   siteName: text('site_name'),
   fetchedAt: text('fetched_at').notNull(),
 });
+
+export const calls = sqliteTable(
+  'calls',
+  {
+    id: text('id').primaryKey(),
+    roomId: text('room_id').notNull(),
+    callerId: text('caller_id').notNull(),
+    calleeId: text('callee_id').notNull(),
+    kind: text('kind').notNull(),
+    state: text('state').notNull(),
+    createdAt: text('created_at').notNull(),
+    answeredAt: text('answered_at'),
+    endedAt: text('ended_at'),
+    endReason: text('end_reason'),
+    lastHeartbeatAt: text('last_heartbeat_at'),
+    acceptedDeviceId: text('accepted_device_id'),
+    relayUsed: integer('relay_used').notNull().default(0),
+    turnUsername: text('turn_username'),
+    calleeTurnUsername: text('callee_turn_username'),
+    turnRevokedAt: text('turn_revoked_at'),
+  },
+  (table) => [
+    index('calls_state_idx').on(table.state),
+    index('calls_caller_id_idx').on(table.callerId),
+    index('calls_callee_id_idx').on(table.calleeId),
+  ],
+);
+
+export const callUsage = sqliteTable('call_usage', {
+  month: text('month').primaryKey(),
+  estimatedBytes: integer('estimated_bytes').notNull().default(0),
+});
