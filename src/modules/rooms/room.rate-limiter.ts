@@ -3,6 +3,7 @@ const JOIN_ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
 const MAX_GROUP_CREATIONS = 10;
 const GROUP_CREATION_WINDOW_MS = 60 * 60 * 1000;
 export const KEY_REQUEST_INTERVAL_MS = 30 * 1000;
+export const INVITE_RESET_INTERVAL_MS = 30 * 1000;
 const MAX_TRACKED_ENTRIES = 10_000;
 
 function pruneExpired(entries: Map<string, number>, now: number): void {
@@ -20,6 +21,7 @@ export class RoomActionRateLimiter {
   private readonly joinAttempts = new Map<string, number[]>();
   private readonly groupCreations = new Map<string, number[]>();
   private readonly keyRequestCooldowns = new Map<string, number>();
+  private readonly inviteResetCooldowns = new Map<string, number>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -56,16 +58,23 @@ export class RoomActionRateLimiter {
   }
 
   tryKeyRequest(userId: string, roomId: string): boolean {
-    const now = this.now();
-    const key = `${userId}:${roomId}`;
-    pruneExpired(this.keyRequestCooldowns, now);
+    return this.tryCooldown(this.keyRequestCooldowns, `${userId}:${roomId}`, KEY_REQUEST_INTERVAL_MS);
+  }
 
-    const cooldownUntil = this.keyRequestCooldowns.get(key);
+  tryInviteReset(userId: string, roomId: string): boolean {
+    return this.tryCooldown(this.inviteResetCooldowns, `${userId}:${roomId}`, INVITE_RESET_INTERVAL_MS);
+  }
+
+  private tryCooldown(cooldowns: Map<string, number>, key: string, intervalMs: number): boolean {
+    const now = this.now();
+    pruneExpired(cooldowns, now);
+
+    const cooldownUntil = cooldowns.get(key);
     if (cooldownUntil !== undefined && cooldownUntil > now) {
       return false;
     }
 
-    this.keyRequestCooldowns.set(key, now + KEY_REQUEST_INTERVAL_MS);
+    cooldowns.set(key, now + intervalMs);
     return true;
   }
 }

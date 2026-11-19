@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fakeEnvelope, fakeInvite, newKeyId } from './support/room-keys.js';
+import { fakeEnvelope, fakeInvite, fakeRoster, newKeyId } from './support/room-keys.js';
 import { fakeProof, seedInvite } from './support/invites.js';
 import { collectEvents, roundTrip, settle, startSocketHarness, waitForEvent, type TestClient } from './support/socket-harness.js';
 
@@ -71,6 +71,7 @@ function batch(roomId: string, senderId: string, recipients: string[], epoch = 1
     epoch,
     keys: recipients.map((userId) => ({ userId, sealedKey: fakeEnvelope({ roomId, keyId, epoch, senderId, recipientId: userId }) })),
     invite: { tokenHash: fakeInvite(keyId).tokenHash, encryptedInvite: fakeInvite(keyId).encryptedInvite },
+    roster: fakeRoster(keyId),
   };
 }
 
@@ -228,8 +229,8 @@ describe('room key rotation', () => {
 
     const memberIds = [alice.user.id, bob.user.id];
     expect(await notices).toEqual([
-      { roomId: group.id, epoch: 2, memberIds },
-      { roomId: group.id, epoch: 2, memberIds },
+      { roomId: group.id, epoch: 2, memberIds, inviteProofs: [{ userId: bob.user.id, proof: fakeProof(bob.user.id) }] },
+      { roomId: group.id, epoch: 2, memberIds, inviteProofs: [{ userId: bob.user.id, proof: fakeProof(bob.user.id) }] },
     ]);
     expect(carolNotices).toHaveLength(0);
     expect((await listRooms(bobClient)).find((room) => room.id === group.id)).toMatchObject({ currentEpoch: 1, rotationRequiredEpoch: 2 });
@@ -255,7 +256,12 @@ describe('room key rotation', () => {
     const notice = waitForEvent(bobClient, 'e2e:rotation-required');
     aliceClient.emit('group:remove-member', { roomId: group.id, userId: carol.user.id });
 
-    await expect(notice).resolves.toEqual({ roomId: group.id, epoch: 2, memberIds: [alice.user.id, bob.user.id] });
+    await expect(notice).resolves.toEqual({
+      roomId: group.id,
+      epoch: 2,
+      memberIds: [alice.user.id, bob.user.id],
+      inviteProofs: [{ userId: bob.user.id, proof: fakeProof(bob.user.id) }],
+    });
     expect(await h.roomKeyRepository.getState(group.id)).toMatchObject({ currentEpoch: 1, rotationRequired: 2 });
   });
 
@@ -267,7 +273,12 @@ describe('room key rotation', () => {
     const notice = waitForEvent(bobClient, 'e2e:rotation-required');
     aliceClient.emit('group:remove-member', { roomId: group.id, userId: carol.user.id });
 
-    await expect(notice).resolves.toEqual({ roomId: group.id, epoch: 2, memberIds: [alice.user.id, bob.user.id] });
+    await expect(notice).resolves.toEqual({
+      roomId: group.id,
+      epoch: 2,
+      memberIds: [alice.user.id, bob.user.id],
+      inviteProofs: [{ userId: bob.user.id, proof: fakeProof(bob.user.id) }],
+    });
     expect(await h.roomKeyRepository.getState(group.id)).toMatchObject({ rotationRequired: 2 });
   });
 

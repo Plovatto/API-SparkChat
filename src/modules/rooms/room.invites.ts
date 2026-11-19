@@ -1,10 +1,10 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { KEY_ID_PATTERN } from './room.key-envelope.js';
 
 export const INVITE_TOKEN_HASH_PATTERN = /^[0-9a-f]{64}$/;
 const INVITE_SECRET_VALUE_PATTERN = /^[A-Za-z0-9_\-+/]{16,128}={0,2}$/;
 const MAX_ENCRYPTED_INVITE_LENGTH = 1024;
+export const MAX_ENCRYPTED_ROSTER_LENGTH = 32 * 1024;
 
 export interface RoomInvite {
   tokenHash: string;
@@ -16,6 +16,16 @@ export interface RoomInviteView {
   keyId: string;
 }
 
+export interface RoomRosterView {
+  encryptedRoster: string;
+  keyId: string;
+}
+
+export interface InviteProofView {
+  userId: string;
+  proof: string;
+}
+
 export const inviteValueSchema = z.string().regex(INVITE_SECRET_VALUE_PATTERN);
 
 export const roomInviteSchema = z.object({
@@ -23,10 +33,7 @@ export const roomInviteSchema = z.object({
   encryptedInvite: z.string().trim().min(1).max(MAX_ENCRYPTED_INVITE_LENGTH),
 });
 
-export const resetInvitePayloadSchema = z.object({
-  roomId: z.string().trim().min(1),
-  invite: roomInviteSchema.extend({ keyId: z.string().regex(KEY_ID_PATTERN) }),
-});
+export const encryptedRosterSchema = z.string().trim().min(1).max(MAX_ENCRYPTED_ROSTER_LENGTH);
 
 export const joinByInvitePayloadSchema = z.object({
   roomId: z.string().trim().min(1),

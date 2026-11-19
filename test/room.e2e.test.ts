@@ -4,7 +4,7 @@ import { MAX_ROOM_KEY_BATCH } from '@/modules/rooms/room.socket.js';
 import { MAX_GROUP_MEMBERS } from '@/modules/rooms/room.types.js';
 import type { RoomKeyPublication } from '@/modules/rooms/room.e2e.js';
 import { buildRoomService } from './support/build-room-service.js';
-import { fakeEnvelope, fakeInvite, newKeyId } from './support/room-keys.js';
+import { fakeEnvelope, fakeInvite, fakeRoster, newKeyId } from './support/room-keys.js';
 
 type Services = Awaited<ReturnType<typeof buildRoomService>>;
 
@@ -26,6 +26,7 @@ function publication(roomId: string, senderId: string, recipients: string[], epo
     senderId,
     keys: recipients.map((userId) => ({ userId, sealedKey: fakeEnvelope({ roomId, keyId, epoch, senderId, recipientId: userId }) })),
     invite: fakeInvite(keyId),
+    roster: fakeRoster(keyId),
   };
 }
 

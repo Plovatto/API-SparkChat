@@ -13,7 +13,7 @@ import { emitToUser, joinUserSocketsToRoom, removeUserSocketsFromRoom } from '..
 import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService, type MessageView } from '../messages/index.js';
 import { NICKNAME_MAX_LENGTH, type UserService } from '../users/index.js';
 import type { RoomKeyPublishMode, RoomKeyPublishOutcome, RoomKeyRepository } from './room.e2e.js';
-import { joinByInvitePayloadSchema, resetInvitePayloadSchema, roomInviteSchema } from './room.invites.js';
+import { encryptedRosterSchema, joinByInvitePayloadSchema, roomInviteSchema } from './room.invites.js';
 import { KEY_ID_PATTERN, matchesEnvelope, parseRoomKeyEnvelope } from './room.key-envelope.js';
 import type { RoomActionRateLimiter } from './room.rate-limiter.js';
 import type { RoomService } from './room.service.js';
@@ -78,6 +78,7 @@ const publishRoomKeyPayloadSchema = z.object({
     .min(1)
     .max(MAX_ROOM_KEY_BATCH),
   invite: roomInviteSchema.optional(),
+  roster: encryptedRosterSchema.optional(),
 });
 
 const getRoomKeysPayloadSchema = z.object({
@@ -89,7 +90,7 @@ registerClientEvents('rooms', {
   'room:create-group': createGroupRoomPayloadSchema,
   'room:join-by-code': joinByCodePayloadSchema,
   'room:join-by-invite': joinByInvitePayloadSchema,
-  'room:reset-invite': resetInvitePayloadSchema,
+  'room:reset-invite': roomIdPayloadSchema,
   'room:join': roomIdPayloadSchema,
   'room:delete': roomIdPayloadSchema,
   'rooms:get': null,
@@ -135,15 +136,23 @@ function announceInvite(io: AppServer, room: RoomRecord): void {
     return;
   }
   const invite = room.encryptedInvite && room.inviteKeyId ? { encryptedInvite: room.encryptedInvite, keyId: room.inviteKeyId } : null;
+  const roster = room.encryptedRoster && room.rosterKeyId ? { encryptedRoster: room.encryptedRoster, keyId: room.rosterKeyId } : null;
   for (const memberId of room.participants) {
-    emitToUser(io, memberId).emit('room:invite-updated', { roomId: room.id, invite });
+    emitToUser(io, memberId).emit('room:invite-updated', { roomId: room.id, invite, roster });
   }
 }
 
-function announceRotation(io: AppServer, room: RoomRecord): void {
+async function announceRotation(io: AppServer, deps: RoomSocketDeps, room: RoomRecord): Promise<void> {
   if (room.rotationRequired !== undefined) {
-    notifyRoomRotations(io, [{ roomId: room.id, epoch: room.rotationRequired, memberIds: room.participants }]);
+    const rotations = await deps.roomService.attachInviteProofs([
+      { roomId: room.id, epoch: room.rotationRequired, memberIds: room.participants },
+    ]);
+    notifyRoomRotations(io, rotations);
   }
+}
+
+function eventError(event: string, error: unknown) {
+  return { ...extractErrorPayload(error), event };
 }
 
 const PUBLISH_EVENTS = {
@@ -367,7 +376,7 @@ async function handleJoinByInvite(io: AppServer, socket: AppSocket, deps: RoomSo
     const request = joinByInvitePayloadSchema.parse(payload);
 
     if (!deps.rateLimiter.tryJoinAttempt(userId)) {
-      socket.emit('error', errorPayload('rateLimit.roomJoin'));
+      socket.emit('error', { ...errorPayload('rateLimit.roomJoin'), event: 'room:join-by-invite' });
       return;
     }
 
@@ -379,7 +388,7 @@ async function handleJoinByInvite(io: AppServer, socket: AppSocket, deps: RoomSo
     const current = await roomService.getRoomById(room.id);
     if (!current || !roomService.isParticipant(current, userId)) {
       await removeUserSocketsFromRoom(io, userId, room.id);
-      socket.emit('error', errorPayload('room.notFound'));
+      socket.emit('error', { ...errorPayload('room.notFound'), event: 'room:join-by-invite' });
       return;
     }
 
@@ -405,15 +414,9 @@ async function handleJoinByInvite(io: AppServer, socket: AppSocket, deps: RoomSo
     const summaries = await roomService.listSummariesForUser(userId);
     socket.emit('rooms:list', { rooms: summaries });
   } catch (error) {
-    socket.emit('error', extractErrorPayload(error));
+    socket.emit('error', eventError('room:join-by-invite', error));
   }
 }
-
-const INVITE_RESET_ERRORS = {
-  notFound: 'room.notFound',
-  notOwner: 'room.inviteResetRequiresOwner',
-  stale: 'room.inviteKeyStale',
-} as const;
 
 async function handleResetInvite(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
   const userId = requireSocketUserId(socket);
@@ -422,19 +425,28 @@ async function handleResetInvite(io: AppServer, socket: AppSocket, deps: RoomSoc
   }
 
   try {
-    const { roomId, invite } = resetInvitePayloadSchema.parse(payload);
-    const outcome = await deps.roomService.resetInvite(roomId, userId, invite);
-    if (outcome !== 'reset') {
-      socket.emit('error', errorPayload(INVITE_RESET_ERRORS[outcome]));
+    const { roomId } = roomIdPayloadSchema.parse(payload);
+    if (!deps.rateLimiter.tryInviteReset(userId, roomId)) {
+      socket.emit('error', { ...errorPayload('rateLimit.inviteReset'), event: 'room:reset-invite' });
+      return;
+    }
+
+    const outcome = await deps.roomService.resetInvite(roomId, userId);
+    if (outcome === 'notFound') {
+      socket.emit('error', { ...errorPayload('room.notFound'), event: 'room:reset-invite' });
+      return;
+    }
+    if (outcome === 'noKey') {
       return;
     }
 
     const room = await deps.roomService.getRoomById(roomId);
     if (room) {
+      await announceRotation(io, deps, room);
       announceInvite(io, room);
     }
   } catch (error) {
-    socket.emit('error', extractErrorPayload(error));
+    socket.emit('error', eventError('room:reset-invite', error));
   }
 }
 
@@ -515,7 +527,7 @@ async function handleLeaveGroup(io: AppServer, socket: AppSocket, deps: RoomSock
     await socket.leave(roomId);
     await removeUserSocketsFromRoom(io, userId, roomId);
     emitToUser(io, userId).emit('group:left', { roomId });
-    announceRotation(io, updatedRoom);
+    await announceRotation(io, deps, updatedRoom);
     announceInvite(io, updatedRoom);
 
     if (user) {
@@ -557,7 +569,7 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
     }
 
     await removeUserSocketsFromRoom(io, targetUserId, roomId);
-    announceRotation(io, updatedRoom);
+    await announceRotation(io, deps, updatedRoom);
     announceInvite(io, updatedRoom);
     if (!actingUser || !targetUser) {
       return;
@@ -683,14 +695,18 @@ async function handlePublishRoomKey(
   const { roomService, roomKeyRepository } = deps;
 
   try {
-    const { roomId, keyId, epoch, keys, invite } = publishRoomKeyPayloadSchema.parse(payload);
+    const { roomId, keyId, epoch, keys, invite, roster } = publishRoomKeyPayloadSchema.parse(payload);
     const room = await roomService.getRoomById(roomId);
     if (!room || !roomService.isParticipant(room, actingUserId)) {
       return;
     }
 
     const reject = async (
-      code: (typeof REJECTION_CODES)[keyof typeof REJECTION_CODES] | 'e2e.invalidRoomKeyEnvelope' | 'e2e.inviteRequired',
+      code:
+        | (typeof REJECTION_CODES)[keyof typeof REJECTION_CODES]
+        | 'e2e.invalidRoomKeyEnvelope'
+        | 'e2e.inviteRequired'
+        | 'e2e.rosterRequired',
     ) => {
       const state = await roomKeyRepository.getState(roomId);
       socket.emit('e2e:room-key-rejected', {
@@ -714,13 +730,26 @@ async function handlePublishRoomKey(
       return;
     }
 
-    const groupInvite = mode === 'generation' && room.type === 'group' ? invite : undefined;
-    if (mode === 'generation' && room.type === 'group' && !groupInvite) {
+    const groupGeneration = mode === 'generation' && room.type === 'group';
+    if (groupGeneration && !invite) {
       await reject('e2e.inviteRequired');
       return;
     }
+    if (groupGeneration && !roster) {
+      await reject('e2e.rosterRequired');
+      return;
+    }
 
-    const outcome = await roomKeyRepository.publish({ mode, roomId, keyId, epoch, senderId: actingUserId, keys, invite: groupInvite });
+    const outcome = await roomKeyRepository.publish({
+      mode,
+      roomId,
+      keyId,
+      epoch,
+      senderId: actingUserId,
+      keys,
+      invite: groupGeneration ? invite : undefined,
+      roster: groupGeneration ? roster : undefined,
+    });
     if (outcome !== 'generation' && outcome !== 'share') {
       await reject(REJECTION_CODES[outcome]);
       return;

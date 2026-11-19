@@ -72,6 +72,10 @@ export function fakeInvite(seed: string = randomUUID()): FakeInvite {
   };
 }
 
+export function fakeRoster(keyId: string): string {
+  return createHash('sha256').update(`roster:${keyId}`).digest('base64url');
+}
+
 export async function establishFakeGeneration(
   repository: RoomKeyRepository,
   roomId: string,
@@ -88,6 +92,7 @@ export async function establishFakeGeneration(
     senderId,
     keys: memberIds.map((userId) => ({ userId, sealedKey: fakeEnvelope({ roomId, keyId, epoch, senderId, recipientId: userId }) })),
     invite: fakeInvite(`${roomId}:${keyId}`),
+    roster: fakeRoster(keyId),
   });
   if (outcome !== 'generation') {
     throw new Error(`generation not stored: ${outcome}`);

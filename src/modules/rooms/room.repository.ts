@@ -2,7 +2,7 @@ import { and, eq, inArray, isNotNull, notExists, sql, type SQL } from 'drizzle-o
 import { alias, type SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import type { Database } from '../../database/turso-client.js';
 import { roomBans, roomParticipants, rooms } from '../../database/schema.js';
-import type { RoomInvite } from './room.invites.js';
+import type { InviteProofView } from './room.invites.js';
 import { MAX_GROUP_MEMBERS, type RoomRecord } from './room.types.js';
 
 type RoomRow = typeof rooms.$inferSelect;
@@ -13,6 +13,7 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
   const deletedAt: Record<string, string> = {};
   const reactivatedAt: Record<string, string> = {};
   const joinedAt: Record<string, string> = {};
+  const inviteProofs: Record<string, string> = {};
 
   for (const participant of participants) {
     if (participant.blockedByUserId) {
@@ -26,6 +27,9 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
     }
     if (participant.joinedAt) {
       joinedAt[participant.userId] = participant.joinedAt;
+    }
+    if (participant.inviteProof) {
+      inviteProofs[participant.userId] = participant.inviteProof;
     }
   }
 
@@ -49,6 +53,9 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
     inviteTokenHash: room.inviteTokenHash ?? undefined,
     encryptedInvite: room.encryptedInvite ?? undefined,
     inviteKeyId: room.inviteKeyId ?? undefined,
+    encryptedRoster: room.encryptedRoster ?? undefined,
+    rosterKeyId: room.rosterKeyId ?? undefined,
+    inviteProofs,
   };
 }
 
@@ -71,7 +78,7 @@ export interface NewParticipantInvite {
   proof: string;
 }
 
-export type InviteResetOutcome = 'reset' | 'notFound' | 'notOwner' | 'stale';
+export type InviteResetOutcome = 'rotation' | 'notFound' | 'noKey';
 
 export class RoomRepository {
   constructor(private readonly db: Database) {}
@@ -206,7 +213,14 @@ export class RoomRepository {
         : [];
     const requireKeyRotation = this.db
       .update(rooms)
-      .set({ rotationRequired: sql`${rooms.currentEpoch} + 1`, inviteTokenHash: null, encryptedInvite: null, inviteKeyId: null })
+      .set({
+        rotationRequired: sql`${rooms.currentEpoch} + 1`,
+        inviteTokenHash: null,
+        encryptedInvite: null,
+        inviteKeyId: null,
+        encryptedRoster: null,
+        rosterKeyId: null,
+      })
       .where(
         and(
           eq(rooms.id, roomId),
@@ -227,26 +241,54 @@ export class RoomRepository {
     return result.rowsAffected;
   }
 
-  async resetInvite(roomId: string, ownerId: string, invite: RoomInvite & { keyId: string }): Promise<InviteResetOutcome> {
+  async resetInvite(roomId: string, userId: string): Promise<InviteResetOutcome> {
     const result = await this.db.run(sql`
-      update ${rooms} set invite_token_hash = ${invite.tokenHash}, encrypted_invite = ${invite.encryptedInvite}, invite_key_id = ${invite.keyId}
+      update ${rooms} set rotation_required = coalesce(rotation_required, current_epoch + 1),
+        invite_token_hash = null, encrypted_invite = null, invite_key_id = null
       where id = ${roomId}
         and type = 'group'
-        and created_by = ${ownerId}
-        and current_key_id = ${invite.keyId}
-        and rotation_required is null
-        and exists (select 1 from ${roomParticipants} p where p.room_id = ${roomId} and p.user_id = ${ownerId}
+        and current_epoch > 0
+        and exists (select 1 from ${roomParticipants} p where p.room_id = ${roomId} and p.user_id = ${userId}
           and not exists (select 1 from ${roomBans} b where b.room_id = p.room_id and b.user_id = p.user_id))
     `);
     if (result.rowsAffected === 1) {
-      return 'reset';
+      return 'rotation';
     }
 
     const room = await this.findById(roomId);
-    if (!room || room.type !== 'group' || !room.participants.includes(ownerId)) {
+    if (!room || room.type !== 'group' || !room.participants.includes(userId)) {
       return 'notFound';
     }
-    return room.createdBy === ownerId ? 'stale' : 'notOwner';
+    return 'noKey';
+  }
+
+  async findInviteProofs(roomIds: string[]): Promise<Map<string, InviteProofView[]>> {
+    const proofs = new Map<string, InviteProofView[]>();
+    if (roomIds.length === 0) {
+      return proofs;
+    }
+
+    const rows = await this.db
+      .select({ roomId: roomParticipants.roomId, userId: roomParticipants.userId, proof: roomParticipants.inviteProof })
+      .from(roomParticipants)
+      .innerJoin(rooms, eq(rooms.id, roomParticipants.roomId))
+      .where(
+        and(
+          inArray(roomParticipants.roomId, roomIds),
+          eq(rooms.type, 'group'),
+          this.notBanned(roomParticipants.roomId, roomParticipants.userId),
+        ),
+      )
+      .orderBy(sql`${roomParticipants}.rowid`);
+
+    for (const row of rows) {
+      const list = proofs.get(row.roomId) ?? [];
+      if (row.proof) {
+        list.push({ userId: row.userId, proof: row.proof });
+      }
+      proofs.set(row.roomId, list);
+    }
+    return proofs;
   }
 
   async findInviteProof(roomId: string, userId: string): Promise<string | null> {

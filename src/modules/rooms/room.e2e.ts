@@ -26,6 +26,7 @@ export interface RoomKeyPublication {
   senderId: string;
   keys: RoomKeyWrite[];
   invite?: RoomInvite | undefined;
+  roster?: string | undefined;
 }
 
 export type RoomKeyPublishOutcome = 'generation' | 'share' | 'stale' | 'incomplete' | 'conflict';
@@ -109,7 +110,7 @@ export class RoomKeyRepository {
   }
 
   private async storeGeneration(publication: RoomKeyPublication): Promise<boolean> {
-    const { roomId, keyId, epoch, senderId, keys, invite } = publication;
+    const { roomId, keyId, epoch, senderId, keys, invite, roster } = publication;
     const targetIds = sql`(${sql.join(
       keys.map((key) => sql`${key.userId}`),
       sql`, `,
@@ -119,10 +120,14 @@ export class RoomKeyRepository {
           encrypted_invite = case when type = 'group' then ${invite.encryptedInvite} end,
           invite_key_id = case when type = 'group' then ${keyId} end`
       : sql``;
+    const rosterColumns = roster
+      ? sql`, encrypted_roster = case when type = 'group' then ${roster} end,
+          roster_key_id = case when type = 'group' then ${keyId} end`
+      : sql``;
     const advance = this.db.run(sql`
-      update ${rooms} set current_epoch = ${epoch}, current_key_id = ${keyId}, rotation_required = null${inviteColumns}
+      update ${rooms} set current_epoch = ${epoch}, current_key_id = ${keyId}, rotation_required = null${inviteColumns}${rosterColumns}
       where id = ${roomId}
-        and (type <> 'group' or ${invite ? 1 : 0} = 1)
+        and (type <> 'group' or ${invite && roster ? 1 : 0} = 1)
         and current_epoch = ${epoch - 1}
         and (current_epoch = 0 or rotation_required = ${epoch})
         and ${this.memberCondition(roomId, sql`(${senderId})`)} = 1

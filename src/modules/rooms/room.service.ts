@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { AppError } from '../../lib/app-error.js';
 import type { MessageRecord, MessageService } from '../messages/index.js';
 import type { UserRecord, UserService } from '../users/index.js';
-import { hashInviteToken, matchesInviteToken, type RoomInvite, type RoomInviteView } from './room.invites.js';
+import { hashInviteToken, matchesInviteToken, type InviteProofView, type RoomInviteView, type RoomRosterView } from './room.invites.js';
 import type { InviteResetOutcome, RoomRepository } from './room.repository.js';
+import type { RoomRotationAnnouncement } from './room.rotation.js';
 import { MAX_GROUP_MEMBERS, type RoomParticipant, type RoomRecord, type RoomSummary } from './room.types.js';
 
 export interface JoinByInviteRequest {
@@ -42,6 +43,24 @@ function inviteView(room: RoomRecord, viewerId: string): RoomInviteView | null {
     return null;
   }
   return { encryptedInvite: room.encryptedInvite, keyId: room.inviteKeyId };
+}
+
+function rosterView(room: RoomRecord, viewerId: string): RoomRosterView | null {
+  if (room.type !== 'group' || !room.participants.includes(viewerId) || !room.encryptedRoster || !room.rosterKeyId) {
+    return null;
+  }
+  return { encryptedRoster: room.encryptedRoster, keyId: room.rosterKeyId };
+}
+
+function inviteProofsView(room: RoomRecord, viewerId: string): InviteProofView[] {
+  if (room.type !== 'group' || !room.participants.includes(viewerId)) {
+    return [];
+  }
+  const proofs = room.inviteProofs ?? {};
+  return room.participants.flatMap((userId) => {
+    const proof = proofs[userId];
+    return proof ? [{ userId, proof }] : [];
+  });
 }
 
 export class RoomService {
@@ -96,11 +115,7 @@ export class RoomService {
       throw AppError.of('room.notFound');
     }
 
-    if (room.type === 'group') {
-      throw AppError.of('room.inviteLinkRequired');
-    }
-
-    if (room.participants.includes(userId)) {
+    if (room.type !== 'group' && room.participants.includes(userId)) {
       return { room, joined: false };
     }
 
@@ -137,8 +152,16 @@ export class RoomService {
     return { room: current, joined: added };
   }
 
-  resetInvite(roomId: string, ownerId: string, invite: RoomInvite & { keyId: string }): Promise<InviteResetOutcome> {
-    return this.repository.resetInvite(roomId, ownerId, invite);
+  resetInvite(roomId: string, userId: string): Promise<InviteResetOutcome> {
+    return this.repository.resetInvite(roomId, userId);
+  }
+
+  async attachInviteProofs<T extends RoomRotationAnnouncement>(rotations: T[]): Promise<T[]> {
+    const proofs = await this.repository.findInviteProofs(rotations.map((rotation) => rotation.roomId));
+    return rotations.map((rotation) => {
+      const inviteProofs = proofs.get(rotation.roomId);
+      return inviteProofs ? { ...rotation, inviteProofs } : rotation;
+    });
   }
 
   findInviteProof(roomId: string, userId: string): Promise<string | null> {
@@ -391,6 +414,8 @@ export class RoomService {
         currentKeyId: room.currentKeyId ?? null,
         rotationRequiredEpoch: room.rotationRequired ?? null,
         invite: inviteView(room, viewerId),
+        roster: rosterView(room, viewerId),
+        inviteProofs: inviteProofsView(room, viewerId),
       };
     });
   }
