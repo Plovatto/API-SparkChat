@@ -8,16 +8,20 @@ import { AiRouter } from '@/modules/ai/ai.provider.js';
 import { AiService } from '@/modules/ai/ai.service.js';
 import { AiUsageLimiter } from '@/modules/ai/ai.usage-limiter.js';
 import { CallBudget, CallRateLimiter, CallRepository, CallService, type TurnProvider } from '@/modules/calls/index.js';
+import { PushRateLimiter, PushRepository, PushService, type PushSender } from '@/modules/push/index.js';
 import { MessageRateLimiter, RecordingService, RoomPresenceService, TypingService } from '@/modules/messages/index.js';
 import { RoomActionRateLimiter } from '@/modules/rooms/index.js';
 import { LoginRateLimiter, SessionRevocationNotifier } from '@/modules/users/index.js';
 import type { AppServer } from '@/sockets/events.js';
+import { listUserSockets } from '@/sockets/user-sockets.js';
 import { registerSocketHandlers } from '@/sockets/index.js';
 import { SOCKET_MAX_HTTP_BUFFER_SIZE } from '@/sockets/socket-options.js';
 import type { SocketEventBudgets } from '@/sockets/socket-rate-limit.js';
 import { buildRoomService } from './build-room-service.js';
 import { establishFakeGeneration, newKeyId, TEST_KEY_ID } from './room-keys.js';
 import { TEST_V2_SIGNUP } from './test-constants.js';
+
+export const TEST_PUSH_PUBLIC_KEY = Buffer.concat([Buffer.from([4]), Buffer.alloc(64, 7)]).toString('base64url');
 
 export const TEST_PASSWORD = 'correct-horse-battery-staple-0123456789abcd';
 
@@ -30,6 +34,7 @@ export interface SocketHarnessOptions {
   socketEventBudgets?: SocketEventBudgets;
   loginRateLimiter?: LoginRateLimiter;
   calls?: { turnProvider?: TurnProvider; now?: () => number; enabled?: boolean; tierBytes?: number };
+  push?: { sender?: PushSender; publicKey?: string; limiter?: PushRateLimiter };
 }
 
 export async function startSocketHarness(options: SocketHarnessOptions = {}) {
@@ -63,6 +68,15 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
   const clock = options.calls?.now ?? Date.now;
   const callRepository = new CallRepository(services.db);
   const callBudget = new CallBudget(callRepository, clock, options.calls?.tierBytes);
+  const pushRepository = new PushRepository(services.db);
+  const pushService = new PushService({
+    publicKey: options.push?.sender ? (options.push.publicKey ?? TEST_PUSH_PUBLIC_KEY) : null,
+    sender: options.push?.sender ?? null,
+    repository: pushRepository,
+    limiter: options.push?.limiter ?? new PushRateLimiter(clock),
+    isUserConnected: (userId) => listUserSockets(io, userId).length > 0,
+    now: clock,
+  });
   const callService = new CallService(
     io,
     callRepository,
@@ -71,7 +85,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     callBudget,
     new CallRateLimiter(clock),
     options.calls?.turnProvider ?? null,
-    { now: clock, ...(options.calls?.enabled === undefined ? {} : { enabled: options.calls.enabled }) },
+    { now: clock, push: pushService, ...(options.calls?.enabled === undefined ? {} : { enabled: options.calls.enabled }) },
   );
   registerSocketHandlers(io, {
     userService: services.userService,
@@ -87,6 +101,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     roomKeyRepository: services.roomKeyRepository,
     aiService,
     callService,
+    pushService,
     ...(options.socketEventBudgets ? { socketEventBudgets: options.socketEventBudgets } : {}),
   });
 
@@ -140,7 +155,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     });
   }
 
-  return { ...services, io, callService, callRepository, callBudget, sessionRevocations, typingService, recordingService, presenceService, connect, connectAs, createAccount, resume, establishRoomKey, close };
+  return { ...services, io, callService, callRepository, pushService, pushRepository, callBudget, sessionRevocations, typingService, recordingService, presenceService, connect, connectAs, createAccount, resume, establishRoomKey, close };
 }
 
 export function waitForEvent<T = unknown>(
