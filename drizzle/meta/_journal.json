@@ -127,6 +127,13 @@
       "when": 1795048478496,
       "tag": "0017_user_auth_version",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1795057856031,
+      "tag": "0018_e2e_signing_key",
+      "breakpoints": true
     }
   ]
 }

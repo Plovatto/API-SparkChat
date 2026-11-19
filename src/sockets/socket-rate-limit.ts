@@ -46,6 +46,7 @@ export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
     'e2e:get-room-keys': keyExchange,
     'e2e:get-public-keys': keyExchange,
     'e2e:publish-keys': accountAction,
+    'e2e:publish-signing-key': accountAction,
     'e2e:get-my-keys': roomAction,
     'user:join': { capacity: 40, refillPerSecond: 1 },
     'user:update-profile': { capacity: 30, refillPerSecond: 3 },

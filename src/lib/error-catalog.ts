@@ -55,6 +55,8 @@ export const ERROR_CATALOG = {
   'message.blocked': () => 'Você não pode enviar mensagens nesta conversa devido a bloqueios.',
   'e2e.lookupTooLarge': ({ maxItems }: { maxItems: number }) => `Consulta de chaves com itens demais. Envie no máximo ${maxItems} por vez.`,
   'e2e.keysLocked': () => 'As chaves de criptografia desta conta já estão configuradas e não podem ser substituídas.',
+  'e2e.invalidSigningKey': () => 'A chave de assinatura é inválida ou não corresponde à sua chave pública.',
+  'e2e.signingKeyLocked': () => 'A chave de assinatura desta conta já está configurada.',
   'upload.missingFile': ({ kind }: { kind: UploadKind }) => UPLOAD_MISSING_FILE_MESSAGES[kind],
   'upload.tooLarge': ({ kind, maxSize }: { kind: UploadKind; maxSize: string }) =>
     `O ${UPLOAD_KIND_LABELS[kind]} excede o tamanho máximo permitido de ${maxSize}.`,

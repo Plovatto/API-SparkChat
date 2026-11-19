@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { roomKeys, users } from '../../database/schema.js';
 import type { UserRecord } from './user.types.js';
@@ -35,6 +35,8 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
     createdAt: row.createdAt,
     lastSeen: row.lastSeen,
     e2ePublicKey: row.e2ePublicKey,
+    e2eSigningPublicKey: row.e2eSigningPublicKey ?? null,
+    e2eKeySignature: row.e2eKeySignature ?? null,
     e2eEncryptedPrivateKeyByPassword: row.e2eEncryptedPrivateKeyByPassword,
     e2eEncryptedPrivateKeyByRecovery: row.e2eEncryptedPrivateKeyByRecovery,
     authSalt: row.authSalt ?? null,
@@ -94,6 +96,8 @@ export class UserRepository {
       themeColorTheme: user.theme?.colorTheme,
       chatSettings: user.chatSettings ?? null,
       e2ePublicKey: user.e2ePublicKey,
+      e2eSigningPublicKey: user.e2eSigningPublicKey ?? null,
+      e2eKeySignature: user.e2eKeySignature ?? null,
       e2eEncryptedPrivateKeyByPassword: user.e2eEncryptedPrivateKeyByPassword,
       e2eEncryptedPrivateKeyByRecovery: user.e2eEncryptedPrivateKeyByRecovery,
       authSalt: user.authSalt ?? null,
@@ -146,6 +150,21 @@ export class UserRepository {
     }
     cacheProfile(current);
     return current;
+  }
+
+  async setSigningKeyIfUnset(id: string, publicKey: string, signingPublicKey: string, keySignature: string): Promise<boolean> {
+    const result = await this.db
+      .update(users)
+      .set({ e2eSigningPublicKey: signingPublicKey, e2eKeySignature: keySignature })
+      .where(and(eq(users.id, id), eq(users.e2ePublicKey, publicKey), isNull(users.e2eSigningPublicKey)));
+    if (result.rowsAffected === 0) {
+      return false;
+    }
+    const current = await this.findById(id);
+    if (current) {
+      cacheProfile(current);
+    }
+    return true;
   }
 
   async findByNickname(nicknameNormalized: string): Promise<UserRecord | null> {

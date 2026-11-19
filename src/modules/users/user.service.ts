@@ -17,11 +17,13 @@ import {
 } from './user.model.js';
 import { authVersionOf, deriveFakeSaltKey, fakeAuthSalt, isAuthSalt, isClientSecret } from './user.credentials.js';
 import { hashPassword, passwordHashNeedsRehash, verifyPassword } from './user.password.js';
+import { verifyIdentityBinding } from './user.signing-key.js';
 import { decodeRecoveryFile, encodeRecoveryFile } from './user.recovery-file.js';
 import type { UserRepository } from './user.repository.js';
 import type { UserSessionRepository } from './user.session.repository.js';
 import { constantTimeEqual, generateToken, hashToken } from './user.token.js';
 import type { SessionRecord, UserRecord } from './user.types.js';
+import type { E2ePublicKeyEntry } from './user.events.js';
 
 export interface RegisterAccountInput {
   nickname: string;
@@ -96,6 +98,8 @@ export interface SessionAuthentication {
 }
 
 export interface PublishE2eKeysInput {
+  signingPublicKey?: string | undefined;
+  keySignature?: string | undefined;
   publicKey?: string | undefined;
   encryptedPrivateKeyByPassword?: string | undefined;
   encryptedPrivateKeyByRecovery?: string | undefined;
@@ -578,7 +582,8 @@ export class UserService {
       patch.e2eEncryptedPrivateKeyByRecovery = input.encryptedPrivateKeyByRecovery;
     }
 
-    if (Object.keys(patch).length === 0) {
+    const hasSigning = input.signingPublicKey !== undefined && input.keySignature !== undefined;
+    if (Object.keys(patch).length === 0 && !hasSigning) {
       return;
     }
 
@@ -593,6 +598,27 @@ export class UserService {
       }
     }
 
+    const publicKeyChanges = patch.e2ePublicKey !== undefined && patch.e2ePublicKey !== current?.e2ePublicKey;
+    if (publicKeyChanges) {
+      patch.e2eSigningPublicKey = null;
+      patch.e2eKeySignature = null;
+    }
+    if (hasSigning && input.signingPublicKey !== undefined && input.keySignature !== undefined) {
+      const effectivePublicKey = patch.e2ePublicKey ?? current?.e2ePublicKey;
+      const valid =
+        effectivePublicKey !== undefined &&
+        effectivePublicKey !== null &&
+        verifyIdentityBinding({ userId, publicKey: effectivePublicKey, signingPublicKey: input.signingPublicKey, keySignature: input.keySignature });
+      if (!valid) {
+        throw AppError.of('e2e.invalidSigningKey');
+      }
+      if (!publicKeyChanges && current?.e2eSigningPublicKey && current.e2eSigningPublicKey !== input.signingPublicKey) {
+        throw AppError.of('e2e.signingKeyLocked');
+      }
+      patch.e2eSigningPublicKey = input.signingPublicKey;
+      patch.e2eKeySignature = input.keySignature;
+    }
+
     const previousPublicKey = patch.e2ePublicKey === undefined ? undefined : current?.e2ePublicKey;
     if (previousPublicKey && previousPublicKey !== patch.e2ePublicKey) {
       await this.repository.deleteRoomKeys(userId);
@@ -601,14 +627,53 @@ export class UserService {
     await this.repository.update(userId, patch);
   }
 
-  async getPublicKeys(userIds: string[]): Promise<{ userId: string; publicKey: string }[]> {
+  async publishSigningKey(userId: string, input: { signingPublicKey: string; keySignature: string }): Promise<void> {
+    const current = await this.repository.findById(userId);
+    if (!current?.e2ePublicKey) {
+      throw AppError.of('e2e.invalidSigningKey');
+    }
+
+    const valid = verifyIdentityBinding({
+      userId,
+      publicKey: current.e2ePublicKey,
+      signingPublicKey: input.signingPublicKey,
+      keySignature: input.keySignature,
+    });
+    if (!valid) {
+      throw AppError.of('e2e.invalidSigningKey');
+    }
+
+    if (current.e2eSigningPublicKey) {
+      if (current.e2eSigningPublicKey === input.signingPublicKey) {
+        return;
+      }
+      throw AppError.of('e2e.signingKeyLocked');
+    }
+
+    const stored = await this.repository.setSigningKeyIfUnset(userId, current.e2ePublicKey, input.signingPublicKey, input.keySignature);
+    if (!stored) {
+      const latest = await this.repository.findById(userId);
+      if (latest?.e2eSigningPublicKey === input.signingPublicKey && latest.e2ePublicKey === current.e2ePublicKey) {
+        return;
+      }
+      throw AppError.of('e2e.signingKeyLocked');
+    }
+  }
+
+  async getPublicKeys(userIds: string[]): Promise<E2ePublicKeyEntry[]> {
     const unique = [...new Set(userIds)];
     const usersById = await this.getUsersByIds(unique);
 
     return unique
       .map((id) => usersById.get(id))
       .filter((user): user is UserRecord & { e2ePublicKey: string } => Boolean(user?.e2ePublicKey))
-      .map((user) => ({ userId: user.id, publicKey: user.e2ePublicKey }));
+      .map((user) => ({
+        userId: user.id,
+        publicKey: user.e2ePublicKey,
+        ...(user.e2eSigningPublicKey && user.e2eKeySignature
+          ? { signingPublicKey: user.e2eSigningPublicKey, keySignature: user.e2eKeySignature }
+          : {}),
+      }));
   }
 
   toPublicUser(user: UserRecord): PublicUser {
