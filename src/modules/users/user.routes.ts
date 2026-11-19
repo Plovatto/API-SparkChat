@@ -4,12 +4,15 @@ import { registry } from '../../docs/registry.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { createRequireAuth } from '../../middleware/auth.js';
 import {
+  authParamsBodySchema,
+  authParamsResponseSchema,
   createUserController,
   keyfileLoginResponseSchema,
   loginBodySchema,
   loginResponseSchema,
   nicknameAvailabilityQuerySchema,
   nicknameAvailabilityResponseSchema,
+  recoveryLoginBodySchema,
 } from './user.controller.js';
 import { keyfileUpload } from './user.keyfile-upload.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
@@ -74,6 +77,63 @@ registry.registerPath({
 
 registry.registerPath({
   method: 'post',
+  path: '/api/users/login-with-recovery',
+  tags: ['Users'],
+  summary: 'Autentica um usuário com a chave derivada do arquivo de recuperação v2, montado e lido só no navegador',
+  request: {
+    body: {
+      content: { 'application/json': { schema: recoveryLoginBodySchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Login realizado com sucesso',
+      content: { 'application/json': { schema: loginResponseSchema } },
+    },
+    400: {
+      description: 'userId ou recoveryKey não enviados',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+    401: {
+      description: 'Chave de recuperação inválida',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+    429: {
+      description: 'Muitas tentativas de login',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/users/auth-params',
+  tags: ['Users'],
+  summary: 'Informa a versão das credenciais e o salt de derivação da senha de um nickname',
+  description: 'Nicknames inexistentes recebem um salt falso determinístico para não revelar se a conta existe.',
+  request: {
+    body: {
+      content: { 'application/json': { schema: authParamsBodySchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Parâmetros de autenticação',
+      content: { 'application/json': { schema: authParamsResponseSchema } },
+    },
+    400: {
+      description: 'Nickname não enviado',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+    429: {
+      description: 'Muitas consultas a partir do mesmo IP',
+      content: { 'application/json': { schema: errorResponseSchema } },
+    },
+  },
+});
+
+registry.registerPath({
+  method: 'post',
   path: '/api/users/logout',
   tags: ['Users'],
   summary: 'Encerra a sessão atual e desconecta os sockets ligados a ela',
@@ -120,6 +180,8 @@ export function createUserRouter(
 
   router.post('/login', asyncHandler(controller.login));
   router.post('/login-with-keyfile', keyfileUpload.single('keyfile'), asyncHandler(controller.loginWithKeyfile));
+  router.post('/login-with-recovery', asyncHandler(controller.loginWithRecovery));
+  router.post('/auth-params', asyncHandler(controller.getAuthParams));
   router.post('/logout', requireAuth, asyncHandler(controller.logout));
   router.get('/nickname-availability', asyncHandler(controller.checkNicknameAvailability));
 
