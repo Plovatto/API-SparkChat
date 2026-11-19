@@ -9,7 +9,7 @@ export { createUserRouter } from './user.routes.js';
 export { UserSessionRepository } from './user.session.repository.js';
 export { SessionRevocationNotifier } from './user.session-revocations.js';
 export type { RevokedSession } from './user.session-revocations.js';
-export { UserService } from './user.service.js';
+export { isSessionLive, UserService } from './user.service.js';
 export type { RoomRotationNotice } from './user.service.js';
 export { disconnectRevokedSession, registerUserSocketHandlers } from './user.socket.js';
 export { constantTimeEqual, generateToken, hashToken } from './user.token.js';

@@ -6,7 +6,7 @@ import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService } from '../mes
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import { ASSISTANT_USER_ID } from '../users/index.js';
 import { monthKey, type CallBudget } from './call-budget.js';
-import type { CallStatePayload } from './call.events.js';
+import type { CallServerToClientEvents, CallStatePayload } from './call.events.js';
 import type { CallRateLimiter } from './call.rate-limiter.js';
 import type { CallRepository } from './call.repository.js';
 import { transition, type CallEvent } from './call.state.js';
@@ -18,6 +18,7 @@ import {
   RING_TIMEOUT_MS,
   TURN_TTL_SECONDS,
   type CallDegrade,
+  type CallEndReason,
   type CallKind,
   type CallRecord,
   type CallRole,
@@ -36,9 +37,15 @@ export interface CallActor {
   socketId: string;
 }
 
+export interface CallPushNotifier {
+  incomingCall(input: { userId: string; callId: string; roomId: string; kind: CallKind; ringExpiresAtMs: number }): void;
+  callEnded(input: { userId: string; callId: string; reason: CallEndReason | 'answered' }): void;
+}
+
 export interface CallServiceOptions {
   enabled?: boolean;
   now?: () => number;
+  push?: CallPushNotifier;
 }
 
 export interface IceServersResult {
@@ -79,10 +86,12 @@ function peerOf(call: CallRecord, role: CallRole): string {
 
 export class CallService {
   private readonly bindings = new Map<string, SocketBindings>();
+  private readonly ringingInvites = new Map<string, IncomingCallPayload>();
   private readonly pending = new Map<string, QueuedSignal[]>();
   private readonly now: () => number;
   private readonly enabled: boolean;
   private readonly graceUntil: number;
+  private readonly push: CallPushNotifier | null;
 
   constructor(
     private readonly io: AppServer,
@@ -97,6 +106,7 @@ export class CallService {
     this.now = options.now ?? Date.now;
     this.enabled = options.enabled ?? true;
     this.graceUntil = this.now() + RESTART_GRACE_MS;
+    this.push = options.push ?? null;
   }
 
   async getConfig(): Promise<CallConfig> {
@@ -178,13 +188,22 @@ export class CallService {
     } catch (err) {
       logger.error({ err, callId: input.callId }, 'Failed to reveal the room for an incoming call');
     }
-    this.io.to(userRoom(calleeId)).emit('call:incoming', {
+    const incoming: IncomingCallPayload = {
       callId: input.callId,
       roomId: input.roomId,
       kind: input.kind,
       callerId: actor.userId,
       envelope: input.envelope,
       ringExpiresAt: new Date(createdAtMs + RING_TIMEOUT_MS).toISOString(),
+    };
+    this.ringingInvites.set(input.callId, incoming);
+    this.io.to(userRoom(calleeId)).emit('call:incoming', incoming);
+    this.push?.incomingCall({
+      userId: calleeId,
+      callId: input.callId,
+      roomId: input.roomId,
+      kind: input.kind,
+      ringExpiresAtMs: createdAtMs + RING_TIMEOUT_MS,
     });
   }
 
@@ -214,6 +233,7 @@ export class CallService {
       throw AppError.of('call.invalidState');
     }
 
+    this.ringingInvites.delete(call.id);
     const bindings = this.bindings.get(call.id) ?? {};
     bindings.callee = actor.socketId;
     this.bindings.set(call.id, bindings);
@@ -221,6 +241,7 @@ export class CallService {
     this.io.to(userRoom(call.callerId)).emit('call:accepted', { callId: call.id, envelope: input.envelope, deviceId: actor.socketId });
     this.io.to(actor.socketId).emit('call:accepted', { callId: call.id, envelope: input.envelope, deviceId: actor.socketId });
     this.io.in(userRoom(call.calleeId)).except(actor.socketId).emit('call:answered-elsewhere', { callId: call.id });
+    this.push?.callEnded({ userId: call.calleeId, callId: call.id, reason: 'answered' });
   }
 
   async decline(actor: CallActor, callId: string): Promise<void> {
@@ -330,6 +351,10 @@ export class CallService {
       role,
     };
     this.io.to(actor.socketId).emit('call:state', payload);
+    const invite = this.ringingInvites.get(call.id);
+    if (call.state === 'ringing' && role === 'callee' && invite && Date.parse(invite.ringExpiresAt) > this.now()) {
+      this.io.to(actor.socketId).emit('call:incoming', invite);
+    }
   }
 
   async iceServers(actor: CallActor, input: { callId: string; protectIp: boolean }): Promise<IceServersResult> {
@@ -462,11 +487,15 @@ export class CallService {
 
   private async afterEnd(call: CallRecord): Promise<void> {
     this.bindings.delete(call.id);
+    this.ringingInvites.delete(call.id);
     this.pending.delete(call.id);
     this.limiter.forgetCall(call.id);
 
     const payload = { callId: call.id, reason: call.endReason ?? 'failed', endedAt: call.endedAt ?? new Date(this.now()).toISOString() };
     this.io.to(userRoom(call.callerId)).to(userRoom(call.calleeId)).emit('call:ended', payload);
+    if (!call.answeredAt) {
+      this.push?.callEnded({ userId: call.calleeId, callId: call.id, reason: payload.reason });
+    }
 
     this.budget.invalidate();
     await this.postSystemMessage(call);
@@ -620,6 +649,8 @@ export class CallService {
     }
   }
 }
+
+type IncomingCallPayload = Parameters<CallServerToClientEvents['call:incoming']>[0];
 
 function assertEnvelopeSize(envelope: string): void {
   if (envelope.length > MAX_ENVELOPE_LENGTH) {

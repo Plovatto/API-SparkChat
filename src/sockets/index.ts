@@ -11,6 +11,7 @@ import {
   type RoomPresenceService,
   type TypingService,
 } from '../modules/messages/index.js';
+import { registerPushSocketHandlers, type PushService } from '../modules/push/index.js';
 import {
   registerRoomSocketHandlers,
   type RoomActionRateLimiter,
@@ -18,6 +19,7 @@ import {
   type RoomService,
 } from '../modules/rooms/index.js';
 import {
+  ASSISTANT_USER_ID,
   disconnectRevokedSession,
   registerUserSocketHandlers,
   type LoginRateLimiter,
@@ -47,6 +49,7 @@ export interface SocketDeps {
   aiService: AiService;
   roomRateLimiter: RoomActionRateLimiter;
   callService: CallService;
+  pushService: PushService;
   socketEventBudgets?: SocketEventBudgets;
 }
 
@@ -98,6 +101,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
           .getConfig()
           .then((config) => authenticated.emit('call:config', config))
           .catch(logHookFailure('onAuthenticated'));
+        authenticated.emit('push:config', deps.pushService.getConfig());
       },
     });
 
@@ -130,10 +134,18 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
         if (message.type !== 'system' && aiService.isAssistantRoom(room)) {
           aiService.handleIncomingMessage(server, room, message, locale);
         }
+        if (message.type !== 'system') {
+          deps.pushService.newMessage({
+            roomId: room.id,
+            senderId: message.senderId,
+            recipientIds: room.participants.filter((id) => id !== ASSISTANT_USER_ID),
+          });
+        }
       },
     });
 
     registerCallSocketHandlers(socket, { callService: deps.callService });
+    registerPushSocketHandlers(socket, { pushService: deps.pushService });
 
     socket.on('disconnect', (reason) => {
       logger.info({ socketId: socket.id, reason }, 'Client disconnected');

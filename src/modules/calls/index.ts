@@ -3,6 +3,7 @@ export type { CallClientToServerEvents, CallServerToClientEvents } from './call.
 export { CallRateLimiter } from './call.rate-limiter.js';
 export { CallRepository } from './call.repository.js';
 export { CallService } from './call.service.js';
+export type { CallPushNotifier } from './call.service.js';
 export { registerCallSocketHandlers } from './call.socket.js';
 export { createCloudflareTurnProvider } from './turn-credentials.js';
 export type { TurnProvider } from './turn-credentials.js';

@@ -109,11 +109,16 @@ R2_BUCKET_NAME=
 R2_PUBLIC_BASE_URL=
 CLOUDFLARE_TURN_KEY_ID=
 CLOUDFLARE_TURN_API_TOKEN=
+WEB_PUSH_VAPID_PUBLIC_KEY=
+WEB_PUSH_VAPID_PRIVATE_KEY=
+WEB_PUSH_SUBJECT=
 ```
 
 `R2_*` configura o armazenamento de arquivos enviados (imagem, áudio, arquivo) no Cloudflare R2, usado no lugar de disco local para funcionar em hospedagens sem disco persistente.
 
 `CLOUDFLARE_TURN_KEY_ID` e `CLOUDFLARE_TURN_API_TOKEN` (opcionais, sempre juntas) habilitam credenciais TURN do Cloudflare Realtime para as chamadas de voz e vídeo; sem elas, as chamadas usam só STUN e a retransmissão fica indisponível.
+
+`WEB_PUSH_VAPID_PUBLIC_KEY`, `WEB_PUSH_VAPID_PRIVATE_KEY` e `WEB_PUSH_SUBJECT` (opcionais, sempre as três juntas) habilitam as notificações Web Push com o app fechado (chamada recebida, fim da chamada e aviso de nova mensagem). **Sem elas o recurso fica desligado**: `push:config` responde `{ enabled: false, publicKey: null }`, `push:subscribe` é recusado e nada é enviado. As chaves são um par VAPID P-256 em base64url (gere com `npx web-push generate-vapid-keys`) e `WEB_PUSH_SUBJECT` é um endereço `mailto:` ou uma URL `https:` de contato. As notificações levam só identificadores opacos (`callId`, `roomId`), nunca nomes, conteúdo ou chaves, e só são enviadas para os serviços de push conhecidos (FCM, Mozilla, Windows e Apple).
 
 `PASSWORD_SCRYPT_COST` é o custo do scrypt usado nos hashes de senha (potência de 2, padrão `65536`, máximo `131072`). Cada login usa cerca de 128 × o valor em bytes de memória (64 MB no padrão); aumente só se a hospedagem tiver memória sobrando para logins simultâneos.
 
