@@ -62,6 +62,8 @@ function toDeletedReplySnapshot(snapshot: MessageReplySnapshot): MessageReplySna
 }
 
 export class MessageService {
+  private readonly pendingMessageIds = new Set<string>();
+
   constructor(
     private readonly repository: MessageRepository,
     private readonly userService: UserService,
@@ -93,10 +95,21 @@ export class MessageService {
   }
 
   async sendMessage(input: SendMessageInput): Promise<MessageRecord> {
-    const messageId = input.messageId ?? randomUUID();
-    if (input.messageId && (await this.repository.findById(input.messageId))) {
+    if (!input.messageId) {
+      return this.storeMessage(randomUUID(), input);
+    }
+    if (this.pendingMessageIds.has(input.messageId) || (await this.repository.findById(input.messageId))) {
       throw AppError.of('message.invalidMedia');
     }
+    this.pendingMessageIds.add(input.messageId);
+    try {
+      return await this.storeMessage(input.messageId, input);
+    } finally {
+      this.pendingMessageIds.delete(input.messageId);
+    }
+  }
+
+  private async storeMessage(messageId: string, input: SendMessageInput): Promise<MessageRecord> {
     const attachmentKeys = this.attachmentKeysOf(input);
     if (!(await this.uploads.claim(attachmentKeys, input.senderId, messageId))) {
       throw AppError.of('message.invalidMedia');
