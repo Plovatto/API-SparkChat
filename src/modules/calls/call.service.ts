@@ -6,7 +6,7 @@ import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService } from '../mes
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import { ASSISTANT_USER_ID } from '../users/index.js';
 import { monthKey, type CallBudget } from './call-budget.js';
-import type { CallStatePayload } from './call.events.js';
+import type { CallServerToClientEvents, CallStatePayload } from './call.events.js';
 import type { CallRateLimiter } from './call.rate-limiter.js';
 import type { CallRepository } from './call.repository.js';
 import { transition, type CallEvent } from './call.state.js';
@@ -86,6 +86,7 @@ function peerOf(call: CallRecord, role: CallRole): string {
 
 export class CallService {
   private readonly bindings = new Map<string, SocketBindings>();
+  private readonly ringingInvites = new Map<string, IncomingCallPayload>();
   private readonly pending = new Map<string, QueuedSignal[]>();
   private readonly now: () => number;
   private readonly enabled: boolean;
@@ -187,14 +188,16 @@ export class CallService {
     } catch (err) {
       logger.error({ err, callId: input.callId }, 'Failed to reveal the room for an incoming call');
     }
-    this.io.to(userRoom(calleeId)).emit('call:incoming', {
+    const incoming: IncomingCallPayload = {
       callId: input.callId,
       roomId: input.roomId,
       kind: input.kind,
       callerId: actor.userId,
       envelope: input.envelope,
       ringExpiresAt: new Date(createdAtMs + RING_TIMEOUT_MS).toISOString(),
-    });
+    };
+    this.ringingInvites.set(input.callId, incoming);
+    this.io.to(userRoom(calleeId)).emit('call:incoming', incoming);
     this.push?.incomingCall({
       userId: calleeId,
       callId: input.callId,
@@ -230,6 +233,7 @@ export class CallService {
       throw AppError.of('call.invalidState');
     }
 
+    this.ringingInvites.delete(call.id);
     const bindings = this.bindings.get(call.id) ?? {};
     bindings.callee = actor.socketId;
     this.bindings.set(call.id, bindings);
@@ -347,6 +351,10 @@ export class CallService {
       role,
     };
     this.io.to(actor.socketId).emit('call:state', payload);
+    const invite = this.ringingInvites.get(call.id);
+    if (call.state === 'ringing' && role === 'callee' && invite && Date.parse(invite.ringExpiresAt) > this.now()) {
+      this.io.to(actor.socketId).emit('call:incoming', invite);
+    }
   }
 
   async iceServers(actor: CallActor, input: { callId: string; protectIp: boolean }): Promise<IceServersResult> {
@@ -479,6 +487,7 @@ export class CallService {
 
   private async afterEnd(call: CallRecord): Promise<void> {
     this.bindings.delete(call.id);
+    this.ringingInvites.delete(call.id);
     this.pending.delete(call.id);
     this.limiter.forgetCall(call.id);
 
@@ -640,6 +649,8 @@ export class CallService {
     }
   }
 }
+
+type IncomingCallPayload = Parameters<CallServerToClientEvents['call:incoming']>[0];
 
 function assertEnvelopeSize(envelope: string): void {
   if (envelope.length > MAX_ENVELOPE_LENGTH) {
