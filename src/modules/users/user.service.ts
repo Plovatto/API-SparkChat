@@ -221,7 +221,7 @@ export class UserService {
   async getAuthParams(nickname: string): Promise<AuthParams> {
     const nicknameNormalized = normalizeNickname(nickname);
     const user = await this.repository.findByNickname(nicknameNormalized);
-    if (!user || user.id === ASSISTANT_USER_ID) {
+    if (!user || user.id === ASSISTANT_USER_ID || user.authVersion !== 2) {
       return { version: 2, salt: fakeAuthSalt(this.fakeSaltKey, nicknameNormalized) };
     }
     return { version: 2, salt: user.authSalt ?? fakeAuthSalt(this.fakeSaltKey, nicknameNormalized) };
@@ -233,7 +233,7 @@ export class UserService {
     }
 
     const user = await this.repository.findById(userId);
-    if (!user || user.id === ASSISTANT_USER_ID) {
+    if (!user || user.id === ASSISTANT_USER_ID || user.authVersion !== 2) {
       return null;
     }
 
@@ -251,7 +251,7 @@ export class UserService {
     }
 
     const user = await this.repository.findByNickname(normalizeNickname(nickname));
-    if (!user || user.id === ASSISTANT_USER_ID) {
+    if (!user || user.id === ASSISTANT_USER_ID || user.authVersion !== 2) {
       await verifyPassword(password, await this.getDummyPasswordHash());
       return null;
     }

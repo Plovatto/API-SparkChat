@@ -356,6 +356,31 @@ describe('message:send accepts only v2 encrypted fields bound to the current roo
     await expect(delivered).resolves.toMatchObject({ content: url });
   });
 
+  it('requires a preview key for a link preview image even without fileMeta', async () => {
+    const h = await start();
+    const { room, aliceClient } = await setupPair(h);
+    const linkPreview = { url: fakeField('u'), title: fakeField('t'), description: null, imageUrl: fakeField('i'), siteName: null };
+
+    await expectRejected(aliceClient, { roomId: room.id, content: fakeField('veja'), linkPreview }, 'message.attachmentKeyRequired');
+
+    const delivered = waitForEvent<MessageEvent>(aliceClient, 'message:new');
+    aliceClient.emit('message:send', { roomId: room.id, content: fakeField('sem imagem'), linkPreview: { ...linkPreview, imageUrl: null }, messageId: randomUUID() });
+    await expect(delivered).resolves.toMatchObject({ content: fakeField('sem imagem') });
+  });
+
+  it('rejects attachment-only fileMeta fields on a text message', async () => {
+    const h = await start();
+    const { alice, room, aliceClient } = await setupPair(h);
+    const thumbnailUrl = await h.storeUpload(alice.user.id, 'uploads/images/t-thumb.bin');
+    const fileMeta = { name: fakeField('link-preview'), mimeType: fakeField('image/webp'), size: 1, previewKey: fakeField('p'.repeat(43)) };
+    const content = fakeField('veja');
+
+    await expectRejected(aliceClient, { roomId: room.id, content, fileMeta: { ...fileMeta, key: fakeField('k'.repeat(43)) } }, 'validation.invalidPayload');
+    await expectRejected(aliceClient, { roomId: room.id, content, fileMeta: { ...fileMeta, thumbnailKey: fakeField('t'.repeat(43)) } }, 'validation.invalidPayload');
+    await expectRejected(aliceClient, { roomId: room.id, content, fileMeta: { ...fileMeta, thumbnailUrl } }, 'validation.invalidPayload');
+    expect((await h.messageService.getRoomMessagesPage(room.id, { limit: 10 })).messages).toHaveLength(0);
+  });
+
   it('requires a client message id because the fields are bound to it', async () => {
     const h = await start();
     const { room, aliceClient } = await setupPair(h);

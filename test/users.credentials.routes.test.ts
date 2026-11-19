@@ -26,15 +26,19 @@ async function registerV2(userService: TestApp['userService'], nickname: string)
 }
 
 describe('POST /api/users/auth-params', () => {
-  it('never answers version 1, even for an account whose row still says version 1', async () => {
+  it('answers the fake v2 salt for a row that is not version 2 and refuses its login', async () => {
     const { app, userService, userRepository } = await buildTestApp();
-    const { user, authSalt: salt } = await registerV2(userService, 'Stale');
+    const { user, authSalt: salt, authKey } = await registerV2(userService, 'Stale');
     await userRepository.update(user.id, { authVersion: 1 });
 
     const response = await request(app).post('/api/users/auth-params').send({ nickname: 'Stale' });
+    const login = await request(app).post('/api/users/login').send({ nickname: 'Stale', password: authKey });
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ version: 2, salt });
+    expect(response.body).toMatchObject({ version: 2 });
+    expect(response.body).not.toEqual({ version: 2, salt });
+    expect(login.status).toBe(401);
+    expect(login.body).toMatchObject({ code: 'auth.invalidCredentials' });
   });
 
   it('returns the stored salt for v2 accounts', async () => {

@@ -75,13 +75,17 @@ describe('UserService v2 registration', () => {
 });
 
 describe('UserService.getAuthParams', () => {
-  it('returns the stored salt and never version 1, even when the row still says version 1', async () => {
+  it('returns the stored salt for v2 rows and the fake v2 salt for any other row', async () => {
     const { userService, userRepository } = await buildRoomService();
     const { user: bob, authSalt: bobSalt } = await registerV2(userService, 'Bob');
     const { authSalt: salt } = await registerV2(userService, 'Alice');
+    const fakeForBob = await userService.getAuthParams('NobodyBob');
     await userRepository.update(bob.id, { authVersion: 1 });
 
-    expect(await userService.getAuthParams('Bob')).toEqual({ version: 2, salt: bobSalt });
+    const bobParams = await userService.getAuthParams('Bob');
+    expect(bobParams).toMatchObject({ version: 2, salt: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/) as unknown });
+    expect(bobParams).not.toEqual({ version: 2, salt: bobSalt });
+    expect(fakeForBob).not.toEqual(bobParams);
     expect(await userService.getAuthParams(' ALICE ')).toEqual({ version: 2, salt });
   });
 
@@ -126,6 +130,21 @@ describe('UserService.loginWithRecovery', () => {
     expect(await userService.loginWithRecovery('missing-user', recoveryVerifier)).toBeNull();
   });
 
+});
+
+describe('UserService rows that are not version 2', () => {
+  it('cannot log in with the auth key or the recovery key', async () => {
+    const { userService, userRepository } = await buildRoomService();
+    const { user, authKey, recoveryVerifier } = await registerV2(userService);
+    await userRepository.update(user.id, { authVersion: 1 });
+
+    expect(await userService.login('Alice', authKey)).toBeNull();
+    expect(await userService.loginWithRecovery(user.id, recoveryVerifier)).toBeNull();
+
+    await userRepository.update(user.id, { authVersion: 2 });
+    expect(await userService.login('Alice', authKey)).not.toBeNull();
+    expect(await userService.loginWithRecovery(user.id, recoveryVerifier)).not.toBeNull();
+  });
 });
 
 describe('UserService.login with legacy passwords', () => {
