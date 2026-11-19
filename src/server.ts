@@ -19,7 +19,7 @@ import {
 } from './modules/messages/index.js';
 import { createWebPushSender, PushRateLimiter, PushRepository, PushService } from './modules/push/index.js';
 import { notifyRoomRotations, RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
-import { LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
+import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import { listUserSockets } from './sockets/user-sockets.js';
 import { SOCKET_MAX_HTTP_BUFFER_SIZE } from './sockets/socket-options.js';
@@ -135,6 +135,7 @@ const pushService = new PushService({
   repository: new PushRepository(db),
   limiter: new PushRateLimiter(),
   isUserConnected: (userId) => listUserSockets(io, userId).length > 0,
+  isSessionLive: (session, now) => isSessionLive(session, now),
 });
 pushService.startMaintenance();
 logger.info(`Web Push: ${pushService.enabled ? 'enabled' : 'disabled (WEB_PUSH_* not set)'}`);

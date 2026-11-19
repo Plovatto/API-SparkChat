@@ -5,6 +5,8 @@ import { isAllowedPushEndpoint, normalizeAuthSecret, normalizeP256dh } from './p
 import type { PushRateLimiter } from './push.rate-limiter.js';
 import type { PushRepository } from './push.repository.js';
 import {
+  MAX_CONCURRENT_SENDS,
+  MAX_QUEUED_SENDS,
   MAX_USER_AGENT_LENGTH,
   PushDeliveryError,
   type PushCallEndReason,
@@ -12,6 +14,7 @@ import {
   type PushPayload,
   type PushSender,
   type PushSendOptions,
+  type PushSessionTimes,
   type PushSubscriptionInput,
   type PushSubscriptionRecord,
 } from './push.types.js';
@@ -28,6 +31,7 @@ export interface PushServiceOptions {
   repository: PushRepository;
   limiter: PushRateLimiter;
   isUserConnected: (userId: string) => boolean;
+  isSessionLive?: (session: PushSessionTimes, now: number) => boolean;
   now?: () => number;
 }
 
@@ -69,7 +73,11 @@ export class PushService {
   private readonly repository: PushRepository;
   private readonly limiter: PushRateLimiter;
   private readonly isUserConnected: (userId: string) => boolean;
+  private readonly isSessionLive: (session: PushSessionTimes, now: number) => boolean;
   private readonly now: () => number;
+  private readonly ringingCalls = new Map<string, number>();
+  private readonly waiting: (() => void)[] = [];
+  private activeSends = 0;
   private readonly chains = new Map<string, Promise<void>>();
   private readonly inflight = new Set<Promise<void>>();
 
@@ -79,6 +87,7 @@ export class PushService {
     this.repository = options.repository;
     this.limiter = options.limiter;
     this.isUserConnected = options.isUserConnected;
+    this.isSessionLive = options.isSessionLive ?? (() => true);
     this.now = options.now ?? Date.now;
   }
 
@@ -90,7 +99,7 @@ export class PushService {
     return this.enabled ? { enabled: true, publicKey: this.publicKey } : { enabled: false, publicKey: null };
   }
 
-  async subscribe(userId: string, subscription: PushSubscriptionInput, userAgent?: string): Promise<{ endpoint: string }> {
+  async subscribe(userId: string, sessionId: string, subscription: PushSubscriptionInput, userAgent?: string): Promise<{ endpoint: string }> {
     if (!this.enabled) {
       throw AppError.of('push.disabled');
     }
@@ -105,6 +114,7 @@ export class PushService {
     await this.repository.save({
       id: randomUUID(),
       userId,
+      sessionId,
       endpoint: subscription.endpoint,
       p256dh,
       auth,
@@ -127,6 +137,7 @@ export class PushService {
     if (!this.enabled || ttl <= 0 || !this.limiter.tryCall(input.userId)) {
       return;
     }
+    this.ringingCalls.set(`${input.userId}:${input.callId}`, input.ringExpiresAtMs + CALL_END_TTL_SECONDS * 1000);
     const topic = pushTopic('call', input.callId);
     this.enqueue(topic, () =>
       this.deliver(input.userId, { t: 'call', callId: input.callId, roomId: input.roomId, kind: input.kind }, { TTL: ttl, urgency: 'high', topic }),
@@ -134,7 +145,7 @@ export class PushService {
   }
 
   callEnded(input: CallEndedPush): void {
-    if (!this.enabled) {
+    if (!this.enabled || !this.ringingCalls.delete(`${input.userId}:${input.callId}`)) {
       return;
     }
     const topic = pushTopic('call', input.callId);
@@ -159,7 +170,10 @@ export class PushService {
   }
 
   startMaintenance(): () => void {
-    const timer = setInterval(() => this.limiter.purge(), PURGE_INTERVAL_MS);
+    const timer = setInterval(() => {
+      this.limiter.purge();
+      this.purgeRingingCalls();
+    }, PURGE_INTERVAL_MS);
     timer.unref();
     return () => clearInterval(timer);
   }
@@ -168,6 +182,36 @@ export class PushService {
     while (this.inflight.size > 0) {
       await Promise.allSettled([...this.inflight]);
     }
+  }
+
+  private purgeRingingCalls(): void {
+    const current = this.now();
+    for (const [key, expiresAt] of this.ringingCalls) {
+      if (expiresAt <= current) {
+        this.ringingCalls.delete(key);
+      }
+    }
+  }
+
+  private async acquireSendSlot(): Promise<boolean> {
+    if (this.activeSends < MAX_CONCURRENT_SENDS) {
+      this.activeSends += 1;
+      return true;
+    }
+    if (this.waiting.length >= MAX_QUEUED_SENDS) {
+      return false;
+    }
+    await new Promise<void>((resolve) => this.waiting.push(resolve));
+    return true;
+  }
+
+  private releaseSendSlot(): void {
+    const next = this.waiting.shift();
+    if (next) {
+      next();
+      return;
+    }
+    this.activeSends -= 1;
   }
 
   private enqueue(key: string, work: () => Promise<void>): void {
@@ -190,9 +234,23 @@ export class PushService {
     if (!sender) {
       return;
     }
-    const subscriptions = await this.repository.listForUser(userId);
+    await this.repository.deleteOrphans(userId);
+    const current = this.now();
+    const subscriptions = (await this.repository.listActiveForUser(userId)).filter((subscription) => this.isSessionLive(subscription.session, current));
     const body = JSON.stringify(payload);
-    await Promise.all(subscriptions.map((subscription) => this.sendOne(sender, subscription, body, options)));
+    await Promise.all(subscriptions.map((subscription) => this.sendLimited(sender, subscription, body, options)));
+  }
+
+  private async sendLimited(sender: PushSender, subscription: PushSubscriptionRecord, body: string, options: PushSendOptions): Promise<void> {
+    if (!(await this.acquireSendSlot())) {
+      logger.warn({ host: hostOf(subscription.endpoint) }, 'Push send queue full, notification dropped');
+      return;
+    }
+    try {
+      await this.sendOne(sender, subscription, body, options);
+    } finally {
+      this.releaseSendSlot();
+    }
   }
 
   private async sendOne(sender: PushSender, subscription: PushSubscriptionRecord, body: string, options: PushSendOptions): Promise<void> {

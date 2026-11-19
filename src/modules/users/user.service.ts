@@ -84,7 +84,7 @@ const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SESSION_MAX_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 export const KEYFILE_PASSWORD_RESET_WINDOW_MS = 10 * 60 * 1000;
 
-export function isSessionLive(session: SessionRecord, now = Date.now()): boolean {
+export function isSessionLive(session: Pick<SessionRecord, 'createdAt' | 'lastUsedAt'>, now = Date.now()): boolean {
   const idleMs = now - new Date(session.lastUsedAt).getTime();
   const ageMs = now - new Date(session.createdAt).getTime();
   return idleMs <= SESSION_TTL_MS && ageMs <= SESSION_MAX_LIFETIME_MS;

@@ -1,6 +1,7 @@
 import '../../docs/zod-extend.js';
 import { z } from 'zod';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
+import { AppError } from '../../lib/app-error.js';
 import type { AppSocket } from '../../sockets/events.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
 import { runSocketHandler } from '../../sockets/socket-handler.js';
@@ -78,7 +79,11 @@ export function registerPushSocketHandlers(socket: AppSocket, deps: PushSocketDe
   socket.on('push:subscribe', (payload) => {
     handle('push:subscribe', async (userId) => {
       const { subscription } = subscribePayloadSchema.parse(payload);
-      socket.emit('push:subscribed', await pushService.subscribe(userId, subscription, userAgentOf(socket)));
+      const sessionId = socket.data.sessionId;
+      if (!sessionId) {
+        throw AppError.of('auth.unauthenticated');
+      }
+      socket.emit('push:subscribed', await pushService.subscribe(userId, sessionId, subscription, userAgentOf(socket)));
     });
   });
 

@@ -37,7 +37,7 @@ async function rows(client: ReturnType<typeof createClient>, sql: string): Promi
 }
 
 describe(`migration ${TAG}`, () => {
-  it('adds push_subscriptions without touching existing data and cascades with the user', async () => {
+  it('adds push_subscriptions without touching existing data and cascades with the session and the user', async () => {
     const client = createClient({ url: ':memory:' });
     await client.execute('PRAGMA foreign_keys = ON');
     const db = drizzle(client, { schema });
@@ -52,9 +52,15 @@ describe(`migration ${TAG}`, () => {
     await migrate(db, { migrationsFolder: MIGRATIONS });
 
     expect(await rows(client, 'SELECT id, nickname FROM users')).toEqual([['u1', 'Alice']]);
-    const insert = `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at, last_used_at) VALUES (?, 'u1', 'https://fcm.googleapis.com/x', 'k', 'a', ?, ?)`;
-    await client.execute({ sql: insert, args: ['s1', now, now] });
-    await expect(client.execute({ sql: insert, args: ['s2', now, now] })).rejects.toThrow(/UNIQUE/);
+    const session = `INSERT INTO sessions (id, user_id, token_hash, auth_method, user_agent, created_at, last_used_at) VALUES (?, 'u1', ?, 'password', 'ua', ?, ?)`;
+    await client.execute({ sql: session, args: ['sess1', 't1', now, now] });
+    await client.execute({ sql: session, args: ['sess2', 't2', now, now] });
+    const insert = `INSERT INTO push_subscriptions (id, user_id, session_id, endpoint, p256dh, auth, created_at, last_used_at) VALUES (?, 'u1', ?, ?, 'k', 'a', ?, ?)`;
+    await client.execute({ sql: insert, args: ['s1', 'sess1', 'https://fcm.googleapis.com/x', now, now] });
+    await expect(client.execute({ sql: insert, args: ['s2', 'sess1', 'https://fcm.googleapis.com/x', now, now] })).rejects.toThrow(/UNIQUE/);
+    await client.execute({ sql: insert, args: ['s3', 'sess2', 'https://fcm.googleapis.com/y', now, now] });
+    await client.execute(`DELETE FROM sessions WHERE id = 'sess2'`);
+    expect(await rows(client, 'SELECT id FROM push_subscriptions')).toEqual([['s1']]);
     await client.execute(`DELETE FROM users WHERE id = 'u1'`);
     expect(await rows(client, 'SELECT id FROM push_subscriptions')).toEqual([]);
     client.close();

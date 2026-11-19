@@ -1,11 +1,12 @@
 import { and, eq, lt, sql } from 'drizzle-orm';
-import { pushSubscriptions } from '../../database/schema.js';
+import { pushSubscriptions, sessions } from '../../database/schema.js';
 import type { Database } from '../../database/turso-client.js';
-import { MAX_SUBSCRIPTIONS_PER_USER, type PushSubscriptionRecord } from './push.types.js';
+import { MAX_SUBSCRIPTIONS_PER_USER, type ActivePushSubscription, type PushSubscriptionRecord } from './push.types.js';
 
 export interface SavePushSubscription {
   id: string;
   userId: string;
+  sessionId: string;
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -33,6 +34,7 @@ export class PushRepository {
         .values({
           id: input.id,
           userId: input.userId,
+          sessionId: input.sessionId,
           endpoint: input.endpoint,
           p256dh: input.p256dh,
           auth: input.auth,
@@ -44,6 +46,7 @@ export class PushRepository {
           target: pushSubscriptions.endpoint,
           set: {
             userId: input.userId,
+            sessionId: input.sessionId,
             p256dh: input.p256dh,
             auth: input.auth,
             userAgent: input.userAgent,
@@ -63,6 +66,27 @@ export class PushRepository {
 
   async listForUser(userId: string): Promise<PushSubscriptionRecord[]> {
     return this.db.select().from(pushSubscriptions).where(eq(pushSubscriptions.userId, userId));
+  }
+
+  async listActiveForUser(userId: string): Promise<ActivePushSubscription[]> {
+    const rows = await this.db
+      .select({ subscription: pushSubscriptions, sessionCreatedAt: sessions.createdAt, sessionLastUsedAt: sessions.lastUsedAt })
+      .from(pushSubscriptions)
+      .innerJoin(sessions, and(eq(sessions.id, pushSubscriptions.sessionId), eq(sessions.userId, pushSubscriptions.userId)))
+      .where(eq(pushSubscriptions.userId, userId));
+    return rows.map((row) => ({ ...row.subscription, session: { createdAt: row.sessionCreatedAt, lastUsedAt: row.sessionLastUsedAt } }));
+  }
+
+  async deleteOrphans(userId: string): Promise<void> {
+    await this.db.run(sql`
+      DELETE FROM push_subscriptions
+      WHERE user_id = ${userId}
+        AND session_id NOT IN (SELECT id FROM sessions WHERE user_id = ${userId})
+    `);
+  }
+
+  async deleteForSession(userId: string, sessionId: string): Promise<void> {
+    await this.db.delete(pushSubscriptions).where(and(eq(pushSubscriptions.userId, userId), eq(pushSubscriptions.sessionId, sessionId)));
   }
 
   async touch(id: string, nowIso: string, staleBeforeIso: string): Promise<void> {

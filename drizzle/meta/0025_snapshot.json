@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "915123ce-c14a-48a9-84f7-1ee90e765f03",
+  "id": "0acb38de-10a7-414a-9a58-dbefcd1a3009",
   "prevId": "964054c8-8805-4e93-86a6-5211151ea845",
   "tables": {
     "call_usage": {
@@ -397,6 +397,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "session_id": {
+          "name": "session_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
         "endpoint": {
           "name": "endpoint",
           "type": "text",
@@ -454,6 +461,13 @@
             "user_id"
           ],
           "isUnique": false
+        },
+        "push_subscriptions_session_id_idx": {
+          "name": "push_subscriptions_session_id_idx",
+          "columns": [
+            "session_id"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -463,6 +477,19 @@
           "tableTo": "users",
           "columnsFrom": [
             "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "push_subscriptions_session_id_sessions_id_fk": {
+          "name": "push_subscriptions_session_id_sessions_id_fk",
+          "tableFrom": "push_subscriptions",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "session_id"
           ],
           "columnsTo": [
             "id"

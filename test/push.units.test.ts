@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
+import { eq, sql } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 import { validateWebPushEnv, webPushVapidConfig } from '@/config/web-push-env.js';
-import { users } from '@/database/schema.js';
+import { pushSubscriptions, sessions, users } from '@/database/schema.js';
 import { isAllowedPushEndpoint, isAllowedPushHost, normalizeAuthSecret, normalizeP256dh } from '@/modules/push/push.endpoint.js';
 import { PushDeliveryError, PushRateLimiter, PushRepository, PushService, pushTopic, type PushSender } from '@/modules/push/index.js';
 import { createTestDb } from './support/create-test-db.js';
@@ -16,10 +17,14 @@ function subscription() {
   };
 }
 
-async function build(options: { sender?: PushSender | null; publicKey?: string | null; connected?: Set<string>; now?: () => number } = {}) {
+async function build(
+  options: { sender?: PushSender | null; publicKey?: string | null; connected?: Set<string>; now?: () => number; isSessionLive?: (session: { createdAt: string; lastUsedAt: string }, now: number) => boolean } = {},
+) {
   const db = await createTestDb();
   for (const id of ['u1', 'u2']) {
-    await db.insert(users).values({ id, nickname: id, nicknameNormalized: id, avatar: 0, passwordHash: 'x', recoveryTokenHash: 'x', createdAt: new Date().toISOString(), lastSeen: new Date().toISOString() });
+    const nowIso = new Date().toISOString();
+    await db.insert(users).values({ id, nickname: id, nicknameNormalized: id, avatar: 0, passwordHash: 'x', recoveryTokenHash: 'x', createdAt: nowIso, lastSeen: nowIso });
+    await db.insert(sessions).values({ id: `s-${id}`, userId: id, tokenHash: `t-${id}`, authMethod: 'password', userAgent: 'test', createdAt: nowIso, lastUsedAt: nowIso });
   }
   const repository = new PushRepository(db);
   const sender = options.sender === undefined ? vi.fn<PushSender>(() => Promise.resolve()) : options.sender;
@@ -30,6 +35,7 @@ async function build(options: { sender?: PushSender | null; publicKey?: string |
     repository,
     limiter: new PushRateLimiter(options.now),
     isUserConnected: (userId) => connected.has(userId),
+    ...(options.isSessionLive ? { isSessionLive: options.isSessionLive } : {}),
     ...(options.now ? { now: options.now } : {}),
   });
   return { db, repository, service, sender, connected };
@@ -97,7 +103,7 @@ describe('push service', () => {
   it('sends nothing and reports disabled without a public key', async () => {
     const sender = vi.fn<PushSender>(() => Promise.resolve());
     const { service, repository } = await build({ sender, publicKey: null });
-    await repository.save({ id: 's1', userId: 'u1', ...subscription(), p256dh: 'x', auth: 'y', userAgent: null, nowIso: new Date().toISOString() });
+    await repository.save({ id: 's1', userId: 'u1', sessionId: 's-u1', ...subscription(), p256dh: 'x', auth: 'y', userAgent: null, nowIso: new Date().toISOString() });
     expect(service.getConfig()).toEqual({ enabled: false, publicKey: null });
     service.incomingCall({ userId: 'u1', callId: 'c', roomId: 'r', kind: 'voice', ringExpiresAtMs: Date.now() + 30_000 });
     service.callEnded({ userId: 'u1', callId: 'c', reason: 'missed' });
@@ -120,7 +126,7 @@ describe('push service', () => {
       order.push(parsed.t);
     });
     const { service } = await build({ sender });
-    await service.subscribe('u1', subscription());
+    await service.subscribe('u1', 's-u1', subscription());
     service.incomingCall({ userId: 'u1', callId: 'c1', roomId: 'r', kind: 'voice', ringExpiresAtMs: Date.now() + 30_000 });
     service.callEnded({ userId: 'u1', callId: 'c1', reason: 'cancelled' });
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -129,14 +135,18 @@ describe('push service', () => {
     expect(order).toEqual(['call', 'call-end']);
   });
 
-  it('skips expired rings and keeps subscriptions on transient failures', async () => {
+  it('skips expired rings, skips call-end without a ring and keeps subscriptions on transient failures', async () => {
     const sender = vi.fn<PushSender>(() => Promise.reject(new PushDeliveryError(null)));
     const { service, repository } = await build({ sender });
-    await service.subscribe('u1', subscription());
+    await service.subscribe('u1', 's-u1', subscription());
     service.incomingCall({ userId: 'u1', callId: 'c1', roomId: 'r', kind: 'voice', ringExpiresAtMs: Date.now() - 1 });
     await service.idle();
     expect(sender).not.toHaveBeenCalled();
     service.callEnded({ userId: 'u1', callId: 'c1', reason: 'missed' });
+    service.callEnded({ userId: 'u1', callId: 'other', reason: 'missed' });
+    await service.idle();
+    expect(sender).not.toHaveBeenCalled();
+    service.newMessage({ roomId: 'r', senderId: 'u2', recipientIds: ['u1'] });
     await service.idle();
     expect(sender).toHaveBeenCalledTimes(1);
     expect(await repository.listForUser('u1')).toHaveLength(1);
@@ -146,8 +156,8 @@ describe('push service', () => {
     let now = Date.UTC(2026, 0, 1);
     const sender = vi.fn<PushSender>(() => Promise.resolve());
     const { service, connected } = await build({ sender, now: () => now });
-    await service.subscribe('u1', subscription());
-    await service.subscribe('u2', subscription());
+    await service.subscribe('u1', 's-u1', subscription());
+    await service.subscribe('u2', 's-u2', subscription());
     connected.add('u2');
     service.newMessage({ roomId: 'r1', senderId: 'u2', recipientIds: ['u1', 'u2', 'u1'] });
     await service.idle();
@@ -165,15 +175,55 @@ describe('push service', () => {
   it('updates last use at most once an hour', async () => {
     let now = Date.UTC(2026, 0, 1);
     const { service, repository } = await build({ now: () => now });
-    await service.subscribe('u1', subscription());
+    await service.subscribe('u1', 's-u1', subscription());
     now += 30 * 60 * 1000;
-    service.callEnded({ userId: 'u1', callId: 'c', reason: 'missed' });
+    service.newMessage({ roomId: 'r', senderId: 'u2', recipientIds: ['u1'] });
     await service.idle();
     expect((await repository.listForUser('u1'))[0]?.lastUsedAt).toBe(new Date(Date.UTC(2026, 0, 1)).toISOString());
     now += 31 * 60 * 1000;
-    service.callEnded({ userId: 'u1', callId: 'c', reason: 'missed' });
+    service.newMessage({ roomId: 'r', senderId: 'u2', recipientIds: ['u1'] });
     await service.idle();
     expect((await repository.listForUser('u1'))[0]?.lastUsedAt).toBe(new Date(now).toISOString());
+  });
+
+  it('stops pushing to a device whose session was revoked or expired', async () => {
+    const sender = vi.fn<PushSender>(() => Promise.resolve());
+    let live = true;
+    const { db, service, repository } = await build({ sender, isSessionLive: () => live });
+    await service.subscribe('u1', 's-u1', subscription());
+    live = false;
+    service.newMessage({ roomId: 'r1', senderId: 'u2', recipientIds: ['u1'] });
+    await service.idle();
+    expect(sender).not.toHaveBeenCalled();
+    live = true;
+    await db.run(sql`PRAGMA foreign_keys = OFF`);
+    await db.delete(sessions).where(eq(sessions.id, 's-u1'));
+    service.newMessage({ roomId: 'r2', senderId: 'u2', recipientIds: ['u1'] });
+    await service.idle();
+    expect(sender).not.toHaveBeenCalled();
+    expect(await repository.listForUser('u1')).toHaveLength(0);
+    expect(await db.select().from(pushSubscriptions)).toHaveLength(0);
+  });
+
+  it('caps concurrent sends across recipients', async () => {
+    let active = 0;
+    let peak = 0;
+    const sender = vi.fn<PushSender>(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+    });
+    const { service } = await build({ sender });
+    for (let index = 0; index < 10; index += 1) {
+      await service.subscribe('u1', 's-u1', subscription());
+    }
+    for (let index = 0; index < 10; index += 1) {
+      service.newMessage({ roomId: `room-${index}`, senderId: 'u2', recipientIds: ['u1'] });
+    }
+    await service.idle();
+    expect(sender).toHaveBeenCalledTimes(100);
+    expect(peak).toBeLessThanOrEqual(32);
   });
 
   it('derives stable 32 character topics that differ per call and per room', () => {
