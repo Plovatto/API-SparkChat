@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { encryptContent, getSodium } from '@/modules/ai/ai.crypto.js';
+import { deriveSigningKeyPair, getSodium, sealField } from '@/modules/ai/ai.crypto.js';
 import {
   encryptedLength,
   fitLinkPreviewForEncryption,
@@ -11,6 +11,13 @@ import {
 async function createRoomKey(): Promise<Uint8Array> {
   const sodium = await getSodium();
   return sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
+}
+
+async function encryptContent(plaintext: string, roomKey: Uint8Array): Promise<string> {
+  const sodium = await getSodium();
+  const signing = await deriveSigningKeyPair(sodium.randombytes_buf(32));
+  const keyId = sodium.to_base64(sodium.randombytes_buf(16));
+  return sealField(plaintext, roomKey, keyId, signing.privateKey, { roomId: 'room', senderId: 'sender', messageId: 'message', label: 'link-title' });
 }
 
 describe('encryptedLength', () => {

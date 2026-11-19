@@ -8,16 +8,17 @@ export const LINK_PREVIEW_ENCRYPTED_LIMITS = {
   siteName: 1000,
 } as const;
 
-const ENCRYPTED_PREFIX_LENGTH = 'e2e:v1:'.length;
-const SECRETBOX_OVERHEAD_BYTES = 24 + 16;
+const KEY_ID_LENGTH = 22;
+const ENCRYPTED_PREFIX_LENGTH = 'e2e:v2:'.length + KEY_ID_LENGTH + 1;
+const ENCRYPTION_OVERHEAD_BYTES = 24 + 16 + 64;
 
 export function encryptedLength(plaintext: string): number {
-  const bytes = Buffer.byteLength(plaintext, 'utf8') + SECRETBOX_OVERHEAD_BYTES;
+  const bytes = Buffer.byteLength(plaintext, 'utf8') + ENCRYPTION_OVERHEAD_BYTES;
   return ENCRYPTED_PREFIX_LENGTH + Math.ceil((bytes * 4) / 3);
 }
 
 export function maxPlaintextBytes(encryptedLimit: number): number {
-  return Math.max(0, Math.floor(((encryptedLimit - ENCRYPTED_PREFIX_LENGTH) * 3) / 4) - SECRETBOX_OVERHEAD_BYTES);
+  return Math.max(0, Math.floor(((encryptedLimit - ENCRYPTED_PREFIX_LENGTH) * 3) / 4) - ENCRYPTION_OVERHEAD_BYTES);
 }
 
 export function truncateUtf8(value: string, maxBytes: number): string {

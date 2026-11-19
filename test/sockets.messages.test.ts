@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { MessageRateLimiter } from '@/modules/messages/index.js';
+import { randomUUID } from 'node:crypto';
+import { fakeField, newKeyId, TEST_KEY_ID } from './support/room-keys.js';
 import { collectEvents, settle, startSocketHarness, waitForEvent, type TestClient } from './support/socket-harness.js';
 
 type Harness = Awaited<ReturnType<typeof startSocketHarness>>;
@@ -41,6 +43,7 @@ async function setupPair(h: Harness) {
   const bob = await h.createAccount('Bob');
   const room = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
   await h.roomService.createPrivateRoom(bob.user.id, alice.user.id);
+  await h.establishRoomKey(room.id);
   const aliceClient = await h.connectAs(alice);
   const bobClient = await h.connectAs(bob);
   await Promise.all([joinVisibleRooms(aliceClient), joinVisibleRooms(bobClient)]);
@@ -87,13 +90,13 @@ describe('replies over sockets', () => {
     const messageId = '6f1d9c1e-2b1a-4f57-9d0e-5f3f0a1b2c3d';
 
     const first = waitForEvent<MessageEvent>(aliceClient, 'message:new', (event) => event.clientTempId === 'own-1');
-    aliceClient.emit('message:send', { roomId: room.id, content: 'hi', messageId, clientTempId: 'own-1' });
+    aliceClient.emit('message:send', { roomId: room.id, content: fakeField('hi'), messageId, clientTempId: 'own-1' });
     await expect(first).resolves.toMatchObject({ id: messageId });
 
     const duplicate = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.clientTempId === 'own-2');
-    aliceClient.emit('message:send', { roomId: room.id, content: 'again', messageId, clientTempId: 'own-2' });
+    aliceClient.emit('message:send', { roomId: room.id, content: fakeField('again'), messageId, clientTempId: 'own-2' });
     await expect(duplicate).resolves.toMatchObject({ clientTempId: 'own-2', code: 'message.invalidMedia' });
-    expect((await h.messageService.getMessage(messageId))?.content).toBe('hi');
+    expect((await h.messageService.getMessage(messageId))?.content).toBe(fakeField('hi'));
 
     const malformed = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.clientTempId === 'own-3');
     aliceClient.emit('message:send', { roomId: room.id, content: 'x', messageId: 'not-a-uuid', clientTempId: 'own-3' });
@@ -109,7 +112,7 @@ describe('replies over sockets', () => {
     const foreign = await h.messageService.sendMessage({ roomId: otherRoom.id, senderId: carol.user.id, content: 'private' });
 
     const rejected = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.clientTempId === 'steal');
-    aliceClient.emit('message:send', { roomId: room.id, content: 'x', messageId: foreign.id, clientTempId: 'steal' });
+    aliceClient.emit('message:send', { roomId: room.id, content: fakeField('x'), messageId: foreign.id, clientTempId: 'steal' });
     await expect(rejected).resolves.toMatchObject({ clientTempId: 'steal' });
     expect((await h.messageService.getMessage(foreign.id))?.roomId).toBe(otherRoom.id);
   });
@@ -122,9 +125,9 @@ describe('replies over sockets', () => {
     const secret = await h.messageService.sendMessage({ roomId: secretRoom.id, senderId: carol.user.id, content: 'e2e:v1:segredo' });
 
     const delivered = waitForEvent<MessageEvent>(aliceClient, 'message:new', (event) => event.clientTempId === 'probe');
-    aliceClient.emit('message:send', { roomId: room.id, content: 'oi', replyToMessageId: secret.id, clientTempId: 'probe' });
+    aliceClient.emit('message:send', { roomId: room.id, content: fakeField('oi'), messageId: randomUUID(), replyToMessageId: secret.id, clientTempId: 'probe' });
 
-    await expect(delivered).resolves.toMatchObject({ content: 'oi', replyTo: null });
+    await expect(delivered).resolves.toMatchObject({ content: fakeField('oi'), replyTo: null });
   });
 
   it('updates the replies of a message deleted for everyone with a deleted snapshot', async () => {
@@ -132,13 +135,13 @@ describe('replies over sockets', () => {
     const { room, aliceClient, bobClient } = await setupPair(h);
 
     const originalEvent = waitForEvent<MessageEvent>(bobClient, 'message:new', (event) => event.clientTempId === 'original');
-    aliceClient.emit('message:send', { roomId: room.id, content: 'vou apagar', clientTempId: 'original' });
+    aliceClient.emit('message:send', { roomId: room.id, content: fakeField('vou apagar'), messageId: randomUUID(), clientTempId: 'original' });
     const original = await originalEvent;
 
     const replyEvent = waitForEvent<MessageEvent>(aliceClient, 'message:new', (event) => event.clientTempId === 'reply');
-    bobClient.emit('message:send', { roomId: room.id, content: 'respondendo', replyToMessageId: original.id, clientTempId: 'reply' });
+    bobClient.emit('message:send', { roomId: room.id, content: fakeField('respondendo'), messageId: randomUUID(), replyToMessageId: original.id, clientTempId: 'reply' });
     const reply = await replyEvent;
-    expect(reply.replyTo).toMatchObject({ id: original.id, content: 'vou apagar', deleted: false });
+    expect(reply.replyTo).toMatchObject({ id: original.id, content: fakeField('vou apagar'), deleted: false });
 
     const updated = waitForEvent<MessageEvent>(bobClient, 'message:updated', (event) => event.id === reply.id);
     const deleted = waitForEvent(bobClient, 'message:deleted');
@@ -230,5 +233,82 @@ describe('room authorization for activity and receipts', () => {
     await settle(150);
 
     expect((await h.messageService.getMessage(audio.id))?.playedBy).toEqual([]);
+  });
+});
+
+describe('message:send accepts only v2 encrypted fields bound to the current room key', () => {
+  async function expectRejected(client: TestClient, payload: Record<string, unknown>, code: string): Promise<void> {
+    const clientTempId = randomUUID();
+    const error = waitForEvent<ErrorEvent>(client, 'error', (event) => event.clientTempId === clientTempId);
+    client.emit('message:send', { messageId: randomUUID(), ...payload, clientTempId });
+    await expect(error).resolves.toMatchObject({ code });
+  }
+
+  it('rejects legacy v1, plaintext, truncated and mixed key content', async () => {
+    const h = await start();
+    const { room, aliceClient } = await setupPair(h);
+    const v1 = `e2e:v1:${Buffer.alloc(80).toString('base64')}`;
+
+    await expectRejected(aliceClient, { roomId: room.id, content: v1 }, 'message.unsupportedEncryption');
+    await expectRejected(aliceClient, { roomId: room.id, content: 'olá em texto puro' }, 'message.unsupportedEncryption');
+    await expectRejected(aliceClient, { roomId: room.id, content: `e2e:v2:${TEST_KEY_ID}:${Buffer.alloc(40).toString('base64url')}` }, 'message.unsupportedEncryption');
+    await expectRejected(aliceClient, { roomId: room.id, content: `e2e:v2:${Buffer.alloc(120).toString('base64url')}` }, 'message.unsupportedEncryption');
+    await expectRejected(
+      aliceClient,
+      { roomId: room.id, content: fakeField('oi'), linkPreview: { url: fakeField('u', newKeyId()), title: fakeField('t'), description: null, imageUrl: null, siteName: null } },
+      'message.unsupportedEncryption',
+    );
+    expect((await h.messageService.getRoomMessagesPage(room.id, { limit: 10 })).messages).toHaveLength(0);
+  });
+
+  it('rejects a v1 caption or file name on an attachment and requires file metadata for attachments', async () => {
+    const h = await start();
+    const { alice, room, aliceClient } = await setupPair(h);
+    const url = await h.storeUpload(alice.user.id, 'uploads/images/a.bin');
+    const fileMeta = { name: fakeField('a.png'), mimeType: fakeField('image/png'), size: 10 };
+
+    await expectRejected(aliceClient, { roomId: room.id, type: 'image', content: url, fileMeta, caption: 'e2e:v1:legenda' }, 'message.unsupportedEncryption');
+    await expectRejected(aliceClient, { roomId: room.id, type: 'image', content: url, fileMeta: { ...fileMeta, name: 'e2e:v1:nome' } }, 'message.unsupportedEncryption');
+    await expectRejected(aliceClient, { roomId: room.id, type: 'image', content: url }, 'validation.invalidPayload');
+
+    const delivered = waitForEvent<MessageEvent>(aliceClient, 'message:new');
+    aliceClient.emit('message:send', { roomId: room.id, type: 'image', content: url, fileMeta, caption: fakeField('legenda'), messageId: randomUUID() });
+    await expect(delivered).resolves.toMatchObject({ content: url });
+  });
+
+  it('requires a client message id because the fields are bound to it', async () => {
+    const h = await start();
+    const { room, aliceClient } = await setupPair(h);
+    const error = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.clientTempId === 'no-id');
+    aliceClient.emit('message:send', { roomId: room.id, content: fakeField('oi'), clientTempId: 'no-id' });
+
+    await expect(error).resolves.toMatchObject({ code: 'validation.invalidPayload' });
+  });
+
+  it('rejects content sealed with a key that is not the current generation, or while a rotation is pending', async () => {
+    const h = await start();
+    const { room, aliceClient } = await setupPair(h);
+
+    await expectRejected(aliceClient, { roomId: room.id, content: fakeField('velha', newKeyId()) }, 'message.staleRoomKey');
+
+    await h.roomKeyRepository.markRotationRequired(room.id);
+    await expectRejected(aliceClient, { roomId: room.id, content: fakeField('durante a rotação') }, 'message.staleRoomKey');
+
+    const keyId = await h.establishRoomKey(room.id);
+    await expectRejected(aliceClient, { roomId: room.id, content: fakeField('chave antiga') }, 'message.staleRoomKey');
+    const delivered = waitForEvent<MessageEvent>(aliceClient, 'message:new');
+    aliceClient.emit('message:send', { roomId: room.id, content: fakeField('chave nova', keyId), messageId: randomUUID() });
+    await expect(delivered).resolves.toMatchObject({ content: fakeField('chave nova', keyId) });
+  });
+
+  it('rejects messages in a room that has no key generation yet', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const room = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
+    const aliceClient = await h.connectAs(alice);
+    await joinVisibleRooms(aliceClient);
+
+    await expectRejected(aliceClient, { roomId: room.id, content: fakeField('cedo demais') }, 'message.staleRoomKey');
   });
 });
