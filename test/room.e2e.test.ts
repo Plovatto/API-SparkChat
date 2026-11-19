@@ -4,7 +4,7 @@ import { MAX_ROOM_KEY_BATCH } from '@/modules/rooms/room.socket.js';
 import { MAX_GROUP_MEMBERS } from '@/modules/rooms/room.types.js';
 import type { RoomKeyPublication } from '@/modules/rooms/room.e2e.js';
 import { buildRoomService } from './support/build-room-service.js';
-import { fakeEnvelope, newKeyId } from './support/room-keys.js';
+import { fakeEnvelope, fakeInvite, newKeyId } from './support/room-keys.js';
 
 type Services = Awaited<ReturnType<typeof buildRoomService>>;
 
@@ -25,6 +25,7 @@ function publication(roomId: string, senderId: string, recipients: string[], epo
     epoch,
     senderId,
     keys: recipients.map((userId) => ({ userId, sealedKey: fakeEnvelope({ roomId, keyId, epoch, senderId, recipientId: userId }) })),
+    invite: fakeInvite(keyId),
   };
 }
 
@@ -38,8 +39,8 @@ async function groupOfThree() {
   const bob = await createUser(services.userService, 'Bob');
   const carol = await createUser(services.userService, 'Carol');
   const group = await services.roomService.createGroupRoom('Amigos', alice.id);
-  await services.roomService.joinByCode(group.roomCode ?? '', bob.id);
-  await services.roomService.joinByCode(group.roomCode ?? '', carol.id);
+  await services.joinGroup(group.id, bob.id);
+  await services.joinGroup(group.id, carol.id);
   return { ...services, alice, bob, carol, group };
 }
 
@@ -138,11 +139,11 @@ describe('RoomKeyRepository generations', () => {
 describe('RoomKeyRepository sharing the current generation', () => {
   async function groupWithLateMember() {
     const services = await groupOfThree();
-    const { roomKeyRepository, roomService, userService, group, alice, bob, carol } = services;
+    const { roomKeyRepository, userService, group, alice, bob, carol, joinGroup } = services;
     const current = publication(group.id, alice.id, [alice.id, bob.id, carol.id]);
     await roomKeyRepository.publish(current);
     const dave = await createUser(userService, 'Dave');
-    await roomService.joinByCode(group.roomCode ?? '', dave.id);
+    await joinGroup(group.id, dave.id);
     return { ...services, current, dave };
   }
 
@@ -220,11 +221,11 @@ describe('RoomKeyRepository lookups', () => {
 
 describe('RoomKeyRepository membership inside the transaction', () => {
   it('refuses a generation or a share from someone who is no longer a member', async () => {
-    const { roomKeyRepository, roomService, userService, group, alice, bob, carol } = await groupOfThree();
+    const { roomKeyRepository, roomService, userService, group, alice, bob, carol, joinGroup } = await groupOfThree();
     const first = publication(group.id, alice.id, [alice.id, bob.id, carol.id]);
     await roomKeyRepository.publish(first);
     const dave = await createUser(userService, 'Dave');
-    await roomService.joinByCode(group.roomCode ?? '', dave.id);
+    await joinGroup(group.id, dave.id);
     await roomService.removeMember(group.id, alice.id, carol.id);
 
     expect(await roomKeyRepository.publish(share(group.id, carol.id, [dave.id], 1, first.keyId))).toBe('stale');
@@ -268,7 +269,7 @@ describe('membership changes require a rotation atomically', () => {
 
 describe('group size limit', () => {
   it('refuses to add a member beyond the largest group a key batch can cover', async () => {
-    const { roomService, userService, db, group } = await groupOfThree();
+    const { roomService, userService, db, group, joinGroup } = await groupOfThree();
     const now = new Date().toISOString();
     for (let index = 0; index < MAX_GROUP_MEMBERS - 3; index += 1) {
       const id = `filler-${index}`;
@@ -279,7 +280,7 @@ describe('group size limit', () => {
     expect((await roomService.getRoomById(group.id))?.participants).toHaveLength(MAX_GROUP_MEMBERS);
     const late = await createUser(userService, 'Atrasada');
 
-    await expect(roomService.joinByCode(group.roomCode ?? '', late.id)).rejects.toMatchObject({ code: 'room.groupFull', params: { maxMembers: MAX_GROUP_MEMBERS } });
+    await expect(joinGroup(group.id, late.id)).rejects.toMatchObject({ code: 'room.groupFull', params: { maxMembers: MAX_GROUP_MEMBERS } });
     expect((await roomService.getRoomById(group.id))?.participants).not.toContain(late.id);
     expect(MAX_ROOM_KEY_BATCH).toBe(MAX_GROUP_MEMBERS);
   });

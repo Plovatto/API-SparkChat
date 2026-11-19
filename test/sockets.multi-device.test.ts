@@ -103,7 +103,7 @@ describe('multi-device delivery', () => {
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
     const group = await h.roomService.createGroupRoom('Turma', alice.user.id);
-    await h.roomService.joinByCode(group.roomCode ?? '', bob.user.id);
+    await h.joinGroup(group.id, bob.user.id);
     const admin = await h.connectAs(alice);
     const bobA = await h.connectAs(bob);
     const bobB = await h.connectAs(bob);
@@ -207,7 +207,7 @@ describe('multi-device delivery', () => {
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
     const group = await h.roomService.createGroupRoom('Turma', alice.user.id);
-    await h.roomService.joinByCode(group.roomCode ?? '', bob.user.id);
+    await h.joinGroup(group.id, bob.user.id);
     const bobA = await h.connectAs(bob);
     const bobB = await h.connectAs(bob);
     await Promise.all([joinVisibleRooms(bobA), joinVisibleRooms(bobB)]);

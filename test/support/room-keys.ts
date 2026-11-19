@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { buildAssistantIdentity, type AssistantIdentity } from '@/modules/ai/ai.identity.js';
 import { getSodium } from '@/modules/ai/ai.crypto.js';
 import type { RoomKeyRepository } from '@/modules/rooms/room.e2e.js';
@@ -57,6 +57,21 @@ export async function sealEnvelope(sealing: EnvelopeSealing): Promise<string> {
   return JSON.stringify({ ...unsigned, sig });
 }
 
+export interface FakeInvite {
+  inviteToken: string;
+  tokenHash: string;
+  encryptedInvite: string;
+}
+
+export function fakeInvite(seed: string = randomUUID()): FakeInvite {
+  const inviteToken = createHash('sha256').update(`token:${seed}`).digest('base64url');
+  return {
+    inviteToken,
+    tokenHash: createHash('sha256').update(inviteToken).digest('hex'),
+    encryptedInvite: createHash('sha256').update(`invite:${seed}`).digest('base64url'),
+  };
+}
+
 export async function establishFakeGeneration(
   repository: RoomKeyRepository,
   roomId: string,
@@ -72,6 +87,7 @@ export async function establishFakeGeneration(
     epoch,
     senderId,
     keys: memberIds.map((userId) => ({ userId, sealedKey: fakeEnvelope({ roomId, keyId, epoch, senderId, recipientId: userId }) })),
+    invite: fakeInvite(`${roomId}:${keyId}`),
   });
   if (outcome !== 'generation') {
     throw new Error(`generation not stored: ${outcome}`);

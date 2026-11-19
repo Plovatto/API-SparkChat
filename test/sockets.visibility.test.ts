@@ -32,7 +32,7 @@ async function groupWithLateJoiner(h: Harness, options: { carolOffline?: boolean
   const carol = await h.createAccount('Carol');
   const mallory = await h.createAccount('Mallory');
   const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
-  await h.roomService.joinByCode(group.roomCode ?? '', carol.user.id);
+  await h.joinGroup(group.id, carol.user.id);
   if (options.carolOffline) {
     await h.userService.setStatus(carol.user.id, 'offline');
   }
@@ -45,7 +45,7 @@ async function groupWithLateJoiner(h: Harness, options: { carolOffline?: boolean
     participantIds: [alice.user.id, carol.user.id],
   });
   await settle(20);
-  await h.roomService.joinByCode(group.roomCode ?? '', mallory.user.id);
+  await h.joinGroup(group.id, mallory.user.id);
   return { alice, carol, mallory, group, audio };
 }
 

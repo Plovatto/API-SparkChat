@@ -1,6 +1,7 @@
 import { and, asc, eq, gt, inArray, notExists, sql, type SQL } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { roomBans, roomKeys, roomParticipants, rooms, users } from '../../database/schema.js';
+import type { RoomInvite } from './room.invites.js';
 
 export interface StoredRoomKey {
   roomId: string;
@@ -24,6 +25,7 @@ export interface RoomKeyPublication {
   epoch: number;
   senderId: string;
   keys: RoomKeyWrite[];
+  invite?: RoomInvite | undefined;
 }
 
 export type RoomKeyPublishOutcome = 'generation' | 'share' | 'stale' | 'incomplete' | 'conflict';
@@ -107,14 +109,20 @@ export class RoomKeyRepository {
   }
 
   private async storeGeneration(publication: RoomKeyPublication): Promise<boolean> {
-    const { roomId, keyId, epoch, senderId, keys } = publication;
+    const { roomId, keyId, epoch, senderId, keys, invite } = publication;
     const targetIds = sql`(${sql.join(
       keys.map((key) => sql`${key.userId}`),
       sql`, `,
     )})`;
+    const inviteColumns = invite
+      ? sql`, invite_token_hash = case when type = 'group' then ${invite.tokenHash} end,
+          encrypted_invite = case when type = 'group' then ${invite.encryptedInvite} end,
+          invite_key_id = case when type = 'group' then ${keyId} end`
+      : sql``;
     const advance = this.db.run(sql`
-      update ${rooms} set current_epoch = ${epoch}, current_key_id = ${keyId}, rotation_required = null
+      update ${rooms} set current_epoch = ${epoch}, current_key_id = ${keyId}, rotation_required = null${inviteColumns}
       where id = ${roomId}
+        and (type <> 'group' or ${invite ? 1 : 0} = 1)
         and current_epoch = ${epoch - 1}
         and (current_epoch = 0 or rotation_required = ${epoch})
         and ${this.memberCondition(roomId, sql`(${senderId})`)} = 1

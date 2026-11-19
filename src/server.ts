@@ -62,9 +62,9 @@ const roomRepository = new RoomRepository(db);
 const roomService = new RoomService(roomRepository, userService, messageService);
 const roomKeyRepository = new RoomKeyRepository(db);
 
-const { purgedParticipants, rotatedCodes } = await roomService.normalizeMembershipsAndInviteCodes();
-if (purgedParticipants > 0 || rotatedCodes > 0) {
-  logger.info({ purgedParticipants, rotatedCodes }, 'Room memberships and invite codes normalized');
+const { purgedParticipants, clearedCodes } = await roomService.normalizeMembershipsAndRoomCodes();
+if (purgedParticipants > 0 || clearedCodes > 0) {
+  logger.info({ purgedParticipants, clearedCodes }, 'Room memberships and group room codes normalized');
 }
 
 const typingService = new TypingService();

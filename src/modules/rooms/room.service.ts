@@ -2,9 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { AppError } from '../../lib/app-error.js';
 import type { MessageRecord, MessageService } from '../messages/index.js';
 import type { UserRecord, UserService } from '../users/index.js';
-import { generateRoomCode } from './room.codes.js';
-import type { RoomRepository } from './room.repository.js';
+import { hashInviteToken, matchesInviteToken, type RoomInvite, type RoomInviteView } from './room.invites.js';
+import type { InviteResetOutcome, RoomRepository } from './room.repository.js';
 import { MAX_GROUP_MEMBERS, type RoomParticipant, type RoomRecord, type RoomSummary } from './room.types.js';
+
+export interface JoinByInviteRequest {
+  roomId: string;
+  inviteToken: string;
+  proof: string;
+}
 
 export interface JoinByCodeResult {
   room: RoomRecord;
@@ -29,6 +35,13 @@ function toParticipants(room: RoomRecord, usersById: Map<string, UserRecord>): R
     .map((id) => usersById.get(id))
     .filter((user): user is UserRecord => user !== undefined)
     .map((user) => toParticipant(user, admins.has(user.id)));
+}
+
+function inviteView(room: RoomRecord, viewerId: string): RoomInviteView | null {
+  if (room.type !== 'group' || !room.participants.includes(viewerId) || !room.encryptedInvite || !room.inviteKeyId) {
+    return null;
+  }
+  return { encryptedInvite: room.encryptedInvite, keyId: room.inviteKeyId };
 }
 
 export class RoomService {
@@ -64,7 +77,6 @@ export class RoomService {
       id: randomUUID(),
       type: 'group',
       name,
-      roomCode: generateRoomCode(),
       participants: [creatorId],
       admins: [creatorId],
       createdBy: creatorId,
@@ -84,6 +96,23 @@ export class RoomService {
       throw AppError.of('room.notFound');
     }
 
+    if (room.type === 'group') {
+      throw AppError.of('room.inviteLinkRequired');
+    }
+
+    if (room.participants.includes(userId)) {
+      return { room, joined: false };
+    }
+
+    throw AppError.of('room.notFound');
+  }
+
+  async joinByInvite(request: JoinByInviteRequest, userId: string): Promise<JoinByCodeResult> {
+    const room = await this.repository.findById(request.roomId);
+    if (!room || room.type !== 'group' || !matchesInviteToken(request.inviteToken, room.inviteTokenHash)) {
+      throw AppError.of('room.invalidInvite');
+    }
+
     if (room.participants.includes(userId)) {
       return { room, joined: false };
     }
@@ -92,16 +121,28 @@ export class RoomService {
       throw AppError.of('room.groupFull', { maxMembers: MAX_GROUP_MEMBERS });
     }
 
-    const added = await this.repository.addParticipant(room.id, userId, new Date().toISOString());
+    const tokenHash = hashInviteToken(request.inviteToken);
+    const added = await this.repository.addParticipant(room.id, userId, new Date().toISOString(), { tokenHash, proof: request.proof });
     const current = await this.repository.findById(room.id);
     if (!current || !current.participants.includes(userId)) {
       if (current && current.participants.length >= MAX_GROUP_MEMBERS) {
         throw AppError.of('room.groupFull', { maxMembers: MAX_GROUP_MEMBERS });
       }
+      if (current && current.inviteTokenHash !== tokenHash) {
+        throw AppError.of('room.invalidInvite');
+      }
       throw AppError.of('room.notFound');
     }
 
     return { room: current, joined: added };
+  }
+
+  resetInvite(roomId: string, ownerId: string, invite: RoomInvite & { keyId: string }): Promise<InviteResetOutcome> {
+    return this.repository.resetInvite(roomId, ownerId, invite);
+  }
+
+  findInviteProof(roomId: string, userId: string): Promise<string | null> {
+    return this.repository.findInviteProof(roomId, userId);
   }
 
   async deleteForUser(roomId: string, userId: string): Promise<RoomRecord | null> {
@@ -168,7 +209,7 @@ export class RoomService {
       throw AppError.of('room.notMember');
     }
 
-    await this.repository.removeParticipant(roomId, targetUserId, { bannedBy: actingUserId, rotateRoomCode: true });
+    await this.repository.removeParticipant(roomId, targetUserId, { bannedBy: actingUserId });
     return this.repository.findById(roomId);
   }
 
@@ -214,10 +255,10 @@ export class RoomService {
     return this.repository.findParticipatingRoomIds(userId, roomIds);
   }
 
-  async normalizeMembershipsAndInviteCodes(): Promise<{ purgedParticipants: number; rotatedCodes: number }> {
+  async normalizeMembershipsAndRoomCodes(): Promise<{ purgedParticipants: number; clearedCodes: number }> {
     const purgedParticipants = await this.repository.purgeBannedParticipants();
-    const rotatedCodes = await this.repository.rotateLegacyRoomCodes();
-    return { purgedParticipants, rotatedCodes };
+    const clearedCodes = await this.repository.clearGroupRoomCodes();
+    return { purgedParticipants, clearedCodes };
   }
 
   getRoomById(roomId: string): Promise<RoomRecord | null> {
@@ -336,7 +377,6 @@ export class RoomService {
         id: room.id,
         type: room.type,
         name: room.name,
-        roomCode: room.roomCode,
         createdBy: creator?.nickname,
         creatorId: room.createdBy,
         participants: toParticipants(room, usersById),
@@ -350,6 +390,7 @@ export class RoomService {
         currentEpoch: room.currentEpoch ?? 0,
         currentKeyId: room.currentKeyId ?? null,
         rotationRequiredEpoch: room.rotationRequired ?? null,
+        invite: inviteView(room, viewerId),
       };
     });
   }

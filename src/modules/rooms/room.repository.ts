@@ -1,8 +1,8 @@
-import { and, eq, inArray, isNull, ne, notExists, or, sql, type SQL } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, notExists, sql, type SQL } from 'drizzle-orm';
 import { alias, type SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import type { Database } from '../../database/turso-client.js';
 import { roomBans, roomParticipants, rooms } from '../../database/schema.js';
-import { generateRoomCode, ROOM_CODE_LENGTH } from './room.codes.js';
+import type { RoomInvite } from './room.invites.js';
 import { MAX_GROUP_MEMBERS, type RoomRecord } from './room.types.js';
 
 type RoomRow = typeof rooms.$inferSelect;
@@ -46,6 +46,9 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
     currentEpoch: room.currentEpoch,
     currentKeyId: room.currentKeyId ?? undefined,
     rotationRequired: room.rotationRequired ?? undefined,
+    inviteTokenHash: room.inviteTokenHash ?? undefined,
+    encryptedInvite: room.encryptedInvite ?? undefined,
+    inviteKeyId: room.inviteKeyId ?? undefined,
   };
 }
 
@@ -61,8 +64,14 @@ export interface ParticipantPatch {
 
 export interface RemoveParticipantOptions {
   bannedBy?: string;
-  rotateRoomCode?: boolean;
 }
+
+export interface NewParticipantInvite {
+  tokenHash: string;
+  proof: string;
+}
+
+export type InviteResetOutcome = 'reset' | 'notFound' | 'notOwner' | 'stale';
 
 export class RoomRepository {
   constructor(private readonly db: Database) {}
@@ -122,11 +131,14 @@ export class RoomRepository {
     return room;
   }
 
-  async addParticipant(roomId: string, userId: string, joinedAt: string): Promise<boolean> {
+  async addParticipant(roomId: string, userId: string, joinedAt: string, invite?: NewParticipantInvite): Promise<boolean> {
+    const roomCondition = invite
+      ? sql`exists (select 1 from ${rooms} where id = ${roomId} and type = 'group' and invite_token_hash = ${invite.tokenHash})`
+      : sql`exists (select 1 from ${rooms} where id = ${roomId})`;
     const result = await this.db.run(sql`
-      insert into ${roomParticipants} (room_id, user_id, is_visible, is_admin, joined_at)
-      select ${roomId}, ${userId}, 1, 0, ${joinedAt}
-      where exists (select 1 from ${rooms} where id = ${roomId})
+      insert into ${roomParticipants} (room_id, user_id, is_visible, is_admin, joined_at, invite_proof)
+      select ${roomId}, ${userId}, 1, 0, ${joinedAt}, ${invite?.proof ?? null}
+      where ${roomCondition}
         and not exists (select 1 from ${roomBans} where room_id = ${roomId} and user_id = ${userId})
         and (
           select count(*) from ${roomParticipants} rp
@@ -192,13 +204,9 @@ export class RoomRepository {
               .onConflictDoNothing({ target: [roomBans.roomId, roomBans.userId] }),
           ]
         : [];
-    const rotate = options.rotateRoomCode
-      ? [this.db.update(rooms).set({ roomCode: generateRoomCode() }).where(eq(rooms.id, roomId))]
-      : [];
-
     const requireKeyRotation = this.db
       .update(rooms)
-      .set({ rotationRequired: sql`${rooms.currentEpoch} + 1` })
+      .set({ rotationRequired: sql`${rooms.currentEpoch} + 1`, inviteTokenHash: null, encryptedInvite: null, inviteKeyId: null })
       .where(
         and(
           eq(rooms.id, roomId),
@@ -207,21 +215,46 @@ export class RoomRepository {
         ),
       );
 
-    const [deleted] = await this.db.batch([deletion, requireKeyRotation, clearBlocks, ...ban, ...rotate]);
+    const [deleted] = await this.db.batch([deletion, requireKeyRotation, clearBlocks, ...ban]);
     return deleted.rowsAffected > 0;
   }
 
-  async rotateLegacyRoomCodes(): Promise<number> {
-    const legacy = await this.db
-      .select({ id: rooms.id })
-      .from(rooms)
-      .where(and(eq(rooms.type, 'group'), or(isNull(rooms.roomCode), ne(sql`length(${rooms.roomCode})`, ROOM_CODE_LENGTH))));
+  async clearGroupRoomCodes(): Promise<number> {
+    const result = await this.db
+      .update(rooms)
+      .set({ roomCode: null })
+      .where(and(eq(rooms.type, 'group'), isNotNull(rooms.roomCode)));
+    return result.rowsAffected;
+  }
 
-    for (const { id } of legacy) {
-      await this.db.update(rooms).set({ roomCode: generateRoomCode() }).where(eq(rooms.id, id));
+  async resetInvite(roomId: string, ownerId: string, invite: RoomInvite & { keyId: string }): Promise<InviteResetOutcome> {
+    const result = await this.db.run(sql`
+      update ${rooms} set invite_token_hash = ${invite.tokenHash}, encrypted_invite = ${invite.encryptedInvite}, invite_key_id = ${invite.keyId}
+      where id = ${roomId}
+        and type = 'group'
+        and created_by = ${ownerId}
+        and current_key_id = ${invite.keyId}
+        and rotation_required is null
+        and exists (select 1 from ${roomParticipants} p where p.room_id = ${roomId} and p.user_id = ${ownerId}
+          and not exists (select 1 from ${roomBans} b where b.room_id = p.room_id and b.user_id = p.user_id))
+    `);
+    if (result.rowsAffected === 1) {
+      return 'reset';
     }
 
-    return legacy.length;
+    const room = await this.findById(roomId);
+    if (!room || room.type !== 'group' || !room.participants.includes(ownerId)) {
+      return 'notFound';
+    }
+    return room.createdBy === ownerId ? 'stale' : 'notOwner';
+  }
+
+  async findInviteProof(roomId: string, userId: string): Promise<string | null> {
+    const [row] = await this.db
+      .select({ inviteProof: roomParticipants.inviteProof })
+      .from(roomParticipants)
+      .where(and(eq(roomParticipants.roomId, roomId), eq(roomParticipants.userId, userId)));
+    return row?.inviteProof ?? null;
   }
 
   async purgeBannedParticipants(): Promise<number> {
