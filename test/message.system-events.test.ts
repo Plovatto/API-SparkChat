@@ -20,11 +20,13 @@ const SAMPLE_PARAMS: Partial<Record<SystemEventType, Record<string, string | nul
   'group.memberLeft': { actor: 'Alice' },
   'group.memberRemoved': { target: 'Bob', actor: 'Alice' },
   'group.adminPromoted': { target: 'Bob', actor: 'Alice' },
+  'call.ended': { kind: 'voice', durationSec: '75', callerId: 'u1', reason: 'completed' },
+  'call.missed': { kind: 'video', callerId: 'u1', reason: 'missed' },
 };
 
 describe('system event catalog', () => {
   it.each(SYSTEM_EVENT_TYPES)('names %s by domain', (type) => {
-    expect(type).toMatch(/^(group|ai)\.[a-z][A-Za-z]+$/);
+    expect(type).toMatch(/^(group|ai|call)\.[a-z][A-Za-z]+$/);
   });
 
   it.each(SYSTEM_EVENT_TYPES)('renders a non-empty portuguese sentence for %s', (type) => {

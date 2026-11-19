@@ -33,6 +33,7 @@ export interface UserSocketDeps {
   messageService: MessageService;
   loginRateLimiter: LoginRateLimiter;
   onSessionReleased?: (context: { socket: AppSocket; userId: string }) => void;
+  onAuthenticated?: (context: { socket: AppSocket; userId: string }) => void;
 }
 
 async function contactRooms(deps: UserSocketDeps, userId: string): Promise<string[]> {
@@ -262,6 +263,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
         sessionToken,
         authMethod: 'password',
       });
+      deps.onAuthenticated?.({ socket, userId: user.id });
       socket.to(await contactRooms(deps, user.id)).emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
       await deliverPendingMessages(io, deps, user.id);
       return;
@@ -291,6 +293,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
       return;
     }
     socket.emit('user:resumed', { user: userService.toPublicUser(user), authMethod });
+    deps.onAuthenticated?.({ socket, userId: user.id });
     socket.to(await contactRooms(deps, user.id)).emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
     await deliverPendingMessages(io, deps, user.id);
   } catch (error) {

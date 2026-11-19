@@ -107,9 +107,13 @@ R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 R2_BUCKET_NAME=
 R2_PUBLIC_BASE_URL=
+CLOUDFLARE_TURN_KEY_ID=
+CLOUDFLARE_TURN_API_TOKEN=
 ```
 
 `R2_*` configura o armazenamento de arquivos enviados (imagem, áudio, arquivo) no Cloudflare R2, usado no lugar de disco local para funcionar em hospedagens sem disco persistente.
+
+`CLOUDFLARE_TURN_KEY_ID` e `CLOUDFLARE_TURN_API_TOKEN` (opcionais, sempre juntas) habilitam credenciais TURN do Cloudflare Realtime para as chamadas de voz e vídeo; sem elas, as chamadas usam só STUN e a retransmissão fica indisponível.
 
 `PASSWORD_SCRYPT_COST` é o custo do scrypt usado nos hashes de senha (potência de 2, padrão `65536`, máximo `131072`). Cada login usa cerca de 128 × o valor em bytes de memória (64 MB no padrão); aumente só se a hospedagem tiver memória sobrando para logins simultâneos.
 

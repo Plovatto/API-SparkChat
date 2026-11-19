@@ -19,6 +19,15 @@ const accountAction: EventBudget = { capacity: 20, refillPerSecond: 1 };
 
 export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
   events: {
+    'call:start': roomAction,
+    'call:accept': roomAction,
+    'call:decline': roomAction,
+    'call:silence': roomAction,
+    'call:hangup': roomAction,
+    'call:signal': { capacity: 200, refillPerSecond: 60 },
+    'call:heartbeat': { capacity: 20, refillPerSecond: 1 },
+    'call:sync': roomAction,
+    'call:ice-servers': roomAction,
     'message:send': { capacity: 30, refillPerSecond: 5 },
     'message:mark-read': frequent,
     'messages:get': frequent,

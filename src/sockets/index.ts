@@ -1,6 +1,7 @@
 import { logger } from '../config/logger.js';
 import { registerClientEvents } from '../docs/socket-registry.js';
 import type { AiService } from '../modules/ai/index.js';
+import { registerCallSocketHandlers, type CallService } from '../modules/calls/index.js';
 import {
   registerMessageSocketHandlers,
   releaseSocketActivity,
@@ -45,6 +46,7 @@ export interface SocketDeps {
   roomKeyRepository: RoomKeyRepository;
   aiService: AiService;
   roomRateLimiter: RoomActionRateLimiter;
+  callService: CallService;
   socketEventBudgets?: SocketEventBudgets;
 }
 
@@ -91,6 +93,12 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       onSessionReleased: ({ socket: released, userId }) => {
         releaseSocketActivity(io, released, activityServices, userId);
       },
+      onAuthenticated: ({ socket: authenticated }) => {
+        deps.callService
+          .getConfig()
+          .then((config) => authenticated.emit('call:config', config))
+          .catch(logHookFailure('onAuthenticated'));
+      },
     });
 
     registerRoomSocketHandlers(io, socket, {
@@ -124,6 +132,8 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
         }
       },
     });
+
+    registerCallSocketHandlers(socket, { callService: deps.callService });
 
     socket.on('disconnect', (reason) => {
       logger.info({ socketId: socket.id, reason }, 'Client disconnected');

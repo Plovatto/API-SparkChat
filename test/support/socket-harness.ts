@@ -7,6 +7,7 @@ import { buildAssistantIdentity } from '@/modules/ai/ai.identity.js';
 import { AiRouter } from '@/modules/ai/ai.provider.js';
 import { AiService } from '@/modules/ai/ai.service.js';
 import { AiUsageLimiter } from '@/modules/ai/ai.usage-limiter.js';
+import { CallBudget, CallRateLimiter, CallRepository, CallService, type TurnProvider } from '@/modules/calls/index.js';
 import { MessageRateLimiter, RecordingService, RoomPresenceService, TypingService } from '@/modules/messages/index.js';
 import { RoomActionRateLimiter } from '@/modules/rooms/index.js';
 import { LoginRateLimiter, SessionRevocationNotifier } from '@/modules/users/index.js';
@@ -28,6 +29,7 @@ export interface SocketHarnessOptions {
   connectionStateRecovery?: boolean;
   socketEventBudgets?: SocketEventBudgets;
   loginRateLimiter?: LoginRateLimiter;
+  calls?: { turnProvider?: TurnProvider; now?: () => number; enabled?: boolean; tierBytes?: number };
 }
 
 export async function startSocketHarness(options: SocketHarnessOptions = {}) {
@@ -58,6 +60,19 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
   const recordingService = new RecordingService();
   const presenceService = new RoomPresenceService();
   const sessionRevocations = new SessionRevocationNotifier();
+  const clock = options.calls?.now ?? Date.now;
+  const callRepository = new CallRepository(services.db);
+  const callBudget = new CallBudget(callRepository, clock, options.calls?.tierBytes);
+  const callService = new CallService(
+    io,
+    callRepository,
+    services.roomService,
+    services.messageService,
+    callBudget,
+    new CallRateLimiter(clock),
+    options.calls?.turnProvider ?? null,
+    { now: clock, ...(options.calls?.enabled === undefined ? {} : { enabled: options.calls.enabled }) },
+  );
   registerSocketHandlers(io, {
     userService: services.userService,
     roomService: services.roomService,
@@ -71,6 +86,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     roomRateLimiter: options.roomRateLimiter ?? new RoomActionRateLimiter(),
     roomKeyRepository: services.roomKeyRepository,
     aiService,
+    callService,
     ...(options.socketEventBudgets ? { socketEventBudgets: options.socketEventBudgets } : {}),
   });
 
@@ -124,7 +140,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     });
   }
 
-  return { ...services, io, sessionRevocations, typingService, recordingService, presenceService, connect, connectAs, createAccount, resume, establishRoomKey, close };
+  return { ...services, io, callService, callRepository, callBudget, sessionRevocations, typingService, recordingService, presenceService, connect, connectAs, createAccount, resume, establishRoomKey, close };
 }
 
 export function waitForEvent<T = unknown>(

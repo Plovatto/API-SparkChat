@@ -5,6 +5,7 @@ import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { db } from './database/turso-client.js';
 import { runMigrations } from './database/migrate.js';
+import { CallBudget, CallRateLimiter, CallRepository, CallService, createCloudflareTurnProvider } from './modules/calls/index.js';
 import { AiService, AiUsageLimiter, createGeminiRouter, ensureAssistantUser, loadAssistantIdentity } from './modules/ai/index.js';
 import { httpLinkPreviewFetcher, LinkPreviewRepository, LinkPreviewService } from './modules/link-preview/index.js';
 import {
@@ -119,6 +120,14 @@ const io = new Server<
 
 notifyRoomRotations(io, assistantRotations);
 
+const callRepository = new CallRepository(db);
+const turnProvider =
+  env.CLOUDFLARE_TURN_KEY_ID && env.CLOUDFLARE_TURN_API_TOKEN
+    ? createCloudflareTurnProvider({ keyId: env.CLOUDFLARE_TURN_KEY_ID, apiToken: env.CLOUDFLARE_TURN_API_TOKEN })
+    : null;
+const callService = new CallService(io, callRepository, roomService, messageService, new CallBudget(callRepository), new CallRateLimiter(), turnProvider);
+callService.startMaintenance();
+
 registerSocketHandlers(io, {
   userService,
   roomService,
@@ -132,6 +141,7 @@ registerSocketHandlers(io, {
   roomRateLimiter,
   roomKeyRepository,
   aiService,
+  callService,
 });
 
 httpServer.listen(env.PORT, () => {

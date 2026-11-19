@@ -1,12 +1,19 @@
 import type { Server, Socket } from 'socket.io';
 import type { Locale } from '../lib/locale.js';
+import type { CallClientToServerEvents, CallServerToClientEvents } from '../modules/calls/index.js';
 import type { MessageClientToServerEvents, MessageServerToClientEvents } from '../modules/messages/index.js';
 import type { RoomClientToServerEvents, RoomServerToClientEvents } from '../modules/rooms/index.js';
 import type { AuthMethod, UserClientToServerEvents, UserServerToClientEvents } from '../modules/users/index.js';
 
-export type ServerToClientEvents = UserServerToClientEvents & RoomServerToClientEvents & MessageServerToClientEvents;
+export type ServerToClientEvents = UserServerToClientEvents &
+  RoomServerToClientEvents &
+  MessageServerToClientEvents &
+  CallServerToClientEvents;
 
-export type ClientToServerEvents = UserClientToServerEvents & RoomClientToServerEvents & MessageClientToServerEvents;
+export type ClientToServerEvents = UserClientToServerEvents &
+  RoomClientToServerEvents &
+  MessageClientToServerEvents &
+  CallClientToServerEvents;
 
 export type InterServerEvents = Record<string, never>;
 
