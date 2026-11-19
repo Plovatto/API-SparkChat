@@ -57,6 +57,9 @@ export const rooms = sqliteTable('rooms', {
   roomCode: text('room_code').unique(),
   createdBy: text('created_by').references(() => users.id),
   createdAt: text('created_at').notNull(),
+  currentEpoch: integer('current_epoch').notNull().default(0),
+  currentKeyId: text('current_key_id'),
+  rotationRequired: integer('rotation_required'),
 });
 
 export const roomParticipants = sqliteTable(
@@ -106,11 +109,14 @@ export const roomKeys = sqliteTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
+    keyId: text('key_id').notNull(),
+    epoch: integer('epoch').notNull(),
     sealedKey: text('sealed_key').notNull(),
+    senderId: text('sender_id').notNull(),
     createdAt: text('created_at').notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.roomId, table.userId] }),
+    primaryKey({ columns: [table.roomId, table.userId, table.keyId] }),
     index('room_keys_user_id_idx').on(table.userId),
   ],
 );
