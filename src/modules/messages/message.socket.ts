@@ -55,18 +55,20 @@ const activityEvents = {
 } as const satisfies Record<ActivityKind, string>;
 
 const fileMetaSchema = z.object({
-  name: z.string().trim().min(1).max(500),
-  mimeType: z.string().trim().min(1).max(200),
+  name: z.string().trim().min(1).max(700),
+  mimeType: z.string().trim().min(1).max(400),
   size: z.number().int().positive(),
   thumbnailUrl: z.string().trim().min(1).max(4000).optional(),
 });
 
+const SIGNED_ENVELOPE_MARGIN = 128;
+
 const linkPreviewSchema = z.object({
-  url: z.string().trim().min(1).max(LINK_PREVIEW_ENCRYPTED_LIMITS.url),
-  title: z.string().trim().min(1).max(LINK_PREVIEW_ENCRYPTED_LIMITS.title),
-  description: z.string().trim().max(LINK_PREVIEW_ENCRYPTED_LIMITS.description).nullable(),
-  imageUrl: z.string().trim().max(LINK_PREVIEW_ENCRYPTED_LIMITS.imageUrl).nullable(),
-  siteName: z.string().trim().max(LINK_PREVIEW_ENCRYPTED_LIMITS.siteName).nullable(),
+  url: z.string().trim().min(1).max(LINK_PREVIEW_ENCRYPTED_LIMITS.url + SIGNED_ENVELOPE_MARGIN),
+  title: z.string().trim().min(1).max(LINK_PREVIEW_ENCRYPTED_LIMITS.title + SIGNED_ENVELOPE_MARGIN),
+  description: z.string().trim().max(LINK_PREVIEW_ENCRYPTED_LIMITS.description + SIGNED_ENVELOPE_MARGIN).nullable(),
+  imageUrl: z.string().trim().max(LINK_PREVIEW_ENCRYPTED_LIMITS.imageUrl + SIGNED_ENVELOPE_MARGIN).nullable(),
+  siteName: z.string().trim().max(LINK_PREVIEW_ENCRYPTED_LIMITS.siteName + SIGNED_ENVELOPE_MARGIN).nullable(),
 });
 
 const clientTempIdSchema = z.string().trim().min(1);
@@ -82,7 +84,7 @@ const sendMessagePayloadSchema = z
     messageId: z.string().uuid().optional(),
     fileMeta: fileMetaSchema.optional(),
     mentionedUserIds: z.array(z.string().trim().min(1)).max(50).optional(),
-    caption: z.string().trim().max(3000).optional(),
+    caption: z.string().trim().max(3300).optional(),
     linkPreview: linkPreviewSchema.optional(),
     attachmentUrls: z.array(z.string().trim().min(1).max(4000)).max(4).optional(),
   })
