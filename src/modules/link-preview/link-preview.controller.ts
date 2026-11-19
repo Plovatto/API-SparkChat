@@ -22,22 +22,23 @@ export const linkPreviewResponseSchema = z
 export function createLinkPreviewController(service: LinkPreviewService) {
   const getPreview = async (req: Request, res: Response): Promise<void> => {
     const parsed = linkPreviewRequestSchema.safeParse(req.body);
-    if (!parsed.success) {
+    const userId = req.authenticatedUser?.id;
+    if (!parsed.success || !userId) {
       res.status(400).json(errorPayload('linkPreview.invalidUrl'));
       return;
     }
 
-    const preview = await service.getPreview(parsed.data.url).catch(() => null);
+    const preview = await service.getPreview(userId, parsed.data.url).catch(() => null);
     if (!preview) {
       res.status(422).json(errorPayload('linkPreview.unavailable'));
       return;
     }
 
-    res.status(200).json(preview);
+    res.status(200).set('Cache-Control', 'no-store').json(preview);
   };
 
   const getImage = async (req: Request, res: Response): Promise<void> => {
-    const parsed = linkPreviewRequestSchema.safeParse(req.query);
+    const parsed = linkPreviewRequestSchema.safeParse(req.method === 'GET' ? { url: req.query.url } : req.body);
     if (!parsed.success) {
       res.status(400).json(errorPayload('linkPreview.invalidUrl'));
       return;
@@ -49,7 +50,7 @@ export function createLinkPreviewController(service: LinkPreviewService) {
       return;
     }
 
-    res.status(200).set('Content-Type', image.contentType).set('Cache-Control', 'public, max-age=86400').send(image.body);
+    res.status(200).set('Content-Type', image.contentType).set('Cache-Control', 'private, no-store').send(image.body);
   };
 
   return { getPreview, getImage };

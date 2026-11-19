@@ -6,12 +6,14 @@ import type { Locale } from '../../lib/locale.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { roomIdPayloadSchema } from '../../sockets/payloads.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
+import { runSocketHandler } from '../../sockets/socket-handler.js';
 import { socketLocale } from '../../sockets/socket-locale.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
-import { emitToUser, isUserRoom, joinUserSocketsToRoom, listUserSockets, userRoom } from '../../sockets/user-sockets.js';
+import { emitToUser, isUserRoom, joinUserSocketsToRoom, listUserSockets } from '../../sockets/user-sockets.js';
 import { LINK_PREVIEW_ENCRYPTED_LIMITS } from '../link-preview/index.js';
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
+import { emitMessageUpdate } from './message.broadcast.js';
 import { parseMentionedUserIds } from './message.mentions.js';
 import type { MessageRateLimiter } from './message.rate-limiter.js';
 import { messageViewSchema, messagesListPayloadSchema, newMessagePayloadSchema } from './message.schemas.js';
@@ -81,6 +83,7 @@ const sendMessagePayloadSchema = z
     mentionedUserIds: z.array(z.string().trim().min(1)).max(50).optional(),
     caption: z.string().trim().max(3000).optional(),
     linkPreview: linkPreviewSchema.optional(),
+    attachmentUrls: z.array(z.string().trim().min(1).max(4000)).max(4).optional(),
   })
   .refine((data) => data.type !== 'audio' || typeof data.duration === 'number', {
     message: 'duration é obrigatório para mensagens de áudio.',
@@ -154,56 +157,66 @@ export function registerMessageSocketHandlers(io: AppServer, socket: AppSocket, 
   const { typingService, recordingService, presenceService } = deps;
 
   socket.on('message:send', (payload) => {
-    void handleSendMessage(io, socket, deps, payload);
+    runSocketHandler(socket, 'message:send', () => handleSendMessage(io, socket, deps, payload));
   });
 
   socket.on('message:mark-read', (payload) => {
-    void handleMarkRead(socket, deps, payload);
+    runSocketHandler(socket, 'message:mark-read', () => handleMarkRead(socket, deps, payload));
   });
 
   socket.on('messages:get', (payload) => {
-    void handleGetMessages(socket, deps, payload);
+    runSocketHandler(socket, 'messages:get', () => handleGetMessages(socket, deps, payload));
   });
 
   socket.on('message:delete', (payload) => {
-    void handleDeleteMessage(io, socket, deps, payload);
+    runSocketHandler(socket, 'message:delete', () => handleDeleteMessage(io, socket, deps, payload));
   });
 
   socket.on('typing:start', (payload) => {
-    handleActivityChange(io, socket, payload, 'typing', 'start', (roomId, userId) => typingService.startTyping(roomId, userId));
+    runSocketHandler(socket, 'typing:start', () => {
+      handleActivityChange(io, socket, payload, 'typing', 'start', (roomId, userId) => typingService.startTyping(roomId, userId));
+    });
   });
 
   socket.on('typing:stop', (payload) => {
-    handleActivityChange(io, socket, payload, 'typing', 'stop', (roomId, userId) => typingService.stopTyping(roomId, userId));
+    runSocketHandler(socket, 'typing:stop', () => {
+      handleActivityChange(io, socket, payload, 'typing', 'stop', (roomId, userId) => typingService.stopTyping(roomId, userId));
+    });
   });
 
   socket.on('recording:start', (payload) => {
-    handleActivityChange(io, socket, payload, 'recording', 'start', (roomId, userId) => recordingService.startRecording(roomId, userId));
+    runSocketHandler(socket, 'recording:start', () => {
+      handleActivityChange(io, socket, payload, 'recording', 'start', (roomId, userId) => recordingService.startRecording(roomId, userId));
+    });
   });
 
   socket.on('recording:stop', (payload) => {
-    handleActivityChange(io, socket, payload, 'recording', 'stop', (roomId, userId) => recordingService.stopRecording(roomId, userId));
+    runSocketHandler(socket, 'recording:stop', () => {
+      handleActivityChange(io, socket, payload, 'recording', 'stop', (roomId, userId) => recordingService.stopRecording(roomId, userId));
+    });
   });
 
   socket.on('audio:played', (payload) => {
-    void handleAudioPlayed(io, socket, deps, payload);
+    runSocketHandler(socket, 'audio:played', () => handleAudioPlayed(io, socket, deps, payload));
   });
 
   socket.on('room:view-start', (payload) => {
-    void handleRoomView(io, socket, deps, payload, 'view');
+    runSocketHandler(socket, 'room:view-start', () => handleRoomView(io, socket, deps, payload, 'view'));
   });
 
   socket.on('room:view-stop', (payload) => {
-    void handleRoomView(io, socket, deps, payload, 'leave');
+    runSocketHandler(socket, 'room:view-stop', () => handleRoomView(io, socket, deps, payload, 'leave'));
   });
 
   socket.on('disconnect', () => {
-    const userId = socket.data.userId;
-    if (!userId) {
-      return;
-    }
+    runSocketHandler(socket, 'disconnect', () => {
+      const userId = socket.data.userId;
+      if (!userId) {
+        return;
+      }
 
-    releaseSocketActivity(io, socket, { typingService, recordingService, presenceService }, userId);
+      releaseSocketActivity(io, socket, { typingService, recordingService, presenceService }, userId);
+    });
   });
 }
 
@@ -298,6 +311,7 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       fileMeta,
       caption,
       linkPreview,
+      attachmentUrls,
       mentionedUserIds: clientMentionedUserIds,
     } = parsed;
 
@@ -348,6 +362,7 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       fileMeta,
       caption,
       linkPreview,
+      attachmentUrls,
     });
     const reactivatedBefore = new Date(new Date(message.timestamp).getTime() - 1000).toISOString();
     const updatedRoom = (await roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;
@@ -425,18 +440,11 @@ async function handleDeleteMessage(io: AppServer, socket: AppSocket, deps: Messa
     }
 
     for (const view of views) {
-      const hiddenFrom = room.participants
-        .filter((participantId) => !isWithinVisibility(deps.roomService.getVisibilityCutoff(room, participantId), view.timestamp))
-        .map(userRoom);
-      io.to(updated.roomId).except(hiddenFrom).emit('message:updated', view);
+      emitMessageUpdate(io, deps.roomService, room, view);
     }
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
-}
-
-function isWithinVisibility(cutoff: string | undefined, timestamp: string): boolean {
-  return cutoff === undefined || timestamp > cutoff;
 }
 
 async function handleAudioPlayed(io: AppServer, socket: AppSocket, deps: MessageSocketDeps, payload: unknown): Promise<void> {
@@ -456,7 +464,7 @@ async function handleAudioPlayed(io: AppServer, socket: AppSocket, deps: Message
   }
 
   const room = await deps.roomService.getRoomById(message.roomId);
-  if (!room || !deps.roomService.isParticipant(room, userId)) {
+  if (!room || !deps.roomService.isParticipant(room, userId) || !deps.roomService.canSeeMessage(room, userId, message.timestamp)) {
     return;
   }
 
@@ -466,7 +474,7 @@ async function handleAudioPlayed(io: AppServer, socket: AppSocket, deps: Message
   }
 
   const view = await deps.messageService.toView(updated);
-  io.to(updated.roomId).emit('message:updated', view);
+  emitMessageUpdate(io, deps.roomService, room, view);
 }
 
 function handleActivityChange(
@@ -521,8 +529,9 @@ async function handleMarkRead(socket: AppSocket, deps: MessageSocketDeps, payloa
       return;
     }
 
-    await messageService.markRoomAsRead(roomId, userId, messageIds);
-    const { unreadCount, mentionCount } = await messageService.countUnreadForUser(roomId, userId);
+    const after = roomService.getVisibilityCutoff(room, userId);
+    await messageService.markRoomAsRead(roomId, userId, messageIds, after);
+    const { unreadCount, mentionCount } = await messageService.countUnreadForUser(roomId, userId, after);
 
     socket.emit('message:mark-read-done', { roomId, unreadCount, mentionCount });
     socket.to(roomId).emit('message:read-receipt', { roomId, userId });

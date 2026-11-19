@@ -8,10 +8,13 @@ import { errorPayload } from '../../lib/app-error.js';
 import type { UploadKind } from '../../lib/error-catalog.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import { StorageQuotaExceededError, type StorageQuota } from '../../storage/storage-quota.js';
+import type { UploadRegistry } from '../../storage/upload-registry.js';
 import { verifyFileSignature } from './message.file-signature.js';
+import { isNeutralUpload, NEUTRAL_UPLOAD_EXTENSION, NEUTRAL_UPLOAD_MIME_TYPE } from './message.upload.js';
 
 const INLINE_SAFE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.mov', '.avi']);
 const UPLOAD_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+export const MAX_USER_STORAGE_BYTES = 500 * 1024 * 1024;
 
 function decodeOriginalFilename(originalname: string): string {
   return Buffer.from(originalname, 'latin1').toString('utf8');
@@ -33,16 +36,16 @@ function attachmentDispositionFor(originalname: string): string | undefined {
 export const mediaUploadResponseSchema = z
   .object({
     url: z.string().openapi({ example: 'https://pub-xxxxxxxx.r2.dev/uploads/images/3f1b2c.png', description: 'URL pública do arquivo enviado' }),
-    mimeType: z.string().openapi({ example: 'image/png' }),
+    mimeType: z.string().optional().openapi({ example: 'image/png', description: 'Ausente em envios criptografados' }),
   })
   .openapi('MediaUploadResponse');
 
 export const fileUploadResponseSchema = z
   .object({
     url: z.string().openapi({ example: 'https://pub-xxxxxxxx.r2.dev/uploads/files/3f1b2c.pdf', description: 'URL pública do arquivo enviado' }),
-    name: z.string().openapi({ example: 'relatorio.pdf', description: 'Nome original do arquivo' }),
-    mimeType: z.string().openapi({ example: 'application/pdf' }),
-    size: z.number().int().nonnegative().openapi({ example: 204800, description: 'Tamanho em bytes' }),
+    name: z.string().optional().openapi({ example: 'relatorio.pdf', description: 'Nome original do arquivo; ausente em envios criptografados' }),
+    mimeType: z.string().optional().openapi({ example: 'application/pdf', description: 'Ausente em envios criptografados' }),
+    size: z.number().int().nonnegative().optional().openapi({ example: 204800, description: 'Tamanho em bytes; ausente em envios criptografados' }),
   })
   .openapi('FileUploadResponse');
 
@@ -56,12 +59,30 @@ interface UploadHandlerOptions<TResponse> {
 function createUploadHandler<TResponse>(
   objectStorage: ObjectStorage,
   storageQuota: StorageQuota,
+  uploadRegistry: UploadRegistry,
   { kind, buildKey, buildResponse, contentDisposition }: UploadHandlerOptions<TResponse>,
 ) {
   return async (req: Request, res: Response): Promise<void> => {
     const file = req.file;
+    const uploaderId = req.authenticatedUser?.id;
+    if (!uploaderId) {
+      res.status(401).json(errorPayload('auth.required'));
+      return;
+    }
+
     if (!file) {
       res.status(400).json(errorPayload('upload.missingFile', { kind }));
+      return;
+    }
+
+    const encrypted = isEncryptedUpload(req);
+    if (!encrypted && isNeutralUpload(file)) {
+      res.status(400).json(errorPayload('upload.invalidType', { kind }));
+      return;
+    }
+
+    if ((await uploadRegistry.totalBytesFor(uploaderId)) + file.size > MAX_USER_STORAGE_BYTES) {
+      res.status(507).json(errorPayload('upload.userQuotaExceeded'));
       return;
     }
 
@@ -75,38 +96,39 @@ function createUploadHandler<TResponse>(
       throw err;
     }
 
-    const encrypted = isEncryptedUpload(req);
     if (!encrypted && !verifyFileSignature(file.buffer, file.mimetype)) {
       res.status(400).json(errorPayload('upload.contentMismatch'));
       return;
     }
 
-    const filename = `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`;
-    const key = buildKey(filename);
+    const extension = encrypted ? NEUTRAL_UPLOAD_EXTENSION : path.extname(file.originalname).toLowerCase();
+    const key = buildKey(`${randomUUID()}${extension}`);
     await objectStorage.putObject(key, file.buffer, {
-      contentType: file.mimetype,
-      contentDisposition: contentDisposition?.(file.originalname),
+      contentType: encrypted ? NEUTRAL_UPLOAD_MIME_TYPE : file.mimetype,
+      contentDisposition: encrypted ? 'attachment' : contentDisposition?.(file.originalname),
       cacheControl: UPLOAD_CACHE_CONTROL,
     });
+    await uploadRegistry.register(key, uploaderId, file.size);
     await storageQuota.recordUsage(file.size);
 
-    res.status(201).json(buildResponse(file, withEncryptedMarker(objectStorage.publicUrl(key), encrypted)));
+    const url = withEncryptedMarker(objectStorage.publicUrl(key), encrypted);
+    res.status(201).json(encrypted ? { url } : buildResponse(file, url));
   };
 }
 
-export function createMessageController(objectStorage: ObjectStorage, storageQuota: StorageQuota) {
+export function createMessageController(objectStorage: ObjectStorage, storageQuota: StorageQuota, uploadRegistry: UploadRegistry) {
   return {
-    uploadImage: createUploadHandler(objectStorage, storageQuota, {
+    uploadImage: createUploadHandler(objectStorage, storageQuota, uploadRegistry, {
       kind: 'image',
       buildKey: imageObjectKey,
       buildResponse: (file, url) => ({ url, mimeType: file.mimetype }),
     }),
-    uploadAudio: createUploadHandler(objectStorage, storageQuota, {
+    uploadAudio: createUploadHandler(objectStorage, storageQuota, uploadRegistry, {
       kind: 'audio',
       buildKey: audioObjectKey,
       buildResponse: (file, url) => ({ url, mimeType: file.mimetype }),
     }),
-    uploadFile: createUploadHandler(objectStorage, storageQuota, {
+    uploadFile: createUploadHandler(objectStorage, storageQuota, uploadRegistry, {
       kind: 'file',
       buildKey: fileObjectKey,
       contentDisposition: attachmentDispositionFor,

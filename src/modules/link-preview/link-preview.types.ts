@@ -7,7 +7,7 @@ export interface LinkPreviewMetadata {
 }
 
 export interface LinkPreviewCacheRecord {
-  url: string;
+  cacheKey: string;
   status: 'ok' | 'error';
   title: string | null;
   description: string | null;

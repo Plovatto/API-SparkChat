@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getSodium } from '@/modules/ai/ai.crypto.js';
-import { guessMimeTypeFromUrl, loadDecryptedAttachment, resolveObjectKey } from '@/modules/ai/ai.attachments.js';
+import { guessMimeTypeFromUrl, loadDecryptedAttachment, resolveAudioMimeType, resolveObjectKey } from '@/modules/ai/ai.attachments.js';
 import { InMemoryObjectStorage } from '@/storage/object-storage.js';
 
 describe('guessMimeTypeFromUrl', () => {
@@ -8,6 +8,23 @@ describe('guessMimeTypeFromUrl', () => {
     expect(guessMimeTypeFromUrl('https://cdn.test/uploads/images/abc.png')).toBe('image/png');
     expect(guessMimeTypeFromUrl('https://cdn.test/uploads/audio/abc.webm?e2e=1')).toBe('audio/webm');
     expect(guessMimeTypeFromUrl('https://cdn.test/uploads/files/abc.zip')).toBeNull();
+  });
+});
+
+describe('resolveAudioMimeType', () => {
+  it('prefers the declared audio type and drops codec parameters', () => {
+    expect(resolveAudioMimeType('audio/webm;codecs=opus', 'https://cdn.test/uploads/audio/abc.bin?e2e=1')).toBe('audio/webm');
+    expect(resolveAudioMimeType('audio/x-wav', 'https://cdn.test/uploads/audio/abc.bin?e2e=1')).toBe('audio/wav');
+  });
+
+  it('falls back to the url extension when the declared type is missing or not audio', () => {
+    expect(resolveAudioMimeType(null, 'https://cdn.test/uploads/audio/abc.m4a?e2e=1')).toBe('audio/mp4');
+    expect(resolveAudioMimeType('text/html', 'https://cdn.test/uploads/audio/abc.ogg')).toBe('audio/ogg');
+  });
+
+  it('returns null when neither source names a supported audio type', () => {
+    expect(resolveAudioMimeType('application/octet-stream', 'https://cdn.test/uploads/audio/abc.bin?e2e=1')).toBeNull();
+    expect(resolveAudioMimeType(null, 'https://cdn.test/uploads/images/abc.png')).toBeNull();
   });
 });
 
@@ -44,7 +61,7 @@ describe('loadDecryptedAttachment', () => {
     await objectStorage.putObject('uploads/images/photo.png', combined, { contentType: 'image/png' });
     const url = `${objectStorage.publicUrl('uploads/images/photo.png')}?e2e=1`;
 
-    const result = await loadDecryptedAttachment(url, roomKey, objectStorage);
+    const result = await loadDecryptedAttachment(url, roomKey, objectStorage, 1024 * 1024);
     expect(result?.toString('utf8')).toBe('fake image bytes');
   });
 
@@ -62,7 +79,7 @@ describe('loadDecryptedAttachment', () => {
     await objectStorage.putObject('uploads/images/photo.png', combined, { contentType: 'image/png' });
     const url = `${objectStorage.publicUrl('uploads/images/photo.png')}?e2e=1`;
 
-    const result = await loadDecryptedAttachment(url, otherKey, objectStorage);
+    const result = await loadDecryptedAttachment(url, otherKey, objectStorage, 1024 * 1024);
     expect(result).toBeNull();
   });
 
@@ -72,7 +89,7 @@ describe('loadDecryptedAttachment', () => {
     const roomKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
     const url = `${objectStorage.publicUrl('uploads/images/missing.png')}?e2e=1`;
 
-    const result = await loadDecryptedAttachment(url, roomKey, objectStorage);
+    const result = await loadDecryptedAttachment(url, roomKey, objectStorage, 1024 * 1024);
     expect(result).toBeNull();
   });
 });

@@ -2,19 +2,21 @@ import { z } from 'zod';
 import { getClientIp } from '../../config/client-ip.js';
 import { errorPayloadSchema } from '../../docs/common-schemas.js';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
-import { errorPayload } from '../../lib/app-error.js';
+import { AppError, errorPayload } from '../../lib/app-error.js';
 import { SUPPORTED_LOCALES } from '../../lib/locale.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { exceedsLookupLimit, lookupTooLargePayload } from '../../sockets/id-lookup.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
+import { runSocketHandler } from '../../sockets/socket-handler.js';
 import { bindSocketSession, clearSocketSession, requireSocketUserId } from '../../sockets/socket-session.js';
-import { hasVisibleUserSocket, listUserSockets, userRoom } from '../../sockets/user-sockets.js';
-import type { MessageService } from '../messages/index.js';
+import { findSocketsBoundToUser, hasVisibleUserSocket, userRoom } from '../../sockets/user-sockets.js';
+import { emitMessageUpdate, type MessageService } from '../messages/index.js';
 import type { RoomService } from '../rooms/index.js';
 import { describeDevice } from './user.device.js';
 import { getPublicKeysPayloadSchema, publishE2eKeysPayloadSchema } from './user.e2e-keys.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
 import {
+  type AuthMethod,
   NICKNAME_MAX_LENGTH,
   NICKNAME_MIN_LENGTH,
   PASSWORD_MIN_LENGTH,
@@ -23,6 +25,7 @@ import {
   userThemeSchema,
 } from './user.model.js';
 import type { UserService } from './user.service.js';
+import type { RevokedSession } from './user.session-revocations.js';
 
 export interface UserSocketDeps {
   userService: UserService;
@@ -51,9 +54,18 @@ const joinPayloadSchema = z.discriminatedUnion('mode', [
   }),
 ]);
 
+const currentPasswordSchema = z.string().optional().openapi({
+  description: 'Senha atual. Obrigatória para trocar o nickname, regenerar o arquivo de recuperação e trocar a senha',
+});
+
 const updateProfilePayloadSchema = z.object({
   nickname: z.string().trim().min(NICKNAME_MIN_LENGTH).max(NICKNAME_MAX_LENGTH),
   avatar: z.number().int().min(0),
+  currentPassword: currentPasswordSchema,
+});
+
+const regenerateRecoveryFilePayloadSchema = z.object({
+  currentPassword: currentPasswordSchema,
 });
 
 const updateStatusTextPayloadSchema = z.object({
@@ -65,7 +77,7 @@ const visibilityPayloadSchema = z.object({
 });
 
 const changePasswordPayloadSchema = z.object({
-  currentPassword: z.string().optional(),
+  currentPassword: currentPasswordSchema,
   newPassword: z.string().min(PASSWORD_MIN_LENGTH),
 });
 
@@ -96,7 +108,7 @@ registerClientEvents('users', {
   'user:visibility': visibilityPayloadSchema,
   'user:set-locale': setLocalePayloadSchema,
   'user:change-password': changePasswordPayloadSchema,
-  'user:regenerate-recovery-file': null,
+  'user:regenerate-recovery-file': regenerateRecoveryFilePayloadSchema,
   'user:logout': null,
   'user:list-sessions': null,
   'user:revoke-session': revokeSessionPayloadSchema,
@@ -128,68 +140,71 @@ registerServerEvents('users', [
 
 export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, deps: UserSocketDeps): void {
   socket.on('user:join', (payload) => {
-    void handleJoin(io, socket, deps, payload);
+    runSocketHandler(socket, 'user:join', () => handleJoin(io, socket, deps, payload));
   });
 
   socket.on('user:update-profile', (payload) => {
-    void handleUpdateProfile(io, socket, deps, payload);
+    runSocketHandler(socket, 'user:update-profile', () => handleUpdateProfile(io, socket, deps, payload));
   });
 
   socket.on('user:update-status-text', (payload) => {
-    void handleUpdateStatusText(io, socket, deps, payload);
+    runSocketHandler(socket, 'user:update-status-text', () => handleUpdateStatusText(io, socket, deps, payload));
   });
 
   socket.on('user:update-theme', (payload) => {
-    void handleUpdateTheme(socket, deps, payload);
+    runSocketHandler(socket, 'user:update-theme', () => handleUpdateTheme(socket, deps, payload));
   });
 
   socket.on('user:update-chat-settings', (payload) => {
-    void handleUpdateChatSettings(socket, deps, payload);
+    runSocketHandler(socket, 'user:update-chat-settings', () => handleUpdateChatSettings(socket, deps, payload));
   });
 
   socket.on('user:visibility', (payload, ack) => {
     ack?.();
-    void handleVisibility(io, socket, deps, payload);
+    runSocketHandler(socket, 'user:visibility', () => handleVisibility(io, socket, deps, payload));
   });
 
   socket.on('user:set-locale', (payload) => {
-    handleSetLocale(socket, payload);
+    runSocketHandler(socket, 'user:set-locale', () => {
+      handleSetLocale(socket, payload);
+    });
   });
 
   socket.on('user:change-password', (payload) => {
-    void handleChangePassword(io, socket, deps, payload);
+    runSocketHandler(socket, 'user:change-password', () => handleChangePassword(io, socket, deps, payload));
   });
 
-  socket.on('user:regenerate-recovery-file', () => {
-    void handleRegenerateRecoveryFile(socket, deps);
+  socket.on('user:regenerate-recovery-file', (payload) => {
+    runSocketHandler(socket, 'user:regenerate-recovery-file', () => handleRegenerateRecoveryFile(io, socket, deps, payload));
   });
 
   socket.on('user:logout', () => {
-    void handleLogout(io, socket, deps);
+    runSocketHandler(socket, 'user:logout', () => handleLogout(io, socket, deps));
   });
 
   socket.on('user:list-sessions', () => {
-    void handleListSessions(socket, deps);
+    runSocketHandler(socket, 'user:list-sessions', () => handleListSessions(socket, deps));
   });
 
   socket.on('user:revoke-session', (payload) => {
-    void handleRevokeSession(io, socket, deps, payload);
+    runSocketHandler(socket, 'user:revoke-session', () => handleRevokeSession(io, socket, deps, payload));
   });
 
   socket.on('e2e:publish-keys', (payload) => {
-    void handlePublishE2eKeys(socket, deps, payload);
+    runSocketHandler(socket, 'e2e:publish-keys', () => handlePublishE2eKeys(socket, deps, payload));
   });
 
   socket.on('e2e:get-public-keys', (payload) => {
-    void handleGetPublicKeys(socket, deps, payload);
+    runSocketHandler(socket, 'e2e:get-public-keys', () => handleGetPublicKeys(socket, deps, payload));
   });
 
   socket.on('e2e:get-my-keys', () => {
-    void handleGetMyKeys(socket, deps);
+    runSocketHandler(socket, 'e2e:get-my-keys', () => handleGetMyKeys(socket, deps));
   });
 
   socket.on('disconnect', () => {
-    void handleDisconnect(io, socket, deps);
+    deps.loginRateLimiter.forgetSocket(socket.id);
+    runSocketHandler(socket, 'disconnect', () => handleDisconnect(io, socket, deps));
   });
 }
 
@@ -224,7 +239,9 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
         userAgent: socket.handshake.headers['user-agent'] ?? '',
       });
 
-      await bindSocketSession(socket, { userId: user.id, authMethod: 'password', sessionId });
+      if (!(await bindActiveSocketSession(socket, deps, { userId: user.id, authMethod: 'password', sessionId }))) {
+        return;
+      }
       socket.emit('user:registered', {
         user: userService.toPublicUser(user),
         sessionToken,
@@ -234,6 +251,15 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
       });
       socket.to(await contactRooms(deps, user.id)).emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
       await deliverPendingMessages(io, deps, user.id);
+      return;
+    }
+
+    if (!loginRateLimiter.reserveResume(socket.id, getClientIp(socket.request))) {
+      socket.emit('user:auth-failed', {
+        mode: 'resume',
+        reason: 'temporary',
+        ...errorPayload('rateLimit.resumeAttempts'),
+      });
       return;
     }
 
@@ -248,7 +274,9 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
     }
 
     const { user, authMethod, sessionId } = resumed;
-    await bindSocketSession(socket, { userId: user.id, authMethod, sessionId });
+    if (!(await bindActiveSocketSession(socket, deps, { userId: user.id, authMethod, sessionId }))) {
+      return;
+    }
     socket.emit('user:resumed', { user: userService.toPublicUser(user), authMethod });
     socket.to(await contactRooms(deps, user.id)).emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
     await deliverPendingMessages(io, deps, user.id);
@@ -262,11 +290,67 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
   }
 }
 
+async function bindActiveSocketSession(
+  socket: AppSocket,
+  deps: UserSocketDeps,
+  binding: { userId: string; authMethod: AuthMethod; sessionId: string },
+): Promise<boolean> {
+  if (!(await bindSocketSession(socket, binding))) {
+    return false;
+  }
+
+  if (await deps.userService.isSessionActive(binding.userId, binding.sessionId)) {
+    return true;
+  }
+
+  await clearSocketSession(socket);
+  socket.emit('user:session-revoked');
+  socket.disconnect(true);
+  return false;
+}
+
+async function requireActiveSocketSession(socket: AppSocket, deps: UserSocketDeps): Promise<{ userId: string; sessionId: string } | null> {
+  const { userId, sessionId } = socket.data;
+  if (!userId || !sessionId) {
+    socket.emit('error', errorPayload('auth.unauthenticated'));
+    return null;
+  }
+
+  if (await deps.userService.isSessionActive(userId, sessionId)) {
+    return { userId, sessionId };
+  }
+
+  socket.emit('user:session-revoked');
+  socket.disconnect(true);
+  return null;
+}
+
+async function withPasswordAttempt<T>(deps: UserSocketDeps, userId: string, currentPassword: string | undefined, action: () => Promise<T>): Promise<T> {
+  const verifiesPassword = typeof currentPassword === 'string' && currentPassword.length > 0;
+  if (verifiesPassword && !deps.loginRateLimiter.reserveReauthAttempt(userId)) {
+    throw AppError.of('rateLimit.passwordAttempts');
+  }
+
+  try {
+    const result = await action();
+    if (verifiesPassword) {
+      deps.loginRateLimiter.releaseReauthAttempt(userId);
+    }
+    return result;
+  } catch (error) {
+    const isWrongPassword = error instanceof AppError && error.code === 'user.currentPasswordIncorrect';
+    if (verifiesPassword && !isWrongPassword) {
+      deps.loginRateLimiter.releaseReauthAttempt(userId);
+    }
+    throw error;
+  }
+}
+
 async function deliverPendingMessages(io: AppServer, deps: UserSocketDeps, userId: string): Promise<void> {
   const { roomService, messageService } = deps;
   const rooms = await roomService.getVisibleRoomsForUser(userId);
   const deliveredByRoom = await messageService.markPendingMessagesDeliveredInRooms(
-    rooms.map((room) => room.id),
+    rooms.map((room) => ({ roomId: room.id, after: roomService.getVisibilityCutoff(room, userId) })),
     userId,
   );
 
@@ -278,24 +362,34 @@ async function deliverPendingMessages(io: AppServer, deps: UserSocketDeps, userI
 
     const views = await messageService.toViews(delivered);
     for (const view of views) {
-      io.to(room.id).emit('message:updated', view);
+      emitMessageUpdate(io, roomService, room, view);
     }
   }
 }
 
 async function handleUpdateProfile(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
-  const userId = requireSocketUserId(socket);
-  if (!userId) {
+  if (!requireSocketUserId(socket)) {
     return;
   }
 
   try {
-    const { nickname, avatar } = updateProfilePayloadSchema.parse(payload);
-    const result = await deps.userService.updateProfile(userId, { nickname, avatar });
+    const { nickname, avatar, currentPassword } = updateProfilePayloadSchema.parse(payload);
+    const session = await requireActiveSocketSession(socket, deps);
+    if (!session) {
+      return;
+    }
+
+    const result = await withPasswordAttempt(deps, session.userId, currentPassword, () =>
+      deps.userService.updateProfile(session.userId, { nickname, avatar, currentPassword }, session.sessionId),
+    );
 
     if (!result) {
       socket.emit('error', errorPayload('user.notFound'));
       return;
+    }
+
+    if (result.recoveryToken) {
+      revokeUserSockets(io, session.userId, socket, (target) => target.data.sessionId !== session.sessionId);
     }
 
     io.to(await contactRooms(deps, result.user.id)).emit('user:profile-updated', {
@@ -393,14 +487,18 @@ async function markOfflineIfNoVisibleSocket(io: AppServer, deps: UserSocketDeps,
   });
 }
 
-function revokeUserSockets(io: AppServer, userId: string, requester: AppSocket, shouldRevoke: (target: AppSocket) => boolean): void {
-  for (const target of listUserSockets(io, userId)) {
-    if (target.id === requester.id || !shouldRevoke(target)) {
+function revokeUserSockets(io: AppServer, userId: string, requester: AppSocket | null, shouldRevoke: (target: AppSocket) => boolean): void {
+  for (const target of findSocketsBoundToUser(io, userId)) {
+    if (target.id === requester?.id || !shouldRevoke(target)) {
       continue;
     }
     target.emit('user:session-revoked');
     target.disconnect(true);
   }
+}
+
+export function disconnectRevokedSession(io: AppServer, revoked: RevokedSession): void {
+  revokeUserSockets(io, revoked.userId, null, (target) => target.data.sessionId === revoked.sessionId);
 }
 
 async function handleLogout(io: AppServer, socket: AppSocket, deps: UserSocketDeps): Promise<void> {
@@ -469,15 +567,21 @@ async function handleVisibility(io: AppServer, socket: AppSocket, deps: UserSock
 }
 
 async function handleChangePassword(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
-  const userId = requireSocketUserId(socket);
-  if (!userId) {
+  if (!requireSocketUserId(socket)) {
     return;
   }
 
   try {
     const { currentPassword, newPassword } = changePasswordPayloadSchema.parse(payload);
-    const authMethod = socket.data.authMethod ?? 'password';
-    const { recoveryFile, recoveryToken } = await deps.userService.changePassword(userId, currentPassword, newPassword, authMethod);
+    const session = await requireActiveSocketSession(socket, deps);
+    if (!session) {
+      return;
+    }
+
+    const { userId, sessionId } = session;
+    const { recoveryFile, recoveryToken } = await withPasswordAttempt(deps, userId, currentPassword, () =>
+      deps.userService.changePassword(userId, { currentPassword, newPassword, sessionId }),
+    );
 
     revokeUserSockets(io, userId, socket, () => true);
     await releaseSocketUser(io, socket, deps);
@@ -487,14 +591,24 @@ async function handleChangePassword(io: AppServer, socket: AppSocket, deps: User
   }
 }
 
-async function handleRegenerateRecoveryFile(socket: AppSocket, deps: UserSocketDeps): Promise<void> {
-  const userId = requireSocketUserId(socket);
-  if (!userId) {
+async function handleRegenerateRecoveryFile(io: AppServer, socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+  if (!requireSocketUserId(socket)) {
     return;
   }
 
   try {
-    const { recoveryFile, recoveryToken } = await deps.userService.regenerateRecoveryFile(userId);
+    const { currentPassword } = regenerateRecoveryFilePayloadSchema.parse(payload ?? {});
+    const session = await requireActiveSocketSession(socket, deps);
+    if (!session) {
+      return;
+    }
+
+    const { userId, sessionId } = session;
+    const { recoveryFile, recoveryToken } = await withPasswordAttempt(deps, userId, currentPassword, () =>
+      deps.userService.regenerateRecoveryFile(userId, currentPassword, sessionId),
+    );
+
+    revokeUserSockets(io, userId, socket, (target) => target.data.sessionId !== sessionId);
 
     socket.emit('user:recovery-file-regenerated', { recoveryFile: recoveryFile.toString('base64'), recoveryToken });
   } catch (error) {

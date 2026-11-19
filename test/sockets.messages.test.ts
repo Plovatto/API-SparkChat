@@ -188,7 +188,7 @@ describe('room authorization for activity and receipts', () => {
     const audio = await h.messageService.sendMessage({
       roomId: room.id,
       senderId: alice.user.id,
-      content: 'https://cdn.test/uploads/audio/a.webm',
+      content: await h.storeUpload(alice.user.id, 'uploads/audio/a.webm'),
       type: 'audio',
       duration: 3,
     });

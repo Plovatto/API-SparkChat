@@ -145,14 +145,14 @@ describe('MessageService', () => {
   });
 
   it('stores and returns file metadata for a file message', async () => {
-    const { messageService, userService } = await buildRoomService();
+    const { storeUpload, messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const fileMeta = { name: 'relatorio.pdf', mimeType: 'application/pdf', size: 204800 };
 
     const message = await messageService.sendMessage({
       roomId: 'room-1',
       senderId: alice.id,
-      content: '/uploads/files/abc.pdf',
+      content: await storeUpload(alice.id, 'uploads/files/abc.pdf'),
       type: 'file',
       fileMeta,
     });
@@ -163,14 +163,14 @@ describe('MessageService', () => {
   });
 
   it('hides fileMeta of a deleted-for-everyone file message in its view', async () => {
-    const { messageService, messageRepository, userService } = await buildRoomService();
+    const { storeUpload, messageService, messageRepository, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const fileMeta = { name: 'relatorio.pdf', mimeType: 'application/pdf', size: 204800 };
 
     const message = await messageService.sendMessage({
       roomId: 'room-1',
       senderId: alice.id,
-      content: '/uploads/files/abc.pdf',
+      content: await storeUpload(alice.id, 'uploads/files/abc.pdf'),
       type: 'file',
       fileMeta,
     });
@@ -213,21 +213,23 @@ describe('MessageService', () => {
   });
 
   it('deletes the underlying image and thumbnail objects from storage when the message is deleted', async () => {
-    const { messageService, userService, objectStorage, storageQuota, storageUsageRepository } = await buildRoomService();
+    const { messageService, userService, objectStorage, storageQuota, storageUsageRepository, uploadRegistry } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
     const imageKey = 'uploads/images/photo.png';
     const thumbnailKey = 'uploads/images/photo-thumb.webp';
     await objectStorage.putObject(imageKey, Buffer.from('fake image bytes'), { contentType: 'image/png' });
     await objectStorage.putObject(thumbnailKey, Buffer.from('fake thumb bytes'), { contentType: 'image/webp' });
-    await storageQuota.recordUsage(17);
+    await uploadRegistry.register(imageKey, alice.id, 16);
+    await uploadRegistry.register(thumbnailKey, alice.id, 16);
+    await storageQuota.recordUsage(32);
 
     const message = await messageService.sendMessage({
       roomId: 'room-1',
       senderId: alice.id,
-      content: imageKey,
+      content: objectStorage.publicUrl(imageKey),
       type: 'image',
-      fileMeta: { name: 'photo.png', mimeType: 'image/png', size: 17, thumbnailUrl: thumbnailKey },
+      fileMeta: { name: 'photo.png', mimeType: 'image/png', size: 16, thumbnailUrl: objectStorage.publicUrl(thumbnailKey) },
     });
 
     await messageService.deleteMessage(message.id, alice.id);
@@ -272,7 +274,7 @@ describe('MessageService', () => {
   });
 
   it('includes fileMeta in the reply snapshot when replying to a file message', async () => {
-    const { messageService, userService } = await buildRoomService();
+    const { storeUpload, messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const fileMeta = { name: 'video.mp4', mimeType: 'video/mp4', size: 102400 };
@@ -280,7 +282,7 @@ describe('MessageService', () => {
     const original = await messageService.sendMessage({
       roomId: 'room-1',
       senderId: alice.id,
-      content: '/uploads/files/video.mp4',
+      content: await storeUpload(alice.id, 'uploads/files/video.mp4'),
       type: 'file',
       fileMeta,
     });
@@ -295,15 +297,15 @@ describe('MessageService', () => {
   });
 
   it('leaves replyTo null when the replied message belongs to another room', async () => {
-    const { messageService, userService } = await buildRoomService();
+    const { storeUpload, messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const mallory = await createUser(userService, 'Mallory');
-    const fileMeta = { name: 'segredo.pdf', mimeType: 'application/pdf', size: 10, thumbnailUrl: 'https://cdn.test/uploads/images/thumb.webp' };
+    const fileMeta = { name: 'segredo.pdf', mimeType: 'application/pdf', size: 10, thumbnailUrl: await storeUpload(alice.id, 'uploads/images/thumb.webp') };
 
     const secret = await messageService.sendMessage({
       roomId: 'room-private',
       senderId: alice.id,
-      content: 'https://cdn.test/uploads/files/segredo.pdf',
+      content: await storeUpload(alice.id, 'uploads/files/segredo.pdf'),
       type: 'file',
       fileMeta,
       caption: 'ciphertext-da-legenda',
@@ -341,15 +343,15 @@ describe('MessageService', () => {
   });
 
   it('neutralizes the reply snapshots of a message deleted for everyone and returns the affected replies', async () => {
-    const { messageService, messageRepository, userService } = await buildRoomService();
+    const { storeUpload, messageService, messageRepository, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
-    const fileMeta = { name: 'foto.png', mimeType: 'image/png', size: 10, thumbnailUrl: 'https://cdn.test/uploads/images/thumb.webp' };
+    const fileMeta = { name: 'foto.png', mimeType: 'image/png', size: 10, thumbnailUrl: await storeUpload(alice.id, 'uploads/images/thumb.webp') };
 
     const original = await messageService.sendMessage({
       roomId: 'room-1',
       senderId: alice.id,
-      content: 'https://cdn.test/uploads/images/foto.png',
+      content: await storeUpload(alice.id, 'uploads/images/foto.png'),
       type: 'image',
       fileMeta,
       caption: 'legenda',
@@ -437,14 +439,14 @@ describe('MessageService', () => {
 
 describe('MessageService.markAudioPlayed', () => {
   it('adds the listener to playedBy on first play', async () => {
-    const { messageService, userService } = await buildRoomService();
+    const { storeUpload, messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
     const message = await messageService.sendMessage({
       roomId: 'room-1',
       senderId: alice.id,
-      content: '/uploads/audio/clip.webm',
+      content: await storeUpload(alice.id, 'uploads/audio/clip.webm'),
       type: 'audio',
       duration: 5,
     });
@@ -455,13 +457,13 @@ describe('MessageService.markAudioPlayed', () => {
   });
 
   it('is a no-op when the sender tries to mark their own audio as played', async () => {
-    const { messageService, userService } = await buildRoomService();
+    const { storeUpload, messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
     const message = await messageService.sendMessage({
       roomId: 'room-1',
       senderId: alice.id,
-      content: '/uploads/audio/clip.webm',
+      content: await storeUpload(alice.id, 'uploads/audio/clip.webm'),
       type: 'audio',
       duration: 5,
     });
@@ -472,14 +474,14 @@ describe('MessageService.markAudioPlayed', () => {
   });
 
   it('is a no-op when the same listener plays it again', async () => {
-    const { messageService, userService } = await buildRoomService();
+    const { storeUpload, messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
 
     const message = await messageService.sendMessage({
       roomId: 'room-1',
       senderId: alice.id,
-      content: '/uploads/audio/clip.webm',
+      content: await storeUpload(alice.id, 'uploads/audio/clip.webm'),
       type: 'audio',
       duration: 5,
     });
@@ -698,6 +700,7 @@ describe('MessageService.getRoomMessagesPage', () => {
     const room = await roomService.createPrivateRoom(alice.id, bob.id);
     await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'antes de sair' });
     await roomService.deleteForUser(room.id, bob.id);
+    await new Promise((resolve) => setTimeout(resolve, 5));
     await messageService.sendMessage({ roomId: room.id, senderId: alice.id, content: 'depois de voltar' });
 
     const roomAfterDelete = await roomService.getRoomById(room.id);

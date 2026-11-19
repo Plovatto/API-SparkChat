@@ -57,4 +57,17 @@ describe('StorageQuota', () => {
 
     await expect(quota.ensureCapacity(100)).rejects.toBeInstanceOf(StorageQuotaExceededError);
   });
+
+  it('never lets releases push the tracked total below zero', async () => {
+    const db = await createTestDb();
+    const repository = new StorageUsageRepository(db);
+    const quota = new StorageQuota(repository, 1000);
+
+    await quota.recordUsage(10);
+    await quota.releaseUsage(9_000_000_000_000);
+    await quota.releaseUsage(5);
+
+    expect(await repository.getBytesUsed()).toBe(0);
+    await expect(quota.ensureCapacity(1001)).rejects.toBeInstanceOf(StorageQuotaExceededError);
+  });
 });

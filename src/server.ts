@@ -16,11 +16,14 @@ import {
   TypingService,
 } from './modules/messages/index.js';
 import { RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
-import { LoginRateLimiter, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
+import { LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
+import { SOCKET_MAX_HTTP_BUFFER_SIZE } from './sockets/socket-options.js';
 import { createR2ObjectStorage } from './storage/r2-object-storage.js';
 import { StorageQuota } from './storage/storage-quota.js';
 import { StorageUsageRepository } from './storage/storage-usage.repository.js';
+import { OrphanUploadSweeper } from './storage/orphan-upload-sweeper.js';
+import { UploadRegistry } from './storage/upload-registry.js';
 import type {
   ClientToServerEvents,
   InterServerEvents,
@@ -28,12 +31,17 @@ import type {
   SocketData,
 } from './sockets/events.js';
 
+process.on('unhandledRejection', (reason) => {
+  logger.error({ err: reason }, 'Unhandled promise rejection');
+});
+
 await runMigrations(db);
 
 const userRepository = new UserRepository(db);
 const userSessionRepository = new UserSessionRepository(db);
 const userService = new UserService(userRepository, userSessionRepository, env.RECOVERY_FILE_SECRET);
 const loginRateLimiter = new LoginRateLimiter();
+const sessionRevocations = new SessionRevocationNotifier();
 
 const objectStorage = createR2ObjectStorage({
   accountId: env.R2_ACCOUNT_ID,
@@ -44,13 +52,20 @@ const objectStorage = createR2ObjectStorage({
 });
 const storageUsageRepository = new StorageUsageRepository(db);
 const storageQuota = new StorageQuota(storageUsageRepository);
+const uploadRegistry = new UploadRegistry(db);
+new OrphanUploadSweeper(uploadRegistry, objectStorage, storageQuota).start();
 
 const messageRepository = new MessageRepository(db);
-const messageService = new MessageService(messageRepository, userService, objectStorage, storageQuota);
+const messageService = new MessageService(messageRepository, userService, objectStorage, storageQuota, uploadRegistry);
 
 const roomRepository = new RoomRepository(db);
 const roomService = new RoomService(roomRepository, userService, messageService);
 const roomKeyRepository = new RoomKeyRepository(db);
+
+const { purgedParticipants, rotatedCodes } = await roomService.normalizeMembershipsAndInviteCodes();
+if (purgedParticipants > 0 || rotatedCodes > 0) {
+  logger.info({ purgedParticipants, rotatedCodes }, 'Room memberships and invite codes normalized');
+}
 
 const typingService = new TypingService();
 const recordingService = new RecordingService();
@@ -59,7 +74,8 @@ const messageRateLimiter = new MessageRateLimiter();
 const roomRateLimiter = new RoomActionRateLimiter();
 
 const linkPreviewRepository = new LinkPreviewRepository(db);
-const linkPreviewService = new LinkPreviewService(linkPreviewRepository, httpLinkPreviewFetcher);
+const linkPreviewService = new LinkPreviewService(linkPreviewRepository, httpLinkPreviewFetcher, env.RECOVERY_FILE_SECRET);
+await linkPreviewService.purgeExpired().catch((error: unknown) => logger.warn({ err: error }, 'Link preview cache purge failed'));
 
 const assistantIdentity = await loadAssistantIdentity(env.AI_ASSISTANT_PRIVATE_KEY);
 await ensureAssistantUser(userRepository, assistantIdentity);
@@ -76,7 +92,7 @@ const aiService = new AiService(
   objectStorage,
 );
 
-const app = createApp({ userService, loginRateLimiter, linkPreviewService, objectStorage, storageQuota });
+const app = createApp({ userService, loginRateLimiter, sessionRevocations, linkPreviewService, objectStorage, storageQuota, uploadRegistry });
 const httpServer = createServer(app);
 
 const io = new Server<
@@ -91,6 +107,7 @@ const io = new Server<
     credentials: true,
   },
   transports: ['websocket', 'polling'],
+  maxHttpBufferSize: SOCKET_MAX_HTTP_BUFFER_SIZE,
   pingInterval: 20000,
   pingTimeout: 25000,
   connectionStateRecovery: {
@@ -107,6 +124,7 @@ registerSocketHandlers(io, {
   recordingService,
   presenceService,
   loginRateLimiter,
+  sessionRevocations,
   messageRateLimiter,
   roomRateLimiter,
   roomKeyRepository,

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { logger } from '../config/logger.js';
 import { AppError, errorPayload, type ErrorPayload } from '../lib/app-error.js';
 
 export function extractErrorPayload(error: unknown): ErrorPayload {
@@ -10,9 +11,6 @@ export function extractErrorPayload(error: unknown): ErrorPayload {
     return { message: error.message, code: 'validation.invalidPayload' };
   }
 
-  if (error instanceof Error) {
-    return { message: error.message, code: 'internal.unexpected' };
-  }
-
+  logger.error({ err: error }, 'Unexpected socket handler error');
   return errorPayload('internal.unexpected');
 }

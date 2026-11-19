@@ -6,6 +6,7 @@ import swaggerUi from 'swagger-ui-express';
 import { z } from 'zod';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
+import { scrubRequestLog } from './config/request-log.js';
 import { downloadButtonScript } from './docs/download-button.js';
 import { generateOpenApiDocument } from './docs/openapi-document.js';
 import { registry } from './docs/registry.js';
@@ -65,6 +66,7 @@ export function createApp(deps: ApiRouterDeps): Express {
   app.use(
     pinoHttp({
       logger,
+      serializers: { req: scrubRequestLog },
       redact: {
         paths: ['req.headers.authorization', 'req.headers.cookie', 'res.headers["set-cookie"]'],
         censor: '[redacted]',

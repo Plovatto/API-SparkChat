@@ -4,9 +4,12 @@ import { AppError } from '../../lib/app-error.js';
 import { resolveObjectKey } from '../../storage/object-storage-url.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import type { StorageQuota } from '../../storage/storage-quota.js';
+import type { UploadRegistry } from '../../storage/upload-registry.js';
 import type { UserService } from '../users/index.js';
 import { nextTimestamp } from './message.clock.js';
 import type { MessageRepository, RoomDigest, RoomDigestRequest, UnreadCounts } from './message.repository.js';
+
+export const MARK_READ_BATCH_LIMIT = 500;
 import { renderSystemEvent, type SystemEvent } from './message.system-events.js';
 import type {
   MessageFileMeta,
@@ -31,12 +34,15 @@ export interface SendMessageInput {
   fileMeta?: MessageFileMeta | null | undefined;
   caption?: string | null | undefined;
   linkPreview?: MessageLinkPreview | null | undefined;
+  attachmentUrls?: string[] | undefined;
 }
 
 export interface DeleteMessageResult {
   message: MessageRecord;
   affectedReplies: MessageRecord[];
 }
+
+const LEGACY_RELEASE_CAP_BYTES = 50 * 1024 * 1024;
 
 const SYSTEM_SENDER_ID = 'system';
 const SYSTEM_SENDER: MessageSender = { id: SYSTEM_SENDER_ID, nickname: 'Sistema', avatar: null };
@@ -60,16 +66,56 @@ export class MessageService {
     private readonly userService: UserService,
     private readonly objectStorage: ObjectStorage,
     private readonly storageQuota: StorageQuota,
+    private readonly uploads: UploadRegistry,
   ) {}
 
+  private resolveOwnedObjectKey(url: string): string {
+    const key = resolveObjectKey(url);
+    if (!key || url.split('?')[0] !== this.objectStorage.publicUrl(key)) {
+      throw AppError.of('message.invalidMedia');
+    }
+    return key;
+  }
+
+  private attachmentKeysOf(input: SendMessageInput): string[] {
+    const keys: string[] = [];
+    if (input.type && input.type !== 'text') {
+      keys.push(this.resolveOwnedObjectKey(input.content));
+      if (input.fileMeta?.thumbnailUrl) {
+        keys.push(this.resolveOwnedObjectKey(input.fileMeta.thumbnailUrl));
+      }
+    }
+    for (const url of input.attachmentUrls ?? []) {
+      keys.push(this.resolveOwnedObjectKey(url));
+    }
+    return [...new Set(keys)];
+  }
+
   async sendMessage(input: SendMessageInput): Promise<MessageRecord> {
+    const messageId = randomUUID();
+    const attachmentKeys = this.attachmentKeysOf(input);
+    if (!(await this.uploads.claim(attachmentKeys, input.senderId, messageId))) {
+      throw AppError.of('message.invalidMedia');
+    }
+
+    try {
+      return await this.insertMessage(messageId, input);
+    } catch (error) {
+      if (attachmentKeys.length > 0) {
+        await this.uploads.release(messageId);
+      }
+      throw error;
+    }
+  }
+
+  private async insertMessage(messageId: string, input: SendMessageInput): Promise<MessageRecord> {
     const deliveredTo = this.resolveOnlineRecipients(input.participantIds ?? [], input.senderId);
     const readBy = (input.viewingUserIds ?? []).filter(
       (userId) => userId !== input.senderId && deliveredTo.includes(userId),
     );
 
     const message: MessageRecord = {
-      id: randomUUID(),
+      id: messageId,
       roomId: input.roomId,
       senderId: input.senderId,
       content: input.content,
@@ -140,8 +186,8 @@ export class MessageService {
     return this.repository.findRoomDigests(requests, userId);
   }
 
-  countUnreadForUser(roomId: string, userId: string): Promise<UnreadCounts> {
-    return this.repository.countUnread(roomId, userId);
+  countUnreadForUser(roomId: string, userId: string, after?: string): Promise<UnreadCounts> {
+    return this.repository.countUnread(roomId, userId, after);
   }
 
   getMessage(messageId: string): Promise<MessageRecord | null> {
@@ -192,22 +238,35 @@ export class MessageService {
   }
 
   private async deleteAttachmentObjects(message: MessageRecord): Promise<void> {
-    if (message.type !== 'image' && message.type !== 'audio' && message.type !== 'file') {
-      return;
-    }
-
-    const urls = [message.content, message.fileMeta?.thumbnailUrl].filter((url): url is string => Boolean(url));
+    const isMedia = message.type === 'image' || message.type === 'audio' || message.type === 'file';
+    const urls = isMedia ? [message.content, message.fileMeta?.thumbnailUrl].filter((url): url is string => Boolean(url)) : [];
     let releasedBytes = 0;
+    const handledKeys = new Set<string>();
+
+    for (const extra of await this.uploads.findByMessage(message.id)) {
+      handledKeys.add(extra.key);
+      try {
+        await this.objectStorage.deleteObject(extra.key);
+        releasedBytes += extra.size;
+        await this.uploads.remove(extra.key);
+      } catch (error) {
+        logger.error({ err: error, key: extra.key }, 'Failed to delete attachment object from storage');
+      }
+    }
 
     for (const url of urls) {
       const key = resolveObjectKey(url);
-      if (!key) {
+      if (!key || handledKeys.has(key) || url.split('?')[0] !== this.objectStorage.publicUrl(key)) {
         continue;
       }
       try {
+        if (await this.uploads.find(key)) {
+          continue;
+        }
+
         await this.objectStorage.deleteObject(key);
         if (url === message.content) {
-          releasedBytes += message.fileMeta?.size ?? 0;
+          releasedBytes += Math.min(message.fileMeta?.size ?? 0, LEGACY_RELEASE_CAP_BYTES);
         }
       } catch (error) {
         logger.error({ err: error, key }, 'Failed to delete attachment object from storage');
@@ -219,11 +278,11 @@ export class MessageService {
     }
   }
 
-  async markRoomAsRead(roomId: string, userId: string, messageIds?: string[]): Promise<MessageRecord[]> {
+  async markRoomAsRead(roomId: string, userId: string, messageIds?: string[], after?: string): Promise<MessageRecord[]> {
     const messages =
       messageIds && messageIds.length > 0
-        ? await this.repository.findByRoomIdAndIds(roomId, messageIds)
-        : await this.repository.findUnreadByRoomId(roomId, userId);
+        ? (await this.repository.findByRoomIdAndIds(roomId, messageIds)).filter((message) => !after || message.timestamp > after)
+        : await this.repository.findUnreadByRoomId(roomId, userId, { after, limit: MARK_READ_BATCH_LIMIT });
     let changed = false;
 
     const updated = messages.map((message) => {
@@ -252,14 +311,14 @@ export class MessageService {
     return updated;
   }
 
-  async markPendingMessagesDelivered(roomId: string, userId: string): Promise<MessageRecord[]> {
-    const deliveredByRoom = await this.markPendingMessagesDeliveredInRooms([roomId], userId);
+  async markPendingMessagesDelivered(roomId: string, userId: string, after?: string): Promise<MessageRecord[]> {
+    const deliveredByRoom = await this.markPendingMessagesDeliveredInRooms([{ roomId, after }], userId);
     return deliveredByRoom.get(roomId) ?? [];
   }
 
-  async markPendingMessagesDeliveredInRooms(roomIds: string[], userId: string): Promise<Map<string, MessageRecord[]>> {
+  async markPendingMessagesDeliveredInRooms(rooms: RoomDigestRequest[], userId: string): Promise<Map<string, MessageRecord[]>> {
     const deliveredByRoom = new Map<string, MessageRecord[]>();
-    const pending = await this.repository.findUndeliveredInRooms(roomIds, userId);
+    const pending = await this.repository.findUndeliveredInRooms(rooms, userId);
     if (pending.length === 0) {
       return deliveredByRoom;
     }

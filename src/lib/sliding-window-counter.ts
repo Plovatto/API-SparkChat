@@ -7,10 +7,22 @@ export class SlidingWindowCounter {
     return this.pruneAndGet(key).length;
   }
 
+  latest(key: string): number | undefined {
+    return this.pruneAndGet(key).at(-1);
+  }
+
   record(key: string): void {
     const recent = this.pruneAndGet(key);
     recent.push(Date.now());
     this.timestampsByKey.set(key, recent);
+  }
+
+  release(key: string): void {
+    const recent = this.pruneAndGet(key);
+    recent.pop();
+    if (recent.length === 0) {
+      this.timestampsByKey.delete(key);
+    }
   }
 
   reset(key: string): void {

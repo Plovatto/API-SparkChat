@@ -1,14 +1,16 @@
 export { describeDevice } from './user.device.js';
 export type { UserClientToServerEvents, UserServerToClientEvents } from './user.events.js';
 export { LoginRateLimiter } from './user.login-rate-limiter.js';
-export { ASSISTANT_USER_ID } from './user.model.js';
+export { ASSISTANT_USER_ID, NICKNAME_MAX_LENGTH } from './user.model.js';
 export type { AuthMethod, UserStatus } from './user.model.js';
 export { hashPassword, verifyPassword } from './user.password.js';
 export { decodeRecoveryFile, encodeRecoveryFile } from './user.recovery-file.js';
 export { UserRepository } from './user.repository.js';
 export { createUserRouter } from './user.routes.js';
 export { UserSessionRepository } from './user.session.repository.js';
+export { SessionRevocationNotifier } from './user.session-revocations.js';
+export type { RevokedSession } from './user.session-revocations.js';
 export { UserService } from './user.service.js';
-export { registerUserSocketHandlers } from './user.socket.js';
+export { disconnectRevokedSession, registerUserSocketHandlers } from './user.socket.js';
 export { constantTimeEqual, generateToken, hashToken } from './user.token.js';
 export type { UserRecord } from './user.types.js';

@@ -113,7 +113,7 @@ describe('POST /api/messages/upload-image', () => {
 
     const body = response.body as { url: string };
     expect(response.status).toBe(201);
-    expect(body.url).toMatch(/^https:\/\/fake-object-storage\.test\/uploads\/images\/.+\.png\?e2e=1$/);
+    expect(body.url).toMatch(/^https:\/\/fake-object-storage\.test\/uploads\/images\/[0-9a-f-]+\.bin\?e2e=1$/);
   });
 
   it('still enforces the mimetype and extension allowlist for encrypted uploads', async () => {

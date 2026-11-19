@@ -5,6 +5,7 @@ import { errorPayload } from '../../lib/app-error.js';
 import { isValidNicknameFormat, nicknameAvailabilityStatusSchema, publicUserSchema } from './user.model.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
 import type { UserService } from './user.service.js';
+import type { SessionRevocationNotifier } from './user.session-revocations.js';
 
 export const nicknameAvailabilityQuerySchema = z
   .object({
@@ -39,7 +40,11 @@ export const keyfileLoginResponseSchema = loginResponseSchema
   })
   .openapi('KeyfileLoginResponse');
 
-export function createUserController(userService: UserService, loginRateLimiter: LoginRateLimiter) {
+export function createUserController(
+  userService: UserService,
+  loginRateLimiter: LoginRateLimiter,
+  sessionRevocations: SessionRevocationNotifier,
+) {
   const login = async (req: Request, res: Response): Promise<void> => {
     const parsed = loginBodySchema.safeParse(req.body);
     if (!parsed.success) {
@@ -50,7 +55,7 @@ export function createUserController(userService: UserService, loginRateLimiter:
     const { nickname, password } = parsed.data;
     const ip = req.ip ?? 'unknown';
 
-    if (loginRateLimiter.isBlocked(nickname, ip)) {
+    if (!loginRateLimiter.reserveAttempt(nickname, ip)) {
       res.status(429).json(errorPayload('rateLimit.loginAttempts'));
       return;
     }
@@ -58,7 +63,6 @@ export function createUserController(userService: UserService, loginRateLimiter:
     try {
       const result = await userService.login(nickname, password, req.headers['user-agent'] ?? '');
       if (!result) {
-        loginRateLimiter.registerFailure(nickname, ip);
         res.status(401).json(errorPayload('auth.invalidCredentials'));
         return;
       }
@@ -70,6 +74,7 @@ export function createUserController(userService: UserService, loginRateLimiter:
         sessionToken: result.sessionToken,
       });
     } catch (error) {
+      loginRateLimiter.releaseAttempt(nickname, ip);
       logger.error({ err: error }, 'Failed to log in');
       res.status(500).json(errorPayload('auth.loginFailed'));
     }
@@ -83,7 +88,7 @@ export function createUserController(userService: UserService, loginRateLimiter:
 
     const ip = req.ip ?? 'unknown';
 
-    if (loginRateLimiter.isBlockedByIp(ip)) {
+    if (!loginRateLimiter.reserveAttemptByIp(ip)) {
       res.status(429).json(errorPayload('rateLimit.loginAttempts'));
       return;
     }
@@ -91,7 +96,6 @@ export function createUserController(userService: UserService, loginRateLimiter:
     try {
       const result = await userService.loginWithKeyfile(req.file.buffer, req.headers['user-agent'] ?? '');
       if (!result) {
-        loginRateLimiter.registerFailureByIp(ip);
         res.status(401).json(errorPayload('auth.keyfileInvalid'));
         return;
       }
@@ -104,6 +108,7 @@ export function createUserController(userService: UserService, loginRateLimiter:
         recoveryToken: result.recoveryToken,
       });
     } catch (error) {
+      loginRateLimiter.releaseAttemptByIp(ip);
       logger.error({ err: error }, 'Failed to log in with keyfile');
       res.status(500).json(errorPayload('auth.loginFailed'));
     }
@@ -132,5 +137,18 @@ export function createUserController(userService: UserService, loginRateLimiter:
     }
   };
 
-  return { login, loginWithKeyfile, checkNicknameAvailability };
+  const logout = async (req: Request, res: Response): Promise<void> => {
+    const userId = req.authenticatedUser?.id;
+    const sessionId = req.authenticatedSessionId;
+    if (!userId || !sessionId) {
+      res.status(401).json(errorPayload('auth.required'));
+      return;
+    }
+
+    await userService.revokeSession(userId, sessionId);
+    sessionRevocations.publish({ userId, sessionId });
+    res.status(204).end();
+  };
+
+  return { login, loginWithKeyfile, checkNicknameAvailability, logout };
 }

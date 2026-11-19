@@ -136,13 +136,28 @@ export const messages = sqliteTable(
   (table) => [index('messages_room_id_timestamp_idx').on(table.roomId, table.timestamp)],
 );
 
+export const uploads = sqliteTable(
+  'uploads',
+  {
+    key: text('key').primaryKey(),
+    uploaderId: text('uploader_id').notNull(),
+    size: integer('size').notNull(),
+    createdAt: text('created_at').notNull(),
+    messageId: text('message_id'),
+  },
+  (table) => [
+    index('uploads_uploader_id_idx').on(table.uploaderId),
+    index('uploads_message_id_created_at_idx').on(table.messageId, table.createdAt),
+  ],
+);
+
 export const storageUsage = sqliteTable('storage_usage', {
   id: text('id').primaryKey(),
   bytesUsed: integer('bytes_used').notNull().default(0),
 });
 
 export const linkPreviews = sqliteTable('link_previews', {
-  url: text('url').primaryKey(),
+  cacheKey: text('url').primaryKey(),
   status: text('status').$type<LinkPreviewCacheRecord['status']>().notNull(),
   title: text('title'),
   description: text('description'),

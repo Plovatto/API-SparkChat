@@ -70,7 +70,7 @@ describe('RoomService', () => {
     const bob = await createUser(userService, 'Bob');
 
     const room = await roomService.createPrivateRoom(alice.id, bob.id);
-    await roomRepository.update(room.id, { blockedBy: { [bob.id]: alice.id } });
+    await roomRepository.updateParticipant(room.id, bob.id, { blockedByUserId: alice.id });
     const blockedRoom = await roomRepository.findById(room.id);
     if (!blockedRoom) {
       throw new Error('room not found');

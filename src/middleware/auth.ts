@@ -6,6 +6,7 @@ import { asyncHandler } from './async-handler.js';
 declare module 'express-serve-static-core' {
   interface Request {
     authenticatedUser?: UserRecord;
+    authenticatedSessionId?: string;
   }
 }
 
@@ -34,13 +35,14 @@ export function createRequireAuth(userService: UserService): RequestHandler {
       return;
     }
 
-    const user = await userService.verifySession(credentials.userId, credentials.sessionToken);
-    if (!user) {
+    const authenticated = await userService.authenticateSession(credentials.userId, credentials.sessionToken);
+    if (!authenticated) {
       res.status(401).json(errorPayload('auth.sessionInvalid'));
       return;
     }
 
-    req.authenticatedUser = user;
+    req.authenticatedUser = authenticated.user;
+    req.authenticatedSessionId = authenticated.sessionId;
     next();
   });
 }

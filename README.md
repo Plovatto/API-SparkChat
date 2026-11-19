@@ -99,6 +99,7 @@ TRUST_PROXY_HOPS=0
 TURSO_DATABASE_URL=
 TURSO_AUTH_TOKEN=
 RECOVERY_FILE_SECRET=
+PASSWORD_SCRYPT_COST=
 GEMINI_API_KEY=
 AI_ASSISTANT_PRIVATE_KEY=
 R2_ACCOUNT_ID=
@@ -109,6 +110,8 @@ R2_PUBLIC_BASE_URL=
 ```
 
 `R2_*` configura o armazenamento de arquivos enviados (imagem, áudio, arquivo) no Cloudflare R2, usado no lugar de disco local para funcionar em hospedagens sem disco persistente.
+
+`PASSWORD_SCRYPT_COST` é o custo do scrypt usado nos hashes de senha (potência de 2, padrão `65536`, máximo `131072`). Cada login usa cerca de 128 × o valor em bytes de memória (64 MB no padrão); aumente só se a hospedagem tiver memória sobrando para logins simultâneos.
 
 `TRUST_PROXY_HOPS` é o número de proxies reversos na frente da API (por exemplo, `1` atrás de um balanceador da hospedagem). Com o valor certo, os limites de requisição e de cadastro usam o IP de cada usuário em vez do IP do proxy. Mantenha `0` quando a API recebe as conexões diretamente.
 

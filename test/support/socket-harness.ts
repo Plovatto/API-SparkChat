@@ -8,9 +8,11 @@ import { AiService } from '@/modules/ai/ai.service.js';
 import { AiUsageLimiter } from '@/modules/ai/ai.usage-limiter.js';
 import { MessageRateLimiter, RecordingService, RoomPresenceService, TypingService } from '@/modules/messages/index.js';
 import { RoomActionRateLimiter } from '@/modules/rooms/index.js';
-import { LoginRateLimiter } from '@/modules/users/index.js';
+import { LoginRateLimiter, SessionRevocationNotifier } from '@/modules/users/index.js';
 import type { AppServer } from '@/sockets/events.js';
 import { registerSocketHandlers } from '@/sockets/index.js';
+import { SOCKET_MAX_HTTP_BUFFER_SIZE } from '@/sockets/socket-options.js';
+import type { SocketEventBudgets } from '@/sockets/socket-rate-limit.js';
 import { buildRoomService } from './build-room-service.js';
 
 export const TEST_PASSWORD = 'correct-horse-battery-staple';
@@ -21,6 +23,8 @@ export interface SocketHarnessOptions {
   messageRateLimiter?: MessageRateLimiter;
   roomRateLimiter?: RoomActionRateLimiter;
   connectionStateRecovery?: boolean;
+  socketEventBudgets?: SocketEventBudgets;
+  loginRateLimiter?: LoginRateLimiter;
 }
 
 export async function startSocketHarness(options: SocketHarnessOptions = {}) {
@@ -41,11 +45,15 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
   const httpServer = createServer();
   const io: AppServer = new Server(
     httpServer,
-    options.connectionStateRecovery ? { connectionStateRecovery: { maxDisconnectionDuration: 60_000, skipMiddlewares: true } } : {},
+    {
+      maxHttpBufferSize: SOCKET_MAX_HTTP_BUFFER_SIZE,
+      ...(options.connectionStateRecovery ? { connectionStateRecovery: { maxDisconnectionDuration: 60_000, skipMiddlewares: true } } : {}),
+    },
   );
   const typingService = new TypingService();
   const recordingService = new RecordingService();
   const presenceService = new RoomPresenceService();
+  const sessionRevocations = new SessionRevocationNotifier();
   registerSocketHandlers(io, {
     userService: services.userService,
     roomService: services.roomService,
@@ -53,11 +61,13 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     typingService,
     recordingService,
     presenceService,
-    loginRateLimiter: new LoginRateLimiter(),
+    loginRateLimiter: options.loginRateLimiter ?? new LoginRateLimiter(),
+    sessionRevocations,
     messageRateLimiter: options.messageRateLimiter ?? new MessageRateLimiter(),
     roomRateLimiter: options.roomRateLimiter ?? new RoomActionRateLimiter(),
     roomKeyRepository: services.roomKeyRepository,
     aiService,
+    ...(options.socketEventBudgets ? { socketEventBudgets: options.socketEventBudgets } : {}),
   });
 
   await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
@@ -100,7 +110,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     });
   }
 
-  return { ...services, io, typingService, recordingService, presenceService, connect, connectAs, createAccount, resume, close };
+  return { ...services, io, sessionRevocations, typingService, recordingService, presenceService, connect, connectAs, createAccount, resume, close };
 }
 
 export function waitForEvent<T = unknown>(

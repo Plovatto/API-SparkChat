@@ -44,14 +44,14 @@ export interface UserClientToServerEvents {
       | { mode: 'register'; nickname: string; avatar: number; password: string }
       | { mode: 'resume'; userId: string; sessionToken: string },
   ) => void;
-  'user:update-profile': (payload: { nickname: string; avatar: number }) => void;
+  'user:update-profile': (payload: { nickname: string; avatar: number; currentPassword?: string }) => void;
   'user:update-status-text': (payload: { statusText: string }) => void;
   'user:update-theme': (payload: UserTheme) => void;
   'user:update-chat-settings': (payload: UserChatSettings) => void;
   'user:logout': () => void;
   'user:visibility': (payload: { visible: boolean }, ack?: () => void) => void;
   'user:change-password': (payload: { currentPassword?: string; newPassword: string }) => void;
-  'user:regenerate-recovery-file': () => void;
+  'user:regenerate-recovery-file': (payload?: { currentPassword?: string }) => void;
   'user:list-sessions': () => void;
   'user:revoke-session': (payload: { sessionId: string }) => void;
   'e2e:publish-keys': (payload: {

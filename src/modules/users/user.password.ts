@@ -1,30 +1,142 @@
-import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
-import { promisify } from 'node:util';
+import { randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto';
+import { env } from '../../config/env.js';
 
-const scryptAsync = promisify(scrypt);
+export interface PasswordHashParams {
+  cost: number;
+  blockSize: number;
+  parallelization: number;
+}
 
+interface ParsedHash {
+  params: PasswordHashParams;
+  salt: Buffer;
+  key: Buffer;
+  legacy: boolean;
+}
+
+const HASH_PREFIX = 'scrypt';
+const HASH_SEPARATOR = '$';
 const SALT_BYTES = 16;
 const KEY_LENGTH = 64;
+const MAX_MEMORY_BYTES = 256 * 1024 * 1024;
+const MAX_COST = 2 ** 17;
+const MAX_BLOCK_SIZE = 32;
+const MAX_PARALLELIZATION = 16;
 
-export async function hashPassword(password: string): Promise<string> {
+const LEGACY_PARAMS: PasswordHashParams = { cost: 16384, blockSize: 8, parallelization: 1 };
+
+export const DEFAULT_PASSWORD_HASH_PARAMS: PasswordHashParams = { cost: 2 ** 16, blockSize: 8, parallelization: 1 };
+
+export function currentPasswordHashParams(): PasswordHashParams {
+  return { ...DEFAULT_PASSWORD_HASH_PARAMS, cost: env.PASSWORD_SCRYPT_COST };
+}
+
+function deriveKey(password: string, salt: Buffer, params: PasswordHashParams, keyLength: number): Promise<Buffer> {
+  const options: ScryptOptions = {
+    N: params.cost,
+    r: params.blockSize,
+    p: params.parallelization,
+    maxmem: MAX_MEMORY_BYTES,
+  };
+
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, keyLength, options, (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(derivedKey);
+    });
+  });
+}
+
+function isPowerOfTwo(value: number): boolean {
+  return Number.isInteger(value) && value > 1 && (value & (value - 1)) === 0;
+}
+
+function isSupportedParams(params: PasswordHashParams): boolean {
+  return (
+    isPowerOfTwo(params.cost) &&
+    params.cost <= MAX_COST &&
+    Number.isInteger(params.blockSize) &&
+    params.blockSize >= 1 &&
+    params.blockSize <= MAX_BLOCK_SIZE &&
+    Number.isInteger(params.parallelization) &&
+    params.parallelization >= 1 &&
+    params.parallelization <= MAX_PARALLELIZATION
+  );
+}
+
+function decodeHex(value: string | undefined): Buffer | null {
+  if (!value || value.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(value)) {
+    return null;
+  }
+  return Buffer.from(value, 'hex');
+}
+
+function parseHash(storedHash: string): ParsedHash | null {
+  if (storedHash.startsWith(`${HASH_PREFIX}${HASH_SEPARATOR}`)) {
+    const [, cost, blockSize, parallelization, saltHex, keyHex, ...rest] = storedHash.split(HASH_SEPARATOR);
+    const params: PasswordHashParams = {
+      cost: Number(cost),
+      blockSize: Number(blockSize),
+      parallelization: Number(parallelization),
+    };
+    const salt = decodeHex(saltHex);
+    const key = decodeHex(keyHex);
+    if (rest.length > 0 || !salt || !key || !isSupportedParams(params)) {
+      return null;
+    }
+    return { params, salt, key, legacy: false };
+  }
+
+  const [saltHex, keyHex, ...rest] = storedHash.split(':');
+  const salt = decodeHex(saltHex);
+  const key = decodeHex(keyHex);
+  if (rest.length > 0 || !salt || !key) {
+    return null;
+  }
+  return { params: LEGACY_PARAMS, salt, key, legacy: true };
+}
+
+export async function hashPassword(password: string, params: PasswordHashParams = currentPasswordHashParams()): Promise<string> {
   const salt = randomBytes(SALT_BYTES);
-  const derivedKey = (await scryptAsync(password, salt, KEY_LENGTH)) as Buffer;
-  return `${salt.toString('hex')}:${derivedKey.toString('hex')}`;
+  const derivedKey = await deriveKey(password, salt, params, KEY_LENGTH);
+  return [HASH_PREFIX, params.cost, params.blockSize, params.parallelization, salt.toString('hex'), derivedKey.toString('hex')].join(
+    HASH_SEPARATOR,
+  );
 }
 
 export async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  const [saltHex, keyHex] = storedHash.split(':');
-  if (!saltHex || !keyHex) {
+  const parsed = parseHash(storedHash);
+  if (!parsed) {
     return false;
   }
 
-  const salt = Buffer.from(saltHex, 'hex');
-  const storedKey = Buffer.from(keyHex, 'hex');
-  const derivedKey = (await scryptAsync(password, salt, KEY_LENGTH)) as Buffer;
-
-  if (derivedKey.length !== storedKey.length) {
+  let derivedKey: Buffer;
+  try {
+    derivedKey = await deriveKey(password, parsed.salt, parsed.params, parsed.key.length);
+  } catch {
     return false;
   }
 
-  return timingSafeEqual(derivedKey, storedKey);
+  if (derivedKey.length !== parsed.key.length) {
+    return false;
+  }
+
+  return timingSafeEqual(derivedKey, parsed.key);
+}
+
+export function passwordHashNeedsRehash(storedHash: string, params: PasswordHashParams = currentPasswordHashParams()): boolean {
+  const parsed = parseHash(storedHash);
+  if (!parsed || parsed.legacy) {
+    return true;
+  }
+
+  return (
+    parsed.params.cost !== params.cost ||
+    parsed.params.blockSize !== params.blockSize ||
+    parsed.params.parallelization !== params.parallelization ||
+    parsed.key.length !== KEY_LENGTH
+  );
 }

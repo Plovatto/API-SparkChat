@@ -95,58 +95,141 @@ describe('POST /api/link-preview', () => {
     expect(body.imageUrl).toBeNull();
   });
 
-  it('trims an oversized preview that was cached before the limits existed', async () => {
+  it('ignores an unsealed cached row and stores only sealed metadata', async () => {
     const { fetcher, calls } = createCountingFetcher(METADATA);
-    const { app, authHeader, linkPreviewRepository } = await setupAuthedApp(fetcher);
-    await linkPreviewRepository.upsert({
-      url: PAGE_URL,
-      status: 'ok',
-      title: 'T'.repeat(5000),
-      description: 'd'.repeat(9000),
-      imageUrl: METADATA.imageUrl,
-      siteName: 'S'.repeat(2000),
-      fetchedAt: new Date().toISOString(),
-    });
+    const { app, authHeader, userId, linkPreviewRepository, linkPreviewService } = await setupAuthedApp(fetcher);
+    const cacheKey = linkPreviewService.cacheKeyFor(userId, PAGE_URL);
+    await linkPreviewRepository.upsert({ cacheKey, status: 'ok', title: 'Plain title', description: null, imageUrl: null, siteName: null, fetchedAt: new Date().toISOString() });
+
+    const response = await request(app).post('/api/link-preview').set('Authorization', authHeader).send({ url: PAGE_URL });
+
+    expect(response.status).toBe(200);
+    expect(calls()).toBe(1);
+    const stored = await linkPreviewRepository.findByKey(cacheKey);
+    expect(stored?.title?.startsWith('sealed:v1:')).toBe(true);
+    expect(JSON.stringify(stored)).not.toContain(METADATA.title);
+    expect(stored?.imageUrl).toBeNull();
+
+    const cachedResponse = await request(app).post('/api/link-preview').set('Authorization', authHeader).send({ url: PAGE_URL });
+    expect((cachedResponse.body as LinkPreviewMetadata).title).toBe(METADATA.title);
+    expect(calls()).toBe(1);
+  });
+
+  it('trims an oversized preview before returning it', async () => {
+    const { fetcher, calls } = createCountingFetcher({ ...METADATA, title: 'T'.repeat(5000), description: 'd'.repeat(9000), siteName: 'S'.repeat(2000) });
+    const { app, authHeader } = await setupAuthedApp(fetcher);
 
     const response = await request(app).post('/api/link-preview').set('Authorization', authHeader).send({ url: PAGE_URL });
     const body = response.body as LinkPreviewMetadata;
 
     expect(response.status).toBe(200);
-    expect(calls()).toBe(0);
+    expect(calls()).toBe(1);
     expect(encryptedLength(body.title)).toBeLessThanOrEqual(LINK_PREVIEW_ENCRYPTED_LIMITS.title);
     expect(encryptedLength(body.description ?? '')).toBeLessThanOrEqual(LINK_PREVIEW_ENCRYPTED_LIMITS.description);
     expect(encryptedLength(body.siteName ?? '')).toBeLessThanOrEqual(LINK_PREVIEW_ENCRYPTED_LIMITS.siteName);
     expect(body.imageUrl).toBe(METADATA.imageUrl);
   });
 
-  it('answers linkPreview.unavailable when the resolved page URL would not fit once encrypted', async () => {
-    const { fetcher } = createCountingFetcher({ ...METADATA, url: `https://example.com/${'p'.repeat(4000)}` });
+  it('answers with the URL the client asked for, not the one the fetcher ended on', async () => {
+    const fetcher: LinkPreviewFetcher = {
+      fetchMetadata: () => Promise.resolve({ ...METADATA, url: 'https://example.com/landing-after-redirect' }),
+    };
     const { app, authHeader } = await setupAuthedApp(fetcher);
 
     const response = await request(app).post('/api/link-preview').set('Authorization', authHeader).send({ url: PAGE_URL });
 
+    expect(response.status).toBe(200);
+    expect((response.body as LinkPreviewMetadata).url).toBe(PAGE_URL);
+  });
+
+  it('keys the cache by an HMAC of user and URL instead of the plaintext URL', async () => {
+    const { fetcher } = createCountingFetcher(METADATA);
+    const { app, authHeader, userId, linkPreviewRepository, linkPreviewService } = await setupAuthedApp(fetcher);
+
+    await request(app).post('/api/link-preview').set('Authorization', authHeader).send({ url: PAGE_URL });
+
+    const cacheKey = linkPreviewService.cacheKeyFor(userId, PAGE_URL);
+    expect(cacheKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(await linkPreviewRepository.findByKey(cacheKey)).not.toBeNull();
+    expect(await linkPreviewRepository.findByKey(PAGE_URL)).toBeNull();
+  });
+
+  it('does not share cached previews across users', async () => {
+    const { fetcher, calls } = createCountingFetcher(METADATA);
+    const { app, authHeader, userService } = await setupAuthedApp(fetcher);
+    const other = await userService.registerAccount({ nickname: 'OtherPreviewer', avatar: 0, password: 'correct-horse-battery-staple' });
+
+    await request(app).post('/api/link-preview').set('Authorization', authHeader).send({ url: PAGE_URL });
+    const second = await request(app)
+      .post('/api/link-preview')
+      .set('Authorization', `Bearer ${other.user.id}:${other.sessionToken}`)
+      .send({ url: PAGE_URL });
+
+    expect(second.status).toBe(200);
+    expect(calls()).toBe(2);
+  });
+
+  it('does not cache failures', async () => {
+    const { fetcher, calls } = createCountingFetcher(null);
+    const { app, authHeader, userId, linkPreviewRepository, linkPreviewService } = await setupAuthedApp(fetcher);
+
+    await request(app).post('/api/link-preview').set('Authorization', authHeader).send({ url: PAGE_URL });
+    await request(app).post('/api/link-preview').set('Authorization', authHeader).send({ url: PAGE_URL });
+
+    expect(calls()).toBe(2);
+    expect(await linkPreviewRepository.findByKey(linkPreviewService.cacheKeyFor(userId, PAGE_URL))).toBeNull();
+  });
+
+  it('neither fetches nor caches URLs that carry credentials', async () => {
+    const { fetcher, calls } = createCountingFetcher(METADATA);
+    const { app, authHeader } = await setupAuthedApp(fetcher);
+
+    const response = await request(app)
+      .post('/api/link-preview')
+      .set('Authorization', authHeader)
+      .send({ url: 'https://admin:hunter2@example.com/article' });
+
     expect(response.status).toBe(422);
-    expect(response.body).toMatchObject({ code: 'linkPreview.unavailable' });
+    expect(calls()).toBe(0);
+  });
+
+  it('purges legacy plaintext rows, error rows and expired rows', async () => {
+    const { linkPreviewRepository, linkPreviewService } = await setupAuthedApp();
+    const freshKey = linkPreviewService.cacheKeyFor('user', PAGE_URL);
+    const expiredKey = linkPreviewService.cacheKeyFor('user', 'https://example.com/old');
+    const errorKey = linkPreviewService.cacheKeyFor('user', 'https://example.com/broken');
+    const base = { title: 'T', description: null, imageUrl: null, siteName: null };
+    await linkPreviewRepository.upsert({ ...base, cacheKey: PAGE_URL, status: 'ok', fetchedAt: new Date().toISOString() });
+    await linkPreviewRepository.upsert({ ...base, title: 'sealed:v1:opaque', cacheKey: freshKey, status: 'ok', fetchedAt: new Date().toISOString() });
+    await linkPreviewRepository.upsert({ ...base, cacheKey: expiredKey, status: 'ok', fetchedAt: '2020-01-01T00:00:00.000Z' });
+    await linkPreviewRepository.upsert({ ...base, cacheKey: errorKey, status: 'error', fetchedAt: new Date().toISOString() });
+
+    await linkPreviewService.purgeExpired();
+
+    expect(await linkPreviewRepository.findByKey(PAGE_URL)).toBeNull();
+    expect(await linkPreviewRepository.findByKey(expiredKey)).toBeNull();
+    expect(await linkPreviewRepository.findByKey(errorKey)).toBeNull();
+    expect(await linkPreviewRepository.findByKey(freshKey)).not.toBeNull();
   });
 });
 
-describe('GET /api/link-preview/image', () => {
+describe('POST /api/link-preview/image', () => {
   it('rejects an expired session with auth.sessionInvalid', async () => {
     const { app } = await buildTestApp();
 
     const response = await request(app)
-      .get('/api/link-preview/image')
+      .post('/api/link-preview/image')
       .set('Authorization', 'Bearer ghost:not-a-token')
-      .query({ url: 'https://example.com/cover.jpg' });
+      .send({ url: 'https://example.com/cover.jpg' });
 
     expect(response.status).toBe(401);
     expect(response.body).toEqual({ message: 'Sessão inválida ou expirada.', code: 'auth.sessionInvalid' });
   });
 
-  it('rejects a query that is not a valid URL with linkPreview.invalidUrl', async () => {
+  it('rejects a body that is not a valid URL with linkPreview.invalidUrl', async () => {
     const { app, authHeader } = await setupAuthedApp();
 
-    const response = await request(app).get('/api/link-preview/image').set('Authorization', authHeader).query({ url: 'nope' });
+    const response = await request(app).post('/api/link-preview/image').set('Authorization', authHeader).send({ url: 'nope' });
 
     expect(response.status).toBe(400);
     expect(response.body).toEqual({ message: 'URL inválida.', code: 'linkPreview.invalidUrl' });
@@ -156,12 +239,22 @@ describe('GET /api/link-preview/image', () => {
     const { app, authHeader } = await setupAuthedApp();
 
     const response = await request(app)
-      .get('/api/link-preview/image')
+      .post('/api/link-preview/image')
       .set('Authorization', authHeader)
-      .query({ url: 'http://127.0.0.1/cover.jpg' });
+      .send({ url: 'http://127.0.0.1/cover.jpg' });
 
     expect(response.status).toBe(422);
     expect(response.body).toEqual({ message: 'Não foi possível carregar essa imagem.', code: 'linkPreview.imageUnavailable' });
+  });
+
+  it('still answers the query string form for the client deployed before the POST route', async () => {
+    const { app, authHeader } = await setupAuthedApp();
+
+    const missing = await request(app).get('/api/link-preview/image').set('Authorization', authHeader);
+    const unauthenticated = await request(app).get('/api/link-preview/image').query({ url: 'https://example.com/cover.jpg' });
+
+    expect(missing.status).toBe(400);
+    expect(unauthenticated.status).toBe(401);
   });
 });
 
@@ -173,5 +266,5 @@ async function setupAuthedApp(linkPreviewFetcher?: LinkPreviewFetcher) {
     password: 'correct-horse-battery-staple',
   });
 
-  return { ...built, authHeader: `Bearer ${user.id}:${sessionToken}` };
+  return { ...built, userId: user.id, authHeader: `Bearer ${user.id}:${sessionToken}` };
 }

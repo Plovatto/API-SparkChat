@@ -1,11 +1,17 @@
-import { fetchWithGuard, readBodyBuffer } from './link-preview.http.js';
+import { discardBody, pinnedTransport, readBodyBuffer, withDeadline, type LinkPreviewTransport } from './link-preview.http.js';
+import { scanHeadTags } from './link-preview.html.js';
 import { fitLinkPreviewForEncryption } from './link-preview.limits.js';
 import { assertPublicHttpUrl } from './link-preview.ssrf-guard.js';
 import type { LinkPreviewFetcher, LinkPreviewMetadata } from './link-preview.types.js';
 
 const MAX_REDIRECTS = 3;
 const FETCH_TIMEOUT_MS = 5000;
-const MAX_HTML_BYTES = 300_000;
+const MAX_HTML_BYTES = 64 * 1024;
+
+export interface HttpLinkPreviewFetcherOptions {
+  transport?: LinkPreviewTransport;
+  timeoutMs?: number;
+}
 
 function decodeHtmlEntities(value: string): string {
   return value
@@ -17,22 +23,11 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&amp;/g, '&');
 }
 
-function buildMetaPatterns(names: string[]): RegExp[] {
-  const patterns: RegExp[] = [];
+function firstMetaContent(meta: Map<string, string>, names: string[]): string | null {
   for (const name of names) {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    patterns.push(new RegExp(`<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'));
-    patterns.push(new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["']${escaped}["']`, 'i'));
-  }
-  return patterns;
-}
-
-function extractMetaContent(html: string, patterns: RegExp[]): string | null {
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    const content = match?.[1];
+    const content = meta.get(name)?.trim();
     if (content) {
-      return decodeHtmlEntities(content.trim());
+      return decodeHtmlEntities(content);
     }
   }
   return null;
@@ -60,37 +55,32 @@ function deriveTitleFromUrl(url: URL): string {
   }
 }
 
-function parseHtmlMetadata(html: string, pageUrl: URL): LinkPreviewMetadata | null {
-  const titleTagMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
-  const title =
-    extractMetaContent(html, buildMetaPatterns(['og:title', 'twitter:title'])) ??
-    (titleTagMatch?.[1] ? decodeHtmlEntities(titleTagMatch[1].trim()) : null);
+export function parseHtmlMetadata(html: string, pageUrl: URL): LinkPreviewMetadata | null {
+  const { meta, title: titleTag } = scanHeadTags(html);
+  const trimmedTitleTag = titleTag?.trim();
+  const title = firstMetaContent(meta, ['og:title', 'twitter:title']) ?? (trimmedTitleTag ? decodeHtmlEntities(trimmedTitleTag) : null);
 
   if (!title) {
     return null;
   }
 
-  const description = extractMetaContent(html, buildMetaPatterns(['og:description', 'twitter:description', 'description']));
-  const siteName = extractMetaContent(html, buildMetaPatterns(['og:site_name']));
-  const rawImage = extractMetaContent(html, buildMetaPatterns(['og:image', 'twitter:image']));
+  const description = firstMetaContent(meta, ['og:description', 'twitter:description', 'description']);
+  const siteName = firstMetaContent(meta, ['og:site_name']);
+  const rawImage = firstMetaContent(meta, ['og:image', 'twitter:image']);
   const imageUrl = rawImage ? resolveUrl(rawImage, pageUrl) : null;
 
   return { url: pageUrl.href, title, description, imageUrl, siteName };
 }
 
-async function fetchMetadata(rawUrl: string): Promise<LinkPreviewMetadata | null> {
-  const metadata = await fetchRawMetadata(rawUrl);
-  return metadata ? fitLinkPreviewForEncryption(metadata) : null;
-}
-
-async function fetchRawMetadata(rawUrl: string): Promise<LinkPreviewMetadata | null> {
+async function fetchRawMetadata(rawUrl: string, transport: LinkPreviewTransport, signal: AbortSignal): Promise<LinkPreviewMetadata | null> {
   let currentUrl = await assertPublicHttpUrl(rawUrl);
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-    const response = await fetchWithGuard(currentUrl, FETCH_TIMEOUT_MS, 'text/html,image/*');
+    const response = await transport(currentUrl, { signal, accept: 'text/html,image/*' });
 
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location');
+      await discardBody(response);
       if (!location || redirectCount === MAX_REDIRECTS) {
         return null;
       }
@@ -99,25 +89,39 @@ async function fetchRawMetadata(rawUrl: string): Promise<LinkPreviewMetadata | n
     }
 
     if (!response.ok) {
+      await discardBody(response);
       return null;
     }
 
     const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
 
     if (contentType.startsWith('image/')) {
-      await response.body?.cancel().catch(() => undefined);
+      await discardBody(response);
       return { url: currentUrl.href, title: deriveTitleFromUrl(currentUrl), description: null, imageUrl: currentUrl.href, siteName: currentUrl.hostname };
     }
 
     if (!contentType.startsWith('text/html')) {
+      await discardBody(response);
       return null;
     }
 
-    const buffer = await readBodyBuffer(response, MAX_HTML_BYTES, true);
+    const buffer = await readBodyBuffer(response, MAX_HTML_BYTES, true, signal);
     return buffer ? parseHtmlMetadata(buffer.toString('utf-8'), currentUrl) : null;
   }
 
   return null;
 }
 
-export const httpLinkPreviewFetcher: LinkPreviewFetcher = { fetchMetadata };
+export function createHttpLinkPreviewFetcher(options: HttpLinkPreviewFetcherOptions = {}): LinkPreviewFetcher {
+  const transport = options.transport ?? pinnedTransport;
+  const timeoutMs = options.timeoutMs ?? FETCH_TIMEOUT_MS;
+
+  return {
+    fetchMetadata: async (rawUrl: string) => {
+      const metadata = await withDeadline(timeoutMs, (signal) => fetchRawMetadata(rawUrl, transport, signal));
+      return metadata ? fitLinkPreviewForEncryption(metadata) : null;
+    },
+  };
+}
+
+export const httpLinkPreviewFetcher: LinkPreviewFetcher = createHttpLinkPreviewFetcher();

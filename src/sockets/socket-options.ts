@@ -1,0 +1,1 @@
+export const SOCKET_MAX_HTTP_BUFFER_SIZE = 96 * 1024;

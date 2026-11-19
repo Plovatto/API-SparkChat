@@ -7,7 +7,13 @@ export const NICKNAME_MIN_LENGTH = 2;
 export const NICKNAME_MAX_LENGTH = 20;
 export const NICKNAME_MIN_LETTERS = 2;
 export const PASSWORD_MIN_LENGTH = 12;
+export const PASSWORD_MAX_LENGTH = 1024;
 export const STATUS_TEXT_MAX_LENGTH = 30;
+export const THEME_NAME_MAX_LENGTH = 50;
+export const CHAT_SETTINGS_KEY_MAX_LENGTH = 100;
+export const CHAT_SETTINGS_VALUE_MAX_LENGTH = 100;
+export const ROOM_WALLPAPERS_MAX_ENTRIES = 200;
+export const ROOM_APPEARANCE_MAX_ENTRIES = 100;
 
 const NICKNAME_CHARSET_PATTERN = /^[\p{L}\p{N}]+$/u;
 const NICKNAME_LETTER_PATTERN = /\p{L}/gu;
@@ -35,21 +41,30 @@ export type UserStatus = z.infer<typeof userStatusSchema>;
 
 export const userThemeSchema = z
   .object({
-    baseTheme: z.string().openapi({ example: 'dark' }),
-    colorTheme: z.string().openapi({ example: 'standard' }),
+    baseTheme: z.string().max(THEME_NAME_MAX_LENGTH).openapi({ example: 'dark' }),
+    colorTheme: z.string().max(THEME_NAME_MAX_LENGTH).openapi({ example: 'standard' }),
   })
   .openapi('UserTheme');
 
 export type UserTheme = z.infer<typeof userThemeSchema>;
 
+const settingsKeySchema = z.string().max(CHAT_SETTINGS_KEY_MAX_LENGTH);
+const settingsValueSchema = z.string().max(CHAT_SETTINGS_VALUE_MAX_LENGTH);
+
+function cappedRecord<T extends z.ZodType>(valueSchema: T, maxEntries: number) {
+  return z.record(settingsKeySchema, valueSchema).refine((record) => Object.keys(record).length <= maxEntries, {
+    message: `No máximo ${maxEntries} entradas.`,
+  });
+}
+
 const chatAppearanceSchema = z
   .object({
     overlayOpacity: z.number(),
     overlayBlur: z.number(),
-    ownBubbleColor: z.string().nullable(),
+    ownBubbleColor: settingsValueSchema.nullable(),
     ownBubbleOpacity: z.number(),
     ownTextIntensity: z.number().nullable(),
-    otherBubbleColor: z.string().nullable(),
+    otherBubbleColor: settingsValueSchema.nullable(),
     otherBubbleOpacity: z.number(),
     otherTextIntensity: z.number().nullable(),
     bubbleBlur: z.number(),
@@ -58,9 +73,9 @@ const chatAppearanceSchema = z
 
 export const userChatSettingsSchema = z
   .object({
-    roomWallpapers: z.record(z.string(), z.string()).default({}),
-    globalWallpaper: z.string().nullable().default(null),
-    roomAppearance: z.record(z.string(), chatAppearanceSchema).default({}),
+    roomWallpapers: cappedRecord(settingsValueSchema, ROOM_WALLPAPERS_MAX_ENTRIES).default({}),
+    globalWallpaper: settingsValueSchema.nullable().default(null),
+    roomAppearance: cappedRecord(chatAppearanceSchema, ROOM_APPEARANCE_MAX_ENTRIES).default({}),
     globalAppearance: chatAppearanceSchema.nullable().default(null),
   })
   .openapi('UserChatSettings');
