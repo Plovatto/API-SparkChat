@@ -356,31 +356,34 @@ describe('accept, decline and hangup', () => {
     expect((await message).systemEvent.type).toBe('call.missed');
   });
 
-  it('posts no missed-call message into a room the callee has not opened, but reveals it once the call is answered', async () => {
+  it('reveals a room the callee has not opened before ringing, so a first-contact call can be matched to a local room', async () => {
     const { h, room, aliceClient, bobClient } = await setup({ hiddenRoom: true });
-    const missed = await ring(h, aliceClient, [bobClient], room.id);
-    const ended = waitForEvent(bobClient, 'call:ended');
-    aliceClient.emit('call:hangup', { callId: missed });
-    await ended;
-    expect(await systemEventTypes(h, room.id)).toEqual([]);
-
-    const answered = await ring(h, aliceClient, [bobClient], room.id);
-    await answer(aliceClient, bobClient, answered);
-    const revealed = waitForEvent<{ room: { id: string }; messages: { systemEvent: { type: string } }[] }>(bobClient, 'room:new');
-    aliceClient.emit('call:hangup', { callId: answered });
-    const payload = await revealed;
-    expect(payload.room.id).toBe(room.id);
-    expect(payload.messages.map((message) => message.systemEvent.type)).toEqual(['call.ended']);
+    const order: string[] = [];
+    bobClient.on('room:new', () => order.push('room:new'));
+    bobClient.on('call:incoming', () => order.push('call:incoming'));
+    const revealed = waitForEvent<{ room: { id: string } }>(bobClient, 'room:new');
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    expect((await revealed).room.id).toBe(room.id);
+    expect(order).toEqual(['room:new', 'call:incoming']);
+    expect(room.id).toBeTruthy();
+    expect((await h.roomService.getRoomById(room.id))?.visibleTo).toContain((await callRow(h, callId)).calleeId);
   });
 
-  it('does not post missed-call messages for a callee who deleted the conversation', async () => {
-    const { h, bob, room, aliceClient, bobClient } = await setup();
-    await h.roomService.deleteForUser(room.id, bob.user.id);
+  it('records a missed call in a room that was revealed by the ring', async () => {
+    const { h, room, aliceClient, bobClient } = await setup({ hiddenRoom: true });
     const callId = await ring(h, aliceClient, [bobClient], room.id);
     const ended = waitForEvent(bobClient, 'call:ended');
     aliceClient.emit('call:hangup', { callId });
     await ended;
-    expect(await systemEventTypes(h, room.id)).toEqual([]);
+    await vi.waitFor(async () => expect(await systemEventTypes(h, room.id)).toEqual(['call.missed']));
+  });
+
+  it('brings back a conversation the callee deleted when a call rings, like a message would', async () => {
+    const { h, bob, room, aliceClient, bobClient } = await setup();
+    await h.roomService.deleteForUser(room.id, bob.user.id);
+    const revealed = waitForEvent<{ room: { id: string } }>(bobClient, 'room:new');
+    await ring(h, aliceClient, [bobClient], room.id);
+    expect((await revealed).room.id).toBe(room.id);
   });
 
   it('silence acknowledges without ending the call', async () => {

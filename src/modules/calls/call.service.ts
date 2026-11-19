@@ -171,6 +171,11 @@ export class CallService {
     }
 
     this.bindings.set(input.callId, { caller: actor.socketId });
+    try {
+      await this.revealRoom(room, newCall.createdAt);
+    } catch (err) {
+      logger.error({ err, callId: input.callId }, 'Failed to reveal the room for an incoming call');
+    }
     this.io.to(userRoom(calleeId)).emit('call:incoming', {
       callId: input.callId,
       roomId: input.roomId,
