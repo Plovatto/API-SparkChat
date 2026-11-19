@@ -245,7 +245,12 @@ describe('invite and roster stored with the room key generation', () => {
     const left = waitForEvent(bobClient, 'group:left');
     bobClient.emit('group:leave', { roomId });
     await left;
-    expect(await h.roomService.getRoomById(roomId)).toMatchObject({ rotationRequired: 2, inviteTokenHash: undefined, encryptedRoster: undefined });
+    expect(await h.roomService.getRoomById(roomId)).toMatchObject({
+      rotationRequired: 2,
+      inviteTokenHash: undefined,
+      encryptedRoster: first.roster,
+      rosterKeyId: first.keyId,
+    });
     await expectError(
       carolClient,
       'room:join-by-invite',
@@ -522,7 +527,7 @@ describe('resetting the invite link', () => {
 });
 
 describe('invite updates', () => {
-  it('tells only current members when a generation stores or a removal clears the invite', async () => {
+  it('tells only current members when a generation stores or a removal clears the invite, keeping the roster until the next batch', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
@@ -554,7 +559,8 @@ describe('invite updates', () => {
     const left = waitForEvent(bobClient, 'group:left');
     aliceClient.emit('group:remove-member', { roomId, userId: bob.user.id });
     await left;
-    await expect(cleared).resolves.toEqual({ roomId, invite: null, roster: null });
+    await expect(cleared).resolves.toEqual({ roomId, invite: null, roster: { encryptedRoster: first.roster, keyId: first.keyId } });
+    expect(await h.roomService.getRoomById(roomId)).toMatchObject({ encryptedRoster: first.roster, rosterKeyId: first.keyId });
 
     const second = generation(roomId, alice.user.id, [alice.user.id, carol.user.id], { epoch: 2 });
     const secondUpdate = waitForEvent<InviteUpdate>(carolClient, 'room:invite-updated');
@@ -584,7 +590,7 @@ describe('invite updates', () => {
 
     const cleared = waitForEvent<InviteUpdate>(aliceClient, 'room:invite-updated');
     bobClient.emit('group:leave', { roomId });
-    await expect(cleared).resolves.toEqual({ roomId, invite: null, roster: null });
+    await expect(cleared).resolves.toEqual({ roomId, invite: null, roster: { encryptedRoster: first.roster, keyId: first.keyId } });
     await roundTrip(bobClient);
     await settle(50);
     expect(bobUpdates).toEqual([]);

@@ -218,8 +218,6 @@ export class RoomRepository {
         inviteTokenHash: null,
         encryptedInvite: null,
         inviteKeyId: null,
-        encryptedRoster: null,
-        rosterKeyId: null,
       })
       .where(
         and(
