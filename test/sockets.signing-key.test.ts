@@ -126,4 +126,40 @@ describe('e2e:publish-signing-key', () => {
     expect(after?.e2eSigningPublicKey).toBeNull();
     expect(after?.e2eKeySignature).toBeNull();
   });
+
+  it('accepts the signing key together with the public key in e2e:publish-keys', async () => {
+    harness = await startSocketHarness();
+    const account = await harness.createAccount('Carol');
+    const client = await harness.connectAs(account);
+    const signing = signingIdentity(account.user.id, 'pub-carol');
+
+    client.emit('e2e:publish-keys', { publicKey: 'pub-carol', signingPublicKey: signing.signingPublicKey, keySignature: signing.keySignature });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const stored = await harness.userRepository.findById(account.user.id);
+    expect(stored).toMatchObject({ e2ePublicKey: 'pub-carol', e2eSigningPublicKey: signing.signingPublicKey, e2eKeySignature: signing.keySignature });
+  });
+
+  it('rejects a combined publish whose signature does not match the new public key and stores nothing', async () => {
+    harness = await startSocketHarness();
+    const account = await harness.createAccount('Dave');
+    const client = await harness.connectAs(account);
+    const signing = signingIdentity(account.user.id, 'another-pub');
+
+    const error = waitForEvent<{ code: string; event?: string }>(client, 'error');
+    client.emit('e2e:publish-keys', { publicKey: 'pub-dave', signingPublicKey: signing.signingPublicKey, keySignature: signing.keySignature });
+
+    expect(await error).toMatchObject({ code: 'e2e.invalidSigningKey', event: 'e2e:publish-keys' });
+    expect((await harness.userRepository.findById(account.user.id))?.e2ePublicKey).toBeFalsy();
+  });
+
+  it('rejects a payload with only one of the two signing fields', async () => {
+    harness = await startSocketHarness();
+    const { client } = await accountWithKey(harness, 'Eve', 'pub-eve');
+
+    const error = waitForEvent<{ message?: string }>(client, 'error');
+    client.emit('e2e:publish-keys', { publicKey: 'pub-eve-2', signingPublicKey: 'A'.repeat(43) });
+
+    expect(await error).toBeTruthy();
+  });
 });

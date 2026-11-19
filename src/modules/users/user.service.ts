@@ -98,6 +98,8 @@ export interface SessionAuthentication {
 }
 
 export interface PublishE2eKeysInput {
+  signingPublicKey?: string | undefined;
+  keySignature?: string | undefined;
   publicKey?: string | undefined;
   encryptedPrivateKeyByPassword?: string | undefined;
   encryptedPrivateKeyByRecovery?: string | undefined;
@@ -580,7 +582,8 @@ export class UserService {
       patch.e2eEncryptedPrivateKeyByRecovery = input.encryptedPrivateKeyByRecovery;
     }
 
-    if (Object.keys(patch).length === 0) {
+    const hasSigning = input.signingPublicKey !== undefined && input.keySignature !== undefined;
+    if (Object.keys(patch).length === 0 && !hasSigning) {
       return;
     }
 
@@ -599,9 +602,25 @@ export class UserService {
     if (previousPublicKey && previousPublicKey !== patch.e2ePublicKey) {
       await this.repository.deleteRoomKeys(userId);
     }
-    if (patch.e2ePublicKey !== undefined && patch.e2ePublicKey !== current?.e2ePublicKey) {
+    const publicKeyChanges = patch.e2ePublicKey !== undefined && patch.e2ePublicKey !== current?.e2ePublicKey;
+    if (publicKeyChanges) {
       patch.e2eSigningPublicKey = null;
       patch.e2eKeySignature = null;
+    }
+    if (hasSigning && input.signingPublicKey !== undefined && input.keySignature !== undefined) {
+      const effectivePublicKey = patch.e2ePublicKey ?? current?.e2ePublicKey;
+      const valid =
+        effectivePublicKey !== undefined &&
+        effectivePublicKey !== null &&
+        verifyIdentityBinding({ userId, publicKey: effectivePublicKey, signingPublicKey: input.signingPublicKey, keySignature: input.keySignature });
+      if (!valid) {
+        throw AppError.of('e2e.invalidSigningKey');
+      }
+      if (!publicKeyChanges && current?.e2eSigningPublicKey && current.e2eSigningPublicKey !== input.signingPublicKey) {
+        throw AppError.of('e2e.signingKeyLocked');
+      }
+      patch.e2eSigningPublicKey = input.signingPublicKey;
+      patch.e2eKeySignature = input.keySignature;
     }
 
     await this.repository.update(userId, patch);

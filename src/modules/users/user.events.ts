@@ -81,6 +81,8 @@ export interface UserClientToServerEvents {
   'user:revoke-session': (payload: { sessionId: string }) => void;
   'e2e:publish-keys': (payload: {
     publicKey?: string;
+    signingPublicKey?: string;
+    keySignature?: string;
     encryptedPrivateKeyByPassword?: string;
     encryptedPrivateKeyByRecovery?: string;
   }) => void;
