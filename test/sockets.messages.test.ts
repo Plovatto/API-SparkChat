@@ -81,6 +81,24 @@ describe('message:send errors', () => {
 });
 
 describe('replies over sockets', () => {
+  it('uses the client supplied messageId and rejects a duplicate or malformed one', async () => {
+    const h = await start();
+    const { room, aliceClient } = await setupPair(h);
+    const messageId = '6f1d9c1e-2b1a-4f57-9d0e-5f3f0a1b2c3d';
+
+    const first = waitForEvent<MessageEvent>(aliceClient, 'message:new', (event) => event.clientTempId === 'own-1');
+    aliceClient.emit('message:send', { roomId: room.id, content: 'oi', messageId, clientTempId: 'own-1' });
+    await expect(first).resolves.toMatchObject({ id: messageId });
+
+    const duplicate = waitForEvent(aliceClient, 'error', (event) => event.clientTempId === 'own-2');
+    aliceClient.emit('message:send', { roomId: room.id, content: 'de novo', messageId, clientTempId: 'own-2' });
+    await expect(duplicate).resolves.toMatchObject({ clientTempId: 'own-2' });
+
+    const malformed = waitForEvent(aliceClient, 'error', (event) => event.clientTempId === 'own-3');
+    aliceClient.emit('message:send', { roomId: room.id, content: 'x', messageId: 'not-a-uuid', clientTempId: 'own-3' });
+    await expect(malformed).resolves.toMatchObject({ clientTempId: 'own-3' });
+  });
+
   it('does not leak a message from another room through replyToMessageId', async () => {
     const h = await start();
     const { alice, room, aliceClient } = await setupPair(h);

@@ -28,6 +28,7 @@ export interface SendMessageInput {
   type?: Extract<MessageType, 'text' | 'image' | 'audio' | 'file'> | undefined;
   duration?: number | undefined;
   replyToMessageId?: string | undefined;
+  messageId?: string | undefined;
   participantIds?: string[] | undefined;
   viewingUserIds?: string[] | undefined;
   mentionedUserIds?: string[] | undefined;
@@ -92,7 +93,10 @@ export class MessageService {
   }
 
   async sendMessage(input: SendMessageInput): Promise<MessageRecord> {
-    const messageId = randomUUID();
+    const messageId = input.messageId ?? randomUUID();
+    if (input.messageId && (await this.repository.findById(input.messageId))) {
+      throw AppError.of('message.invalidMedia');
+    }
     const attachmentKeys = this.attachmentKeysOf(input);
     if (!(await this.uploads.claim(attachmentKeys, input.senderId, messageId))) {
       throw AppError.of('message.invalidMedia');
