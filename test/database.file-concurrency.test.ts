@@ -7,6 +7,7 @@ import { sql } from 'drizzle-orm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildRoomService } from './support/build-room-service.js';
 import { fakeEnvelope, fakeField, fakeInvite, fakeRoster, newKeyId } from './support/room-keys.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 let workDir: string | null = null;
 
@@ -21,7 +22,7 @@ async function fileBackedGroup() {
   workDir = await mkdtemp(path.join(tmpdir(), 'sparkchat-db-'));
   const services = await buildRoomService(pathToFileURL(path.join(workDir, 'chat.db')).href);
   const register = async (nickname: string) =>
-    (await services.userService.registerAccount({ nickname, avatar: 0, password: 'correct-horse-battery-staple' })).user;
+    (await services.userService.registerAccount({ nickname, avatar: 0, password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP })).user;
   const alice = await register('Alice');
   const bob = await register('Bob');
   const carol = await register('Carol');
@@ -56,7 +57,7 @@ describe('room key writes on a local file database', () => {
       roomKeyRepository.publish({ mode: 'generation', invite: fakeInvite(), roster: fakeRoster('roster'), roomId: group.id, keyId: newKeyId(), epoch: 1, senderId: bob.id, keys: batch(group.id, bob.id, members, 1) }),
       roomKeyRepository.publish({ mode: 'share', roomId: group.id, keyId, epoch: 1, senderId: bob.id, keys: batch(group.id, bob.id, [carol.id], 1, keyId) }),
       roomService.leaveGroup(group.id, dave.id),
-      userService.publishE2eKeys(bob.id, { publicKey: 'bob-second' }),
+      context.userRepository.updateIdentityRequiringRotation(bob.id, { e2ePublicKey: 'bob-second' }),
       ...sends.map(() => messageService.markRoomAsRead(group.id, bob.id)),
     ]);
 
@@ -64,7 +65,7 @@ describe('room key writes on a local file database', () => {
     const { messages } = await messageService.getRoomMessagesPage(group.id, { limit: 100 });
     expect(messages.filter((message) => message.type === 'text')).toHaveLength(30);
     expect(await roomKeyRepository.getState(group.id)).toMatchObject({ currentEpoch: 1, rotationRequired: 2 });
-    await expect(userService.registerAccount({ nickname: 'Eva', avatar: 0, password: 'correct-horse-battery-staple' })).resolves.toBeDefined();
+    await expect(userService.registerAccount({ nickname: 'Eva', avatar: 0, password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP })).resolves.toBeDefined();
   });
 
   it('keeps the database writable after a key write fails', async () => {

@@ -23,6 +23,9 @@ const messageFileMetaSchema = z.object({
   mimeType: z.string(),
   size: z.number(),
   thumbnailUrl: z.string().optional(),
+  key: z.string().optional().openapi({ description: 'Chave do anexo (32 bytes) cifrada como campo e2e:v2 da mensagem; o servidor nunca vê o valor em claro' }),
+  thumbnailKey: z.string().optional().openapi({ description: 'Chave da miniatura, cifrada como campo e2e:v2 da mensagem' }),
+  previewKey: z.string().optional().openapi({ description: 'Chave da imagem da prévia de link, cifrada como campo e2e:v2 da mensagem' }),
 });
 
 const messageLinkPreviewSchema = z.object({

@@ -1,7 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { randomBytes } from 'node:crypto';
+import { describe, expect, it, vi } from 'vitest';
 import { getSodium } from '@/modules/ai/ai.crypto.js';
-import { guessMimeTypeFromUrl, loadDecryptedAttachment, resolveAudioMimeType, resolveObjectKey } from '@/modules/ai/ai.attachments.js';
+import {
+  attachmentAssociatedData,
+  guessMimeTypeFromUrl,
+  loadDecryptedAttachment,
+  resolveAudioMimeType,
+  resolveObjectKey,
+} from '@/modules/ai/ai.attachments.js';
 import { InMemoryObjectStorage } from '@/storage/object-storage.js';
+import { sealAttachmentBytes } from './support/room-keys.js';
 
 describe('guessMimeTypeFromUrl', () => {
   it('maps known image and audio extensions', () => {
@@ -47,77 +55,81 @@ describe('resolveObjectKey', () => {
   });
 });
 
-const KEY_ID_BYTES = Buffer.alloc(16, 7);
+const BINDING = { roomId: 'room-1', messageId: '6f1c2d3e-4b5a-4c6d-8e7f-001122334455', slot: 'content' } as const;
 
-function keyring(roomKey: Uint8Array) {
-  return (keyId: string) => Promise.resolve(keyId === KEY_ID_BYTES.toString('base64url') ? roomKey : null);
+async function storeSealed(objectStorage: InMemoryObjectStorage, objectKey: string, bytes: Buffer): Promise<string> {
+  await objectStorage.putObject(objectKey, bytes, { contentType: 'application/octet-stream' });
+  return `${objectStorage.publicUrl(objectKey)}?e2e=1`;
 }
 
+describe('attachmentAssociatedData', () => {
+  it('binds the object to the room, the message and the slot', () => {
+    expect(attachmentAssociatedData(BINDING)).toBe('sparkchat:attachment:v1|room-1|6f1c2d3e-4b5a-4c6d-8e7f-001122334455|content');
+  });
+});
+
 describe('loadDecryptedAttachment', () => {
-  it('decrypts a sealed attachment written with the room key', async () => {
+  it('decrypts an object sealed with its own file key and bound to the message', async () => {
     const objectStorage = new InMemoryObjectStorage();
-    const sodium = await getSodium();
-    const roomKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
-    const plaintext = Buffer.from('fake image bytes');
+    const { bytes, fileKey } = await sealAttachmentBytes(Buffer.from('fake image bytes'), BINDING);
+    const url = await storeSealed(objectStorage, 'uploads/images/photo.png', bytes);
 
-    const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
-    const ciphertext = sodium.crypto_secretbox_easy(plaintext, nonce, roomKey);
-    const combined = Buffer.concat([KEY_ID_BYTES, Buffer.from(nonce), Buffer.from(ciphertext)]);
+    const result = await loadDecryptedAttachment(url, BINDING, fileKey, objectStorage, 1024 * 1024);
 
-    await objectStorage.putObject('uploads/images/photo.png', combined, { contentType: 'image/png' });
-    const url = `${objectStorage.publicUrl('uploads/images/photo.png')}?e2e=1`;
-
-    const result = await loadDecryptedAttachment(url, keyring(roomKey), objectStorage, 1024 * 1024);
     expect(result?.toString('utf8')).toBe('fake image bytes');
   });
 
-  it('returns null when the room key does not match', async () => {
+  it('returns null for a wrong file key', async () => {
     const objectStorage = new InMemoryObjectStorage();
-    const sodium = await getSodium();
-    const roomKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
-    const otherKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
-    const plaintext = Buffer.from('fake image bytes');
+    const { bytes } = await sealAttachmentBytes(Buffer.from('fake image bytes'), BINDING);
+    const url = await storeSealed(objectStorage, 'uploads/images/photo.png', bytes);
 
-    const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
-    const ciphertext = sodium.crypto_secretbox_easy(plaintext, nonce, roomKey);
-    const combined = Buffer.concat([KEY_ID_BYTES, Buffer.from(nonce), Buffer.from(ciphertext)]);
-
-    await objectStorage.putObject('uploads/images/photo.png', combined, { contentType: 'image/png' });
-    const url = `${objectStorage.publicUrl('uploads/images/photo.png')}?e2e=1`;
-
-    const result = await loadDecryptedAttachment(url, keyring(otherKey), objectStorage, 1024 * 1024);
-    expect(result).toBeNull();
+    expect(await loadDecryptedAttachment(url, BINDING, randomBytes(32).toString('base64url'), objectStorage, 1024 * 1024)).toBeNull();
   });
 
-  it('returns null for a key that does not exist', async () => {
+  it('returns null when the object is bound to another message, room or slot', async () => {
     const objectStorage = new InMemoryObjectStorage();
-    const sodium = await getSodium();
-    const roomKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
-    const url = `${objectStorage.publicUrl('uploads/images/missing.png')}?e2e=1`;
+    const { bytes, fileKey } = await sealAttachmentBytes(Buffer.from('fake image bytes'), BINDING);
+    const url = await storeSealed(objectStorage, 'uploads/images/photo.png', bytes);
 
-    const result = await loadDecryptedAttachment(url, keyring(roomKey), objectStorage, 1024 * 1024);
-    expect(result).toBeNull();
+    expect(await loadDecryptedAttachment(url, { ...BINDING, messageId: 'another-message' }, fileKey, objectStorage, 1024 * 1024)).toBeNull();
+    expect(await loadDecryptedAttachment(url, { ...BINDING, roomId: 'room-2' }, fileKey, objectStorage, 1024 * 1024)).toBeNull();
+    expect(await loadDecryptedAttachment(url, { ...BINDING, slot: 'thumbnail' }, fileKey, objectStorage, 1024 * 1024)).toBeNull();
   });
 
-  it('reads the key id from the first 16 bytes and returns null when that generation is unknown', async () => {
+  it('refuses a missing or malformed file key without reading the object', async () => {
+    const objectStorage = new InMemoryObjectStorage();
+    const { bytes } = await sealAttachmentBytes(Buffer.from('fake image bytes'), BINDING);
+    const url = await storeSealed(objectStorage, 'uploads/images/photo.png', bytes);
+    const getObject = vi.spyOn(objectStorage, 'getObject');
+
+    expect(await loadDecryptedAttachment(url, BINDING, null, objectStorage, 1024)).toBeNull();
+    expect(await loadDecryptedAttachment(url, BINDING, 'short', objectStorage, 1024)).toBeNull();
+    expect(await loadDecryptedAttachment(url, BINDING, `${'A'.repeat(42)}=`, objectStorage, 1024)).toBeNull();
+    expect(getObject).not.toHaveBeenCalled();
+  });
+
+  it('no longer opens objects sealed with the room key and a key id header', async () => {
     const objectStorage = new InMemoryObjectStorage();
     const sodium = await getSodium();
     const roomKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
     const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
-    const ciphertext = sodium.crypto_secretbox_easy(Buffer.from('bytes'), nonce, roomKey);
-    const otherKeyId = Buffer.alloc(16, 9);
-    await objectStorage.putObject('uploads/images/other.png', Buffer.concat([otherKeyId, Buffer.from(nonce), Buffer.from(ciphertext)]), {
-      contentType: 'image/png',
-    });
+    const legacy = Buffer.concat([Buffer.alloc(16, 7), Buffer.from(nonce), Buffer.from(sodium.crypto_secretbox_easy(Buffer.from('bytes'), nonce, roomKey))]);
+    const url = await storeSealed(objectStorage, 'uploads/images/legacy.png', legacy);
+
+    expect(await loadDecryptedAttachment(url, BINDING, Buffer.from(roomKey).toString('base64url'), objectStorage, 1024)).toBeNull();
+  });
+
+  it('returns null for a missing, truncated or oversized object', async () => {
+    const objectStorage = new InMemoryObjectStorage();
+    const fileKey = randomBytes(32).toString('base64url');
     await objectStorage.putObject('uploads/images/short.png', Buffer.alloc(20), { contentType: 'image/png' });
+    const big = await sealAttachmentBytes(Buffer.alloc(2048), BINDING);
+    const bigUrl = await storeSealed(objectStorage, 'uploads/images/big.png', big.bytes);
 
-    const requested: string[] = [];
-    const resolver = (keyId: string) => {
-      requested.push(keyId);
-      return Promise.resolve(null);
-    };
-    expect(await loadDecryptedAttachment(objectStorage.publicUrl('uploads/images/other.png') + '?e2e=1', resolver, objectStorage, 1024)).toBeNull();
-    expect(requested).toEqual([otherKeyId.toString('base64url')]);
-    expect(await loadDecryptedAttachment(objectStorage.publicUrl('uploads/images/short.png') + '?e2e=1', keyring(roomKey), objectStorage, 1024)).toBeNull();
+    expect(await loadDecryptedAttachment(`${objectStorage.publicUrl('uploads/images/missing.png')}?e2e=1`, BINDING, fileKey, objectStorage, 1024)).toBeNull();
+    expect(await loadDecryptedAttachment(`${objectStorage.publicUrl('uploads/images/short.png')}?e2e=1`, BINDING, fileKey, objectStorage, 1024)).toBeNull();
+    expect(await loadDecryptedAttachment(bigUrl, BINDING, big.fileKey, objectStorage, 1024)).toBeNull();
+    expect(await loadDecryptedAttachment(bigUrl, BINDING, big.fileKey, objectStorage, 4096)).not.toBeNull();
   });
 });

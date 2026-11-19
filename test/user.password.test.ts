@@ -23,20 +23,20 @@ function encodedHash(cost: number, blockSize: number, saltHex: string, keyHex: s
 
 describe('user.password', () => {
   it('verifies the correct password against its hash', async () => {
-    const hash = await hashPassword('correct-horse-battery-staple');
+    const hash = await hashPassword('correct-horse-battery-staple-0123456789abcd');
 
-    await expect(verifyPassword('correct-horse-battery-staple', hash)).resolves.toBe(true);
+    await expect(verifyPassword('correct-horse-battery-staple-0123456789abcd', hash)).resolves.toBe(true);
   });
 
   it('rejects an incorrect password', async () => {
-    const hash = await hashPassword('correct-horse-battery-staple');
+    const hash = await hashPassword('correct-horse-battery-staple-0123456789abcd');
 
     await expect(verifyPassword('wrong-password', hash)).resolves.toBe(false);
   });
 
   it('produces a different hash for the same password each time', async () => {
-    const first = await hashPassword('correct-horse-battery-staple');
-    const second = await hashPassword('correct-horse-battery-staple');
+    const first = await hashPassword('correct-horse-battery-staple-0123456789abcd');
+    const second = await hashPassword('correct-horse-battery-staple-0123456789abcd');
 
     expect(first).not.toBe(second);
   });
@@ -52,30 +52,30 @@ describe('user.password', () => {
   });
 
   it('stores the scrypt parameters in the hash string', async () => {
-    const hash = await hashPassword('correct-horse-battery-staple', { cost: 2 ** 15, blockSize: 8, parallelization: 1 });
+    const hash = await hashPassword('correct-horse-battery-staple-0123456789abcd', { cost: 2 ** 15, blockSize: 8, parallelization: 1 });
 
     expect(hash).toMatch(/^scrypt\$32768\$8\$1\$[0-9a-f]{32}\$[0-9a-f]{128}$/);
-    await expect(verifyPassword('correct-horse-battery-staple', hash)).resolves.toBe(true);
+    await expect(verifyPassword('correct-horse-battery-staple-0123456789abcd', hash)).resolves.toBe(true);
   });
 
   it('verifies a hash made with the production parameters', async () => {
-    const hash = await hashPassword('correct-horse-battery-staple', DEFAULT_PASSWORD_HASH_PARAMS);
+    const hash = await hashPassword('correct-horse-battery-staple-0123456789abcd', DEFAULT_PASSWORD_HASH_PARAMS);
 
     expect(hash.startsWith(['scrypt', 65536, 8, 1, ''].join('$'))).toBe(true);
-    await expect(verifyPassword('correct-horse-battery-staple', hash)).resolves.toBe(true);
+    await expect(verifyPassword('correct-horse-battery-staple-0123456789abcd', hash)).resolves.toBe(true);
   });
 
   it('still verifies legacy salt:key hashes', async () => {
-    const hash = await legacyHash('correct-horse-battery-staple');
+    const hash = await legacyHash('correct-horse-battery-staple-0123456789abcd');
 
-    await expect(verifyPassword('correct-horse-battery-staple', hash)).resolves.toBe(true);
+    await expect(verifyPassword('correct-horse-battery-staple-0123456789abcd', hash)).resolves.toBe(true);
     await expect(verifyPassword('wrong-password', hash)).resolves.toBe(false);
   });
 
   it('asks to rehash legacy hashes and hashes with other parameters only', async () => {
-    const legacy = await legacyHash('correct-horse-battery-staple');
-    const current = await hashPassword('correct-horse-battery-staple');
-    const weaker = await hashPassword('correct-horse-battery-staple', { ...currentPasswordHashParams(), blockSize: 4 });
+    const legacy = await legacyHash('correct-horse-battery-staple-0123456789abcd');
+    const current = await hashPassword('correct-horse-battery-staple-0123456789abcd');
+    const weaker = await hashPassword('correct-horse-battery-staple-0123456789abcd', { ...currentPasswordHashParams(), blockSize: 4 });
 
     expect(passwordHashNeedsRehash(legacy)).toBe(true);
     expect(passwordHashNeedsRehash(weaker)).toBe(true);

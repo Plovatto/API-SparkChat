@@ -25,22 +25,11 @@ function authSalt(): string {
   return randomBytes(16).toString('base64url');
 }
 
-function upgradePayload(currentPassword: string) {
-  return {
-    currentPassword,
-    newAuthSalt: authSalt(),
-    newAuthKey: clientSecret(),
-    encryptedPrivateKeyByPassword: 'wrapped-by-password',
-    recoveryVerifier: clientSecret(),
-    encryptedPrivateKeyByRecovery: 'wrapped-by-recovery',
-  };
-}
-
 interface RegisteredPayload {
   user: { id: string };
   sessionToken: string;
-  recoveryFile: string | null;
-  recoveryToken: string | null;
+  recoveryFile?: unknown;
+  recoveryToken?: unknown;
 }
 
 describe('user:join register with v2 credentials', () => {
@@ -60,22 +49,39 @@ describe('user:join register with v2 credentials', () => {
     });
     const payload = await registered;
 
-    expect(payload.recoveryFile).toBeNull();
-    expect(payload.recoveryToken).toBeNull();
+    expect(payload).not.toHaveProperty('recoveryFile');
+    expect(payload).not.toHaveProperty('recoveryToken');
     expect(payload.sessionToken).toBeTruthy();
     expect((await h.userRepository.findById(payload.user.id))?.authVersion).toBe(2);
   });
 
-  it('keeps sending the server recovery file to legacy clients', async () => {
+  it('rejects a plaintext password registration without v2 fields', async () => {
     const h = await start();
     const client = await h.connect();
 
-    const registered = waitForEvent<RegisteredPayload>(client, 'user:registered');
-    client.emit('user:join', { mode: 'register', nickname: 'Alice', avatar: 0, password: TEST_PASSWORD });
-    const payload = await registered;
+    const failed = waitForEvent<{ mode: string; reason: string }>(client, 'user:auth-failed');
+    client.emit('user:join', { mode: 'register', nickname: 'Alice', avatar: 0, password: 'a-plaintext-password-123' });
 
-    expect(payload.recoveryFile).toBeTruthy();
-    expect(payload.recoveryToken).toBeTruthy();
+    expect(await failed).toMatchObject({ mode: 'register', reason: 'invalid' });
+    expect(await h.userService.getUserByNickname('Alice')).toBeNull();
+  });
+
+  it('rejects a registration whose password is not a derived auth key', async () => {
+    const h = await start();
+    const client = await h.connect();
+
+    const failed = waitForEvent<{ mode: string; reason: string }>(client, 'user:auth-failed');
+    client.emit('user:join', {
+      mode: 'register',
+      nickname: 'Alice',
+      avatar: 0,
+      password: 'a-plaintext-password-123',
+      authSalt: authSalt(),
+      recoveryVerifier: clientSecret(),
+    });
+
+    expect(await failed).toMatchObject({ mode: 'register', reason: 'invalid' });
+    expect(await h.userService.getUserByNickname('Alice')).toBeNull();
   });
 
   it('fails when only one of the v2 fields is sent', async () => {
@@ -85,75 +91,47 @@ describe('user:join register with v2 credentials', () => {
     const failed = waitForEvent<{ code: string }>(client, 'user:auth-failed');
     client.emit('user:join', { mode: 'register', nickname: 'Alice', avatar: 0, password: clientSecret(), authSalt: authSalt() });
 
-    expect(await failed).toMatchObject({ mode: 'register', code: 'user.credentialsIncomplete' });
+    expect(await failed).toMatchObject({ mode: 'register', reason: 'invalid' });
   });
 });
 
-describe('user:upgrade-credentials', () => {
-  it('upgrades a legacy account, keeps the socket session and reports version 2', async () => {
+describe('removed legacy credential events', () => {
+  it('ignores user:upgrade-credentials and leaves the account unchanged', async () => {
     const h = await start();
     const account = await h.createAccount('Alice');
     const client = await h.connectAs(account);
-    const payload = upgradePayload(TEST_PASSWORD);
+    const before = await h.userRepository.findById(account.user.id);
 
-    const upgraded = waitForEvent<{ authVersion: number }>(client, 'user:credentials-upgraded');
-    client.emit('user:upgrade-credentials', payload);
-
-    expect(await upgraded).toEqual({ authVersion: 2 });
-    expect(await h.userRepository.findById(account.user.id)).toMatchObject({ authVersion: 2, authSalt: payload.newAuthSalt });
-    expect(await h.userService.isSessionActive(account.user.id, account.sessionId)).toBe(true);
-
+    let upgraded = false;
+    client.on('user:credentials-upgraded' as never, () => {
+      upgraded = true;
+    });
+    client.emit('user:upgrade-credentials' as never, {
+      currentPassword: TEST_PASSWORD,
+      newAuthSalt: authSalt(),
+      newAuthKey: clientSecret(),
+      encryptedPrivateKeyByPassword: 'wrapped-by-password',
+      recoveryVerifier: clientSecret(),
+      encryptedPrivateKeyByRecovery: 'wrapped-by-recovery',
+    });
     const keys = waitForEvent<{ authVersion: number }>(client, 'e2e:my-keys');
     client.emit('e2e:get-my-keys');
-    expect(await keys).toMatchObject({ authVersion: 2, encryptedPrivateKeyByPassword: 'wrapped-by-password' });
-  });
+    await keys;
 
-  it('rejects a wrong current password', async () => {
-    const h = await start();
-    const account = await h.createAccount('Alice');
-    const client = await h.connectAs(account);
-
-    const error = waitForEvent<{ code: string; event?: string }>(client, 'error');
-    client.emit('user:upgrade-credentials', upgradePayload('wrong-password-123'));
-
-    expect(await error).toMatchObject({ code: 'user.currentPasswordIncorrect', event: 'user:upgrade-credentials' });
-    expect((await h.userRepository.findById(account.user.id))?.authVersion).toBe(1);
-  });
-
-  it('rejects accounts that already use v2', async () => {
-    const h = await start();
-    const account = await h.createAccount('Alice');
-    const client = await h.connectAs(account);
-    const first = upgradePayload(TEST_PASSWORD);
-    const upgraded = waitForEvent(client, 'user:credentials-upgraded');
-    client.emit('user:upgrade-credentials', first);
-    await upgraded;
-
-    const error = waitForEvent<{ code: string }>(client, 'error');
-    client.emit('user:upgrade-credentials', upgradePayload(first.newAuthKey));
-
-    expect(await error).toMatchObject({ code: 'user.credentialsAlreadyUpgraded' });
-  });
-
-  it('rejects payloads with malformed derived values', async () => {
-    const h = await start();
-    const account = await h.createAccount('Alice');
-    const client = await h.connectAs(account);
-
-    const error = waitForEvent<{ code: string }>(client, 'error');
-    client.emit('user:upgrade-credentials', { ...upgradePayload(TEST_PASSWORD), newAuthSalt: 'not-a-salt' });
-
-    expect(await error).toMatchObject({ code: 'validation.invalidPayload' });
-    expect((await h.userRepository.findById(account.user.id))?.authVersion).toBe(1);
+    expect(upgraded).toBe(false);
+    expect(await h.userRepository.findById(account.user.id)).toMatchObject({ authSalt: before?.authSalt, passwordHash: before?.passwordHash });
+    expect(listSocketEvents().some((event) => event.event === 'user:upgrade-credentials' || event.event === 'user:credentials-upgraded')).toBe(false);
   });
 });
 
 describe('v2 account socket flows', () => {
   async function upgradedAccount(h: Harness) {
     const account = await h.createAccount('Alice');
-    const payload = upgradePayload(TEST_PASSWORD);
-    await h.userService.upgradeCredentials(account.user.id, payload);
-    return { ...account, authKey: payload.newAuthKey };
+    await h.userRepository.update(account.user.id, {
+      e2eEncryptedPrivateKeyByPassword: 'wrapped-by-password',
+      e2eEncryptedPrivateKeyByRecovery: 'wrapped-by-recovery',
+    });
+    return { ...account, authKey: TEST_PASSWORD };
   }
 
   it('changes the password with v2 fields and returns no recovery file', async () => {
@@ -161,7 +139,7 @@ describe('v2 account socket flows', () => {
     const account = await upgradedAccount(h);
     const client = await h.connectAs(account);
 
-    const changed = waitForEvent<{ recoveryFile: string | null; recoveryToken: string | null }>(client, 'user:password-changed');
+    const changed = waitForEvent<Record<string, unknown>>(client, 'user:password-changed');
     client.emit('user:change-password', {
       currentPassword: account.authKey,
       newPassword: clientSecret(),
@@ -169,7 +147,7 @@ describe('v2 account socket flows', () => {
       encryptedPrivateKeyByPassword: 'new-wrapped-by-password',
     });
 
-    expect(await changed).toEqual({ recoveryFile: null, recoveryToken: null });
+    expect(await changed).toEqual({});
     expect((await h.userRepository.findById(account.user.id))?.e2eEncryptedPrivateKeyByPassword).toBe('new-wrapped-by-password');
   });
 
@@ -178,14 +156,14 @@ describe('v2 account socket flows', () => {
     const account = await upgradedAccount(h);
     const client = await h.connectAs(account);
 
-    const regenerated = waitForEvent<{ recoveryFile: string | null }>(client, 'user:recovery-file-regenerated');
+    const regenerated = waitForEvent<Record<string, unknown>>(client, 'user:recovery-file-regenerated');
     client.emit('user:regenerate-recovery-file', {
       currentPassword: account.authKey,
       recoveryVerifier: clientSecret(),
       encryptedPrivateKeyByRecovery: 'new-wrapped-by-recovery',
     });
 
-    expect(await regenerated).toEqual({ recoveryFile: null, recoveryToken: null });
+    expect(await regenerated).toEqual({});
   });
 
   it('changes the nickname without a recovery file and still disconnects other sessions', async () => {
@@ -196,10 +174,12 @@ describe('v2 account socket flows', () => {
     const otherClient = await h.connectAs({ user: account.user, sessionToken: other?.sessionToken ?? '' });
 
     const revoked = waitForEvent(otherClient, 'user:session-revoked');
-    const updated = waitForEvent<{ recoveryFile: string | null; recoveryToken: string | null }>(client, 'user:profile-updated-success');
+    const updated = waitForEvent<Record<string, unknown>>(client, 'user:profile-updated-success');
     client.emit('user:update-profile', { nickname: 'Alicia', avatar: 0, currentPassword: account.authKey });
 
-    expect(await updated).toMatchObject({ recoveryFile: null, recoveryToken: null });
+    const payload = await updated;
+    expect(payload).not.toHaveProperty('recoveryFile');
+    expect(payload).not.toHaveProperty('recoveryToken');
     await revoked;
   });
 
@@ -215,7 +195,7 @@ describe('v2 account socket flows', () => {
     expect((await h.userRepository.findById(account.user.id))?.e2eEncryptedPrivateKeyByPassword).toBe('wrapped-by-password');
   });
 
-  it('reports version 1 in e2e:my-keys for legacy accounts', async () => {
+  it('reports version 2 in e2e:my-keys for every account', async () => {
     const h = await start();
     const account = await h.createAccount('Bob');
     const client = await h.connectAs(account);
@@ -223,23 +203,21 @@ describe('v2 account socket flows', () => {
     const keys = waitForEvent<{ authVersion: number }>(client, 'e2e:my-keys');
     client.emit('e2e:get-my-keys');
 
-    expect(await keys).toMatchObject({ authVersion: 1 });
+    expect(await keys).toMatchObject({ authVersion: 2 });
   });
 });
 
 describe('socket docs for v2 credentials', () => {
-  it('documents the upgrade events and the new optional fields', () => {
+  it('documents only the v2 credential fields as required', () => {
     const events = listSocketEvents();
-    const upgrade = events.find((event) => event.event === 'user:upgrade-credentials' && event.direction === 'client-to-server');
-    const upgraded = events.find((event) => event.event === 'user:credentials-upgraded' && event.direction === 'server-to-client');
     const change = events.find((event) => event.event === 'user:change-password' && event.direction === 'client-to-server');
+    const regenerate = events.find((event) => event.event === 'user:regenerate-recovery-file' && event.direction === 'client-to-server');
 
-    expect(upgrade?.payloadSchema).toMatchObject({
-      required: expect.arrayContaining(['currentPassword', 'newAuthSalt', 'newAuthKey', 'recoveryVerifier']) as unknown,
-    });
-    expect(upgraded).toBeDefined();
     expect(change?.payloadSchema).toMatchObject({
-      properties: { newAuthSalt: {}, encryptedPrivateKeyByPassword: {}, recoveryVerifier: {}, encryptedPrivateKeyByRecovery: {} },
+      required: expect.arrayContaining(['newPassword', 'newAuthSalt', 'encryptedPrivateKeyByPassword']) as unknown,
+    });
+    expect(regenerate?.payloadSchema).toMatchObject({
+      required: expect.arrayContaining(['recoveryVerifier', 'encryptedPrivateKeyByRecovery']) as unknown,
     });
   });
 });

@@ -4,7 +4,6 @@ export { LoginRateLimiter } from './user.login-rate-limiter.js';
 export { ASSISTANT_USER_ID, NICKNAME_MAX_LENGTH } from './user.model.js';
 export type { AuthMethod, UserStatus } from './user.model.js';
 export { hashPassword, verifyPassword } from './user.password.js';
-export { decodeRecoveryFile, encodeRecoveryFile } from './user.recovery-file.js';
 export { UserRepository } from './user.repository.js';
 export { createUserRouter } from './user.routes.js';
 export { UserSessionRepository } from './user.session.repository.js';

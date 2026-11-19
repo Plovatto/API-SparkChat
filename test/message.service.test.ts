@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { systemEvent } from '@/modules/messages/index.js';
 import { messageViewSchema } from '@/modules/messages/message.schemas.js';
 import { buildRoomService } from './support/build-room-service.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 async function createUser(userService: Awaited<ReturnType<typeof buildRoomService>>['userService'], nickname: string) {
   const { user } = await userService.registerAccount({
     nickname,
     avatar: 0,
-    password: 'correct-horse-battery-staple',
+    password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP
   });
   return user;
 }

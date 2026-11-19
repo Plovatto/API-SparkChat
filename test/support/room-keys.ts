@@ -99,3 +99,15 @@ export async function establishFakeGeneration(
   }
   return keyId;
 }
+
+export async function sealAttachmentBytes(
+  plaintext: Buffer,
+  binding: { roomId: string; messageId: string; slot: 'content' | 'thumbnail' | 'preview' },
+  fileKey: Uint8Array = randomBytes(32),
+): Promise<{ bytes: Buffer; fileKey: string }> {
+  const sodium = await getSodium();
+  const nonce = randomBytes(24);
+  const ad = `sparkchat:attachment:v1|${binding.roomId}|${binding.messageId}|${binding.slot}`;
+  const sealed = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(plaintext, ad, null, nonce, fileKey);
+  return { bytes: Buffer.concat([nonce, Buffer.from(sealed)]), fileKey: Buffer.from(fileKey).toString('base64url') };
+}

@@ -11,6 +11,7 @@ import {
   waitForEvent,
   type TestClient,
 } from './support/socket-harness.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 type Harness = Awaited<ReturnType<typeof startSocketHarness>>;
 
@@ -42,6 +43,8 @@ function serverSocketOf(h: Harness, client: TestClient) {
   return socket;
 }
 
+const RECOVERY_FIELDS = { recoveryVerifier: 'next-recovery-verifier-0123456789abcdefghij', encryptedPrivateKeyByRecovery: 'rewrapped-by-recovery' };
+
 describe('recovery file regeneration over sockets', () => {
   it('refuses to regenerate the recovery file without the current password', async () => {
     const h = await start();
@@ -50,11 +53,11 @@ describe('recovery file regeneration over sockets', () => {
     const regenerated = collectEvents(client, 'user:recovery-file-regenerated');
 
     const missing = waitForEvent<{ code: string }>(client, 'error');
-    client.emit('user:regenerate-recovery-file');
+    client.emit('user:regenerate-recovery-file', RECOVERY_FIELDS);
     await expect(missing).resolves.toMatchObject({ code: 'user.currentPasswordIncorrect' });
 
     const wrong = waitForEvent<{ code: string }>(client, 'error');
-    client.emit('user:regenerate-recovery-file', { currentPassword: 'not-the-password' });
+    client.emit('user:regenerate-recovery-file', { ...RECOVERY_FIELDS, currentPassword: 'not-the-password' });
     await expect(wrong).resolves.toMatchObject({ code: 'user.currentPasswordIncorrect' });
 
     expect(regenerated).toHaveLength(0);
@@ -71,10 +74,10 @@ describe('recovery file regeneration over sockets', () => {
 
     const revoked = waitForEvent(otherDevice, 'user:session-revoked');
     const disconnected = waitForDisconnect(otherDevice);
-    const regenerated = waitForEvent<{ recoveryFile: string }>(current, 'user:recovery-file-regenerated');
-    current.emit('user:regenerate-recovery-file', { currentPassword: TEST_PASSWORD });
+    const regenerated = waitForEvent<Record<string, unknown>>(current, 'user:recovery-file-regenerated');
+    current.emit('user:regenerate-recovery-file', { ...RECOVERY_FIELDS, currentPassword: TEST_PASSWORD });
 
-    await expect(regenerated).resolves.toMatchObject({ recoveryFile: expect.any(String) as string });
+    await expect(regenerated).resolves.toEqual({});
     await revoked;
     await disconnected;
     await roundTrip(sameSessionTab);
@@ -91,12 +94,12 @@ describe('recovery file regeneration over sockets', () => {
 
     for (let i = 0; i < 5; i += 1) {
       const failed = waitForEvent<{ code: string }>(client, 'error');
-      client.emit('user:regenerate-recovery-file', { currentPassword: `wrong-password-${i}` });
+      client.emit('user:regenerate-recovery-file', { ...RECOVERY_FIELDS, currentPassword: `wrong-password-${i}` });
       await expect(failed).resolves.toMatchObject({ code: 'user.currentPasswordIncorrect' });
     }
 
     const limited = waitForEvent<{ code: string }>(client, 'error');
-    client.emit('user:regenerate-recovery-file', { currentPassword: TEST_PASSWORD });
+    client.emit('user:regenerate-recovery-file', { ...RECOVERY_FIELDS, currentPassword: TEST_PASSWORD });
     await expect(limited).resolves.toMatchObject({ code: 'rateLimit.passwordAttempts' });
   });
 });
@@ -107,10 +110,10 @@ describe('nickname change over sockets', () => {
     const alice = await h.createAccount('Alice');
     const client = await h.connectAs(alice);
 
-    const updated = waitForEvent<{ recoveryFile: string | null }>(client, 'user:profile-updated-success');
+    const updated = waitForEvent<Record<string, unknown>>(client, 'user:profile-updated-success');
     client.emit('user:update-profile', { nickname: 'Alice', avatar: 4 });
 
-    await expect(updated).resolves.toMatchObject({ recoveryFile: null });
+    await expect(updated).resolves.toMatchObject({ user: { avatar: 4 } });
   });
 
   it('requires the current password to change the nickname and then disconnects the other sessions', async () => {
@@ -126,33 +129,33 @@ describe('nickname change over sockets', () => {
     expect(otherDevice.connected).toBe(true);
 
     const disconnected = waitForDisconnect(otherDevice);
-    const updated = waitForEvent<{ recoveryFile: string | null }>(current, 'user:profile-updated-success');
+    const updated = waitForEvent<Record<string, unknown>>(current, 'user:profile-updated-success');
     current.emit('user:update-profile', { nickname: 'Alicia', avatar: 0, currentPassword: TEST_PASSWORD });
 
-    await expect(updated).resolves.toMatchObject({ recoveryFile: expect.any(String) as string });
+    const payload = await updated;
+    expect(payload).toMatchObject({ user: { nickname: 'Alicia' } });
+    expect(payload).not.toHaveProperty('recoveryFile');
     await disconnected;
     expect(current.connected).toBe(true);
   });
 });
 
 describe('password change over sockets', () => {
-  it('lets a fresh keyfile session change the password without the current one', async () => {
+  it('lets a fresh recovery session change the password without the current one', async () => {
     const h = await start();
-    const { recoveryFile } = await h.userService.registerAccount({ nickname: 'Alice', avatar: 0, password: TEST_PASSWORD });
-    if (!recoveryFile) {
-      throw new Error('legacy registration must return a recovery file');
+    const { user } = await h.userService.registerAccount({ nickname: 'Alice', avatar: 0, password: TEST_PASSWORD, ...TEST_V2_SIGNUP });
+    const recoveryLogin = await h.userService.loginWithRecovery(user.id, TEST_V2_SIGNUP.recoveryVerifier);
+    if (!recoveryLogin) {
+      throw new Error('recovery login failed');
     }
-    const keyfileLogin = await h.userService.loginWithKeyfile(recoveryFile);
-    if (!keyfileLogin) {
-      throw new Error('keyfile login failed');
-    }
-    const client = await h.connectAs(keyfileLogin);
+    const client = await h.connectAs(recoveryLogin);
+    const newAuthKey = 'a-fresh-auth-key-0123456789abcdefghijklmnop';
 
     const changed = waitForEvent(client, 'user:password-changed');
-    client.emit('user:change-password', { newPassword: 'a-fresh-password-123' });
+    client.emit('user:change-password', { newPassword: newAuthKey, newAuthSalt: 'ZnJlc2gtc2FsdC0xMjM0NT', encryptedPrivateKeyByPassword: 'rewrapped' });
 
     await changed;
-    await expect(h.userService.login('Alice', 'a-fresh-password-123')).resolves.not.toBeNull();
+    await expect(h.userService.login('Alice', newAuthKey)).resolves.not.toBeNull();
   });
 
   it('requires the current password from a password session', async () => {
@@ -161,7 +164,7 @@ describe('password change over sockets', () => {
     const client = await h.connectAs(alice);
 
     const refused = waitForEvent<{ code: string }>(client, 'error');
-    client.emit('user:change-password', { newPassword: 'a-fresh-password-123' });
+    client.emit('user:change-password', { newPassword: 'a-fresh-auth-key-0123456789abcdefghijklmnop', newAuthSalt: 'ZnJlc2gtc2FsdC0xMjM0NT', encryptedPrivateKeyByPassword: 'rewrapped' });
 
     await expect(refused).resolves.toMatchObject({ code: 'user.currentPasswordRequired' });
   });
@@ -176,7 +179,7 @@ describe('password change over sockets', () => {
 
     const disconnected = waitForDisconnect(strayDevice);
     const changed = waitForEvent(current, 'user:password-changed');
-    current.emit('user:change-password', { currentPassword: TEST_PASSWORD, newPassword: 'another-long-password-123' });
+    current.emit('user:change-password', { currentPassword: TEST_PASSWORD, newPassword: 'another-auth-key-0123456789abcdefghijklmnop', newAuthSalt: 'ZnJlc2gtc2FsdC0xMjM0NT', encryptedPrivateKeyByPassword: 'rewrapped' });
 
     await changed;
     await disconnected;

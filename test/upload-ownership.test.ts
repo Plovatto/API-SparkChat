@@ -6,18 +6,19 @@ import { InMemoryObjectStorage } from '@/storage/object-storage.js';
 import { ORPHAN_UPLOAD_MAX_AGE_MS, OrphanUploadSweeper } from '@/storage/orphan-upload-sweeper.js';
 import { buildRoomService } from './support/build-room-service.js';
 import { buildTestApp } from './support/build-test-app.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 async function createUser(services: Awaited<ReturnType<typeof buildRoomService>>, nickname: string) {
-  const { user } = await services.userService.registerAccount({ nickname, avatar: 0, password: 'correct-horse-battery-staple' });
+  const { user } = await services.userService.registerAccount({ nickname, avatar: 0, password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP });
   return user;
 }
 
 describe('upload registration', () => {
   it('records who uploaded each file and how big it is', async () => {
     const { app, userService, uploadRegistry } = await buildTestApp();
-    const { user, sessionToken } = await userService.registerAccount({ nickname: 'Uploader', avatar: 0, password: 'correct-horse-battery-staple' });
+    const { user, sessionToken } = await userService.registerAccount({ nickname: 'Uploader', avatar: 0, password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP });
 
     const response = await request(app)
       .post('/api/messages/upload-image')
@@ -32,7 +33,7 @@ describe('upload registration', () => {
 
   it('refuses uploads beyond the per-user storage limit', async () => {
     const { app, userService, uploadRegistry } = await buildTestApp();
-    const { user, sessionToken } = await userService.registerAccount({ nickname: 'Hoarder', avatar: 0, password: 'correct-horse-battery-staple' });
+    const { user, sessionToken } = await userService.registerAccount({ nickname: 'Hoarder', avatar: 0, password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP });
     await uploadRegistry.register('uploads/files/big.bin', user.id, MAX_USER_STORAGE_BYTES - 4);
 
     const response = await request(app)
@@ -242,7 +243,13 @@ describe('assistant attachment limits', () => {
     const objectStorage = new InMemoryObjectStorage();
     await objectStorage.putObject('uploads/files/huge.txt', Buffer.alloc(4096), { contentType: 'text/plain' });
 
-    const result = await loadDecryptedAttachment(objectStorage.publicUrl('uploads/files/huge.txt'), () => Promise.resolve(new Uint8Array(32)), objectStorage, 1024);
+    const result = await loadDecryptedAttachment(
+      objectStorage.publicUrl('uploads/files/huge.txt'),
+      { roomId: 'room', messageId: 'message', slot: 'content' },
+      Buffer.alloc(32, 1).toString('base64url'),
+      objectStorage,
+      1024,
+    );
 
     expect(result).toBeNull();
   });

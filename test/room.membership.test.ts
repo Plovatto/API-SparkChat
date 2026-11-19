@@ -3,11 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { roomParticipants, rooms } from '@/database/schema.js';
 import { buildRoomService } from './support/build-room-service.js';
 import { establishFakeGeneration } from './support/room-keys.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 type Services = Awaited<ReturnType<typeof buildRoomService>>;
 
 async function createUser(services: Services, nickname: string) {
-  const { user } = await services.userService.registerAccount({ nickname, avatar: 0, password: 'correct-horse-battery-staple' });
+  const { user } = await services.userService.registerAccount({ nickname, avatar: 0, password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP });
   return user;
 }
 

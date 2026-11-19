@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { uploadedMediaKeyPrefix } from '../../config/paths.js';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import { errorPayload } from '../../lib/app-error.js';
+import type { ErrorCode } from '../../lib/error-catalog.js';
 import type { Locale } from '../../lib/locale.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { roomIdPayloadSchema } from '../../sockets/payloads.js';
@@ -55,11 +56,16 @@ const activityEvents = {
   recording: 'recording:update',
 } as const satisfies Record<ActivityKind, string>;
 
+const ATTACHMENT_KEY_FIELD_MAX_LENGTH = 400;
+
 const fileMetaSchema = z.object({
   name: z.string().trim().min(1).max(740),
   mimeType: z.string().trim().min(1).max(440),
   size: z.number().int().positive(),
   thumbnailUrl: z.string().trim().min(1).max(4000).optional(),
+  key: z.string().trim().min(1).max(ATTACHMENT_KEY_FIELD_MAX_LENGTH).optional(),
+  thumbnailKey: z.string().trim().min(1).max(ATTACHMENT_KEY_FIELD_MAX_LENGTH).optional(),
+  previewKey: z.string().trim().min(1).max(ATTACHMENT_KEY_FIELD_MAX_LENGTH).optional(),
 });
 
 const SIGNED_ENVELOPE_MARGIN = 160;
@@ -71,6 +77,22 @@ const linkPreviewSchema = z.object({
   imageUrl: z.string().trim().max(LINK_PREVIEW_ENCRYPTED_LIMITS.imageUrl + SIGNED_ENVELOPE_MARGIN).nullable(),
   siteName: z.string().trim().max(LINK_PREVIEW_ENCRYPTED_LIMITS.siteName + SIGNED_ENVELOPE_MARGIN).nullable(),
 });
+
+type SendMessagePayload = z.infer<typeof sendMessagePayloadSchema>;
+
+function attachmentKeyViolation({ type, fileMeta, linkPreview }: Pick<SendMessagePayload, 'type' | 'fileMeta' | 'linkPreview'>): ErrorCode | null {
+  if (type === 'text') {
+    if (fileMeta && (fileMeta.thumbnailUrl !== undefined || fileMeta.key !== undefined || fileMeta.thumbnailKey !== undefined)) {
+      return 'validation.invalidPayload';
+    }
+    const needsPreviewKey = fileMeta !== undefined || Boolean(linkPreview?.imageUrl);
+    return needsPreviewKey && !fileMeta?.previewKey ? 'message.attachmentKeyRequired' : null;
+  }
+  if (!fileMeta?.key || (fileMeta.thumbnailUrl && !fileMeta.thumbnailKey)) {
+    return 'message.attachmentKeyRequired';
+  }
+  return null;
+}
 
 const clientTempIdSchema = z.string().trim().min(1);
 
@@ -327,6 +349,12 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
 
     if (fileMeta?.thumbnailUrl && !isUploadedMediaUrl(fileMeta.thumbnailUrl)) {
       socket.emit('error', { ...errorPayload('message.invalidMedia'), clientTempId });
+      return;
+    }
+
+    const attachmentKeyError = attachmentKeyViolation({ type, fileMeta, linkPreview });
+    if (attachmentKeyError) {
+      socket.emit('error', { ...errorPayload(attachmentKeyError), clientTempId });
       return;
     }
 

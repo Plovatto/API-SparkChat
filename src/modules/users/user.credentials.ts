@@ -1,7 +1,5 @@
 import { createHmac } from 'node:crypto';
 import { z } from 'zod';
-import type { AuthVersion } from './user.model.js';
-import type { UserRecord } from './user.types.js';
 
 const CLIENT_SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const AUTH_SALT_PATTERN = /^[A-Za-z0-9_-]{22}$/;
@@ -17,10 +15,6 @@ export function isClientSecret(value: unknown): value is string {
 
 export function isAuthSalt(value: unknown): value is string {
   return typeof value === 'string' && AUTH_SALT_PATTERN.test(value);
-}
-
-export function authVersionOf(user: Pick<UserRecord, 'authVersion'>): AuthVersion {
-  return user.authVersion === 2 ? 2 : 1;
 }
 
 export function deriveFakeSaltKey(serverSecret: string): Buffer {

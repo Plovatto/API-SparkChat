@@ -2,6 +2,7 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { encryptedLength, LINK_PREVIEW_ENCRYPTED_LIMITS, type LinkPreviewFetcher, type LinkPreviewMetadata } from '@/modules/link-preview/index.js';
 import { buildTestApp } from './support/build-test-app.js';
+import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 const PAGE_URL = 'https://example.com/article';
 const METADATA: LinkPreviewMetadata = {
@@ -157,7 +158,7 @@ describe('POST /api/link-preview', () => {
   it('does not share cached previews across users', async () => {
     const { fetcher, calls } = createCountingFetcher(METADATA);
     const { app, authHeader, userService } = await setupAuthedApp(fetcher);
-    const other = await userService.registerAccount({ nickname: 'OtherPreviewer', avatar: 0, password: 'correct-horse-battery-staple' });
+    const other = await userService.registerAccount({ nickname: 'OtherPreviewer', avatar: 0, password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP });
 
     await request(app).post('/api/link-preview').set('Authorization', authHeader).send({ url: PAGE_URL });
     const second = await request(app)
@@ -263,7 +264,7 @@ async function setupAuthedApp(linkPreviewFetcher?: LinkPreviewFetcher) {
   const { user, sessionToken } = await built.userService.registerAccount({
     nickname: 'LinkPreviewer',
     avatar: 0,
-    password: 'correct-horse-battery-staple',
+    password: 'correct-horse-battery-staple-0123456789abcd', ...TEST_V2_SIGNUP
   });
 
   return { ...built, userId: user.id, authHeader: `Bearer ${user.id}:${sessionToken}` };

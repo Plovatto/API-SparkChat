@@ -34,14 +34,11 @@ export const ERROR_CATALOG = {
   'user.nicknameInvalid': ({ minLength, maxLength, minLetters }: { minLength: number; maxLength: number; minLetters: number }) =>
     `Nickname deve ter entre ${minLength} e ${maxLength} caracteres, usando apenas letras e números, com pelo menos ${minLetters} letras.`,
   'user.nicknameTaken': () => 'Esse nickname já está em uso.',
-  'user.passwordTooShort': ({ minLength }: { minLength: number }) => `A senha deve ter pelo menos ${minLength} caracteres.`,
-  'user.passwordTooLong': ({ maxLength }: { maxLength: number }) => `A senha deve ter no máximo ${maxLength} caracteres.`,
   'user.currentPasswordIncorrect': () => 'Senha atual incorreta.',
   'user.currentPasswordRequired': () =>
     'Informe a senha atual. A troca sem a senha atual só é permitida uma vez, nos 10 minutos seguintes à entrada com o arquivo de recuperação.',
   'user.credentialsInvalid': () => 'Credenciais em formato inválido.',
   'user.credentialsIncomplete': () => 'Dados de credenciais incompletos. Atualize o aplicativo e tente novamente.',
-  'user.credentialsAlreadyUpgraded': () => 'Esta conta já usa o formato de credenciais atual.',
   'room.notFound': () => 'Sala não encontrada.',
   'room.invalidCode': () => 'Formato de código inválido.',
   'room.selfConversation': () => 'Você não pode iniciar uma conversa consigo mesmo.',
@@ -56,6 +53,7 @@ export const ERROR_CATALOG = {
   'message.invalidMedia': () => 'Conteúdo de mídia inválido.',
   'message.blocked': () => 'Você não pode enviar mensagens nesta conversa devido a bloqueios.',
   'message.unsupportedEncryption': () => 'Formato de criptografia não suportado. Atualize o aplicativo e tente novamente.',
+  'message.attachmentKeyRequired': () => 'Anexo sem chave de criptografia. Atualize o aplicativo e tente novamente.',
   'message.staleRoomKey': () => 'A chave da sala mudou. Aguarde a nova chave e tente novamente.',
   'e2e.lookupTooLarge': ({ maxItems }: { maxItems: number }) => `Consulta de chaves com itens demais. Envie no máximo ${maxItems} por vez.`,
   'e2e.keysLocked': () => 'As chaves de criptografia desta conta já estão configuradas e não podem ser substituídas.',

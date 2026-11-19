@@ -21,16 +21,23 @@ const EXTENSION_MIME_TYPES: Record<string, string> = {
   '.wav': 'audio/wav',
 };
 
-function isEncryptedUrl(url: string): boolean {
-  try {
-    return new URL(url, 'http://internal').searchParams.get('e2e') === '1';
-  } catch {
-    return url.includes('e2e=1');
-  }
+const ATTACHMENT_AD_PREFIX = 'sparkchat:attachment:v1';
+const ATTACHMENT_AD_SEPARATOR = '|';
+const ATTACHMENT_KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const ATTACHMENT_KEY_BYTES = 32;
+const ENCRYPTION_OVERHEAD_BYTES = 24 + 16;
+
+export type AttachmentSlot = 'content' | 'thumbnail' | 'preview';
+
+export interface AttachmentBinding {
+  roomId: string;
+  messageId: string;
+  slot: AttachmentSlot;
 }
 
-const ATTACHMENT_KEY_ID_BYTES = 16;
-const ENCRYPTION_OVERHEAD_BYTES = ATTACHMENT_KEY_ID_BYTES + 64;
+export function attachmentAssociatedData({ roomId, messageId, slot }: AttachmentBinding): string {
+  return [ATTACHMENT_AD_PREFIX, roomId, messageId, slot].join(ATTACHMENT_AD_SEPARATOR);
+}
 
 export function guessMimeTypeFromUrl(url: string): string | null {
   const extension = path.extname(extractPathname(url)).toLowerCase();
@@ -57,45 +64,50 @@ export function resolveAudioMimeType(declaredMimeType: string | null, url: strin
   return guessed?.startsWith('audio/') ? guessed : null;
 }
 
-export type AttachmentKeyResolver = (keyId: string) => Promise<Uint8Array | null>;
+function decodeAttachmentKey(encodedKey: string | null): Buffer | null {
+  if (!encodedKey || !ATTACHMENT_KEY_PATTERN.test(encodedKey)) {
+    return null;
+  }
+  const key = Buffer.from(encodedKey, 'base64url');
+  return key.length === ATTACHMENT_KEY_BYTES ? key : null;
+}
 
 export async function loadDecryptedAttachment(
   url: string,
-  resolveKey: AttachmentKeyResolver,
+  binding: AttachmentBinding,
+  encodedKey: string | null,
   objectStorage: ObjectStorage,
   maxBytes: number,
 ): Promise<Buffer | null> {
-  const key = resolveObjectKey(url);
-  if (!key) {
-    return null;
-  }
-
-  const raw = await objectStorage.getObject(key);
-  if (!raw || raw.length > maxBytes + ENCRYPTION_OVERHEAD_BYTES) {
-    return null;
-  }
-
-  if (!isEncryptedUrl(url)) {
-    return raw;
-  }
-
-  const sodium = await getSodium();
-  const headerLength = ATTACHMENT_KEY_ID_BYTES + sodium.crypto_secretbox_NONCEBYTES;
-  if (raw.length < headerLength + sodium.crypto_secretbox_MACBYTES) {
-    return null;
-  }
-
-  const roomKey = await resolveKey(raw.subarray(0, ATTACHMENT_KEY_ID_BYTES).toString('base64url'));
-  if (!roomKey) {
+  const fileKey = decodeAttachmentKey(encodedKey);
+  const objectKey = resolveObjectKey(url);
+  if (!fileKey || !objectKey) {
     return null;
   }
 
   try {
-    const nonce = raw.subarray(ATTACHMENT_KEY_ID_BYTES, headerLength);
-    const ciphertext = raw.subarray(headerLength);
-    const plaintext = sodium.crypto_secretbox_open_easy(ciphertext, nonce, roomKey);
-    return Buffer.from(plaintext);
+    const raw = await objectStorage.getObject(objectKey);
+    if (!raw || raw.length > maxBytes + ENCRYPTION_OVERHEAD_BYTES) {
+      return null;
+    }
+
+    const sodium = await getSodium();
+    const nonceLength = sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
+    if (raw.length < nonceLength + sodium.crypto_aead_xchacha20poly1305_ietf_ABYTES) {
+      return null;
+    }
+
+    const plaintext = sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
+      null,
+      raw.subarray(nonceLength),
+      attachmentAssociatedData(binding),
+      raw.subarray(0, nonceLength),
+      fileKey,
+    );
+    return Buffer.from(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength);
   } catch {
     return null;
+  } finally {
+    fileKey.fill(0);
   }
 }

@@ -42,10 +42,15 @@ describe('session revocation over sockets', () => {
 
     const revoked = Promise.all([waitForEvent(sameSessionTab, 'user:session-revoked'), waitForEvent(otherDevice, 'user:session-revoked')]);
     const disconnected = Promise.all([waitForDisconnect(sameSessionTab), waitForDisconnect(otherDevice)]);
-    const changed = waitForEvent<{ recoveryFile: string }>(current, 'user:password-changed');
-    current.emit('user:change-password', { currentPassword: TEST_PASSWORD, newPassword: 'another-long-password-123' });
+    const changed = waitForEvent<Record<string, unknown>>(current, 'user:password-changed');
+    current.emit('user:change-password', {
+      currentPassword: TEST_PASSWORD,
+      newPassword: 'another-auth-key-0123456789abcdefghijklmnop',
+      newAuthSalt: 'ZnJlc2gtc2FsdC0xMjM0NT',
+      encryptedPrivateKeyByPassword: 'rewrapped',
+    });
 
-    await expect(changed).resolves.toMatchObject({ recoveryFile: expect.any(String) as string });
+    await expect(changed).resolves.toEqual({});
     await revoked;
     await disconnected;
     await settle(50);

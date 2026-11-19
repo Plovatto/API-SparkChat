@@ -4,8 +4,6 @@ import { ERROR_CATALOG, ERROR_CODES, type ErrorCode } from '@/lib/error-catalog.
 
 const SAMPLE_PARAMS: Partial<Record<ErrorCode, object>> = {
   'user.nicknameInvalid': { minLength: 2, maxLength: 20, minLetters: 2 },
-  'user.passwordTooShort': { minLength: 12 },
-  'user.passwordTooLong': { maxLength: 1024 },
   'upload.missingFile': { kind: 'audio' },
   'upload.tooLarge': { kind: 'audio', maxSize: '8MB' },
   'upload.invalidType': { kind: 'file' },
@@ -57,14 +55,14 @@ describe('errorPayload', () => {
 
 describe('AppError', () => {
   it('carries the code, the params and the fallback text as its message', () => {
-    const error = AppError.of('user.passwordTooShort', { minLength: 12 });
+    const error = AppError.of('room.groupFull', { maxMembers: 150 });
 
     expect(error).toBeInstanceOf(Error);
-    expect(error.message).toBe('A senha deve ter pelo menos 12 caracteres.');
+    expect(error.message).toBe('Este grupo está cheio. O limite é de 150 membros.');
     expect(error.toPayload()).toEqual({
-      message: 'A senha deve ter pelo menos 12 caracteres.',
-      code: 'user.passwordTooShort',
-      params: { minLength: 12 },
+      message: 'Este grupo está cheio. O limite é de 150 membros.',
+      code: 'room.groupFull',
+      params: { maxMembers: 150 },
     });
   });
 });

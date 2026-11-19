@@ -6,9 +6,10 @@ import { AiUsageLimiter } from '@/modules/ai/ai.usage-limiter.js';
 import { RoomPresenceService, TypingService, type MessageRecord } from '@/modules/messages/index.js';
 import type { AppServer } from '@/sockets/events.js';
 import { buildRoomService } from './build-room-service.js';
-import { createIdentity, sealEnvelope } from './room-keys.js';
+import { createIdentity, sealAttachmentBytes, sealEnvelope } from './room-keys.js';
+import { TEST_V2_SIGNUP } from './test-constants.js';
 
-const PASSWORD = 'correct-horse-battery-staple';
+const PASSWORD = 'correct-horse-battery-staple-0123456789abcd';
 
 export function createFakeServer(): AppServer {
   return { to: () => ({ emit: () => true }) } as unknown as AppServer;
@@ -25,8 +26,8 @@ export async function setupAssistantRoom(options: AssistantRoomOptions = {}) {
   const { userService, userRepository, roomService, roomKeyRepository, messageService, objectStorage } = services;
   const sodium = await getSodium();
 
-  const { user: alice } = await userService.registerAccount({ nickname: 'Alice', avatar: 0, password: PASSWORD });
-  const { user: assistant } = await userService.registerAccount({ nickname: 'Assistente', avatar: 1, password: PASSWORD });
+  const { user: alice } = await userService.registerAccount({ nickname: 'Alice', avatar: 0, password: PASSWORD, ...TEST_V2_SIGNUP });
+  const { user: assistant } = await userService.registerAccount({ nickname: 'Assistente', avatar: 1, password: PASSWORD, ...TEST_V2_SIGNUP });
   const aliceIdentity = await createIdentity(alice.id);
   const identity = await createIdentity(assistant.id);
   for (const party of [aliceIdentity, identity]) {
@@ -66,6 +67,12 @@ export async function setupAssistantRoom(options: AssistantRoomOptions = {}) {
 
   function sealFromAlice(text: string, messageId: string, label = 'content'): Promise<string> {
     return sealField(text, roomKey, keyId, aliceIdentity.signingPrivateKey, { roomId: room.id, senderId: alice.id, messageId, label });
+  }
+
+  async function storeSealedAttachment(objectKey: string, plaintext: Buffer, messageId: string): Promise<{ url: string; key: string; rawKey: string }> {
+    const sealed = await sealAttachmentBytes(plaintext, { roomId: room.id, messageId, slot: 'content' });
+    const url = await services.storeUpload(alice.id, objectKey, sealed.bytes);
+    return { url: `${url}?e2e=1`, key: await sealFromAlice(sealed.fileKey, messageId, 'file-key'), rawKey: sealed.fileKey };
   }
 
   async function sendFromAlice(text: string): Promise<MessageRecord> {
@@ -112,6 +119,7 @@ export async function setupAssistantRoom(options: AssistantRoomOptions = {}) {
     publishKey,
     sealFromAlice,
     sendFromAlice,
+    storeSealedAttachment,
     openFromAssistant,
     assistantTexts,
   };

@@ -7,14 +7,12 @@ import {
   authParamsBodySchema,
   authParamsResponseSchema,
   createUserController,
-  keyfileLoginResponseSchema,
   loginBodySchema,
   loginResponseSchema,
   nicknameAvailabilityQuerySchema,
   nicknameAvailabilityResponseSchema,
   recoveryLoginBodySchema,
 } from './user.controller.js';
-import { keyfileUpload } from './user.keyfile-upload.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
 import type { UserService } from './user.service.js';
 import type { SessionRevocationNotifier } from './user.session-revocations.js';
@@ -44,32 +42,6 @@ registry.registerPath({
     },
     429: {
       description: 'Muitas tentativas de login',
-      content: { 'application/json': { schema: errorResponseSchema } },
-    },
-  },
-});
-
-registry.registerPath({
-  method: 'post',
-  path: '/api/users/login-with-keyfile',
-  tags: ['Users'],
-  summary: 'Autentica um usuário a partir do arquivo binário de recuperação',
-  request: {
-    body: {
-      content: { 'multipart/form-data': { schema: { type: 'object', properties: { keyfile: { type: 'string', format: 'binary' } } } } },
-    },
-  },
-  responses: {
-    200: {
-      description: 'Login realizado com sucesso',
-      content: { 'application/json': { schema: keyfileLoginResponseSchema } },
-    },
-    400: {
-      description: 'Arquivo não enviado',
-      content: { 'application/json': { schema: errorResponseSchema } },
-    },
-    401: {
-      description: 'Arquivo de recuperação inválido',
       content: { 'application/json': { schema: errorResponseSchema } },
     },
   },
@@ -179,7 +151,6 @@ export function createUserRouter(
   const requireAuth = createRequireAuth(userService);
 
   router.post('/login', asyncHandler(controller.login));
-  router.post('/login-with-keyfile', keyfileUpload.single('keyfile'), asyncHandler(controller.loginWithKeyfile));
   router.post('/login-with-recovery', asyncHandler(controller.loginWithRecovery));
   router.post('/auth-params', asyncHandler(controller.getAuthParams));
   router.post('/logout', requireAuth, asyncHandler(controller.logout));

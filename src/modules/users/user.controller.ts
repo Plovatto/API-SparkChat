@@ -2,7 +2,6 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { logger } from '../../config/logger.js';
 import { errorPayload } from '../../lib/app-error.js';
-import { authVersionOf } from './user.credentials.js';
 import { isValidNicknameFormat, NICKNAME_MAX_LENGTH, nicknameAvailabilityStatusSchema, publicUserSchema } from './user.model.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
 import type { UserService } from './user.service.js';
@@ -23,13 +22,16 @@ export const nicknameAvailabilityResponseSchema = z
 export const loginBodySchema = z
   .object({
     nickname: z.string().trim().min(1).openapi({ example: 'Ada' }),
-    password: z.string().min(1).openapi({ example: 'correct-horse-battery-staple' }),
+    password: z.string().min(1).openapi({
+      example: 'q1w2e3r4t5y6u7i8o9p0q1w2e3r4t5y6u7i8o9p0abc',
+      description: 'Chave de autenticação derivada no cliente (Argon2id), base64url sem padding (32 bytes); outros formatos são recusados com 401',
+    }),
   })
   .openapi('LoginBody');
 
-const authVersionSchema = z.union([z.literal(1), z.literal(2)]).openapi({
+const authVersionSchema = z.literal(2).openapi({
   example: 2,
-  description: 'Versão das credenciais da conta: 1 = senha em texto puro (legado), 2 = chave derivada no cliente',
+  description: 'Versão das credenciais da conta: sempre 2 (chave derivada no cliente)',
 });
 
 export const loginResponseSchema = z
@@ -41,12 +43,6 @@ export const loginResponseSchema = z
   })
   .openapi('LoginResponse');
 
-export const keyfileLoginResponseSchema = loginResponseSchema
-  .extend({
-    recoveryToken: z.string().openapi({ example: 'a1b2c3...', description: 'Necessário para restaurar a chave de criptografia local do usuário' }),
-  })
-  .openapi('KeyfileLoginResponse');
-
 export const authParamsBodySchema = z
   .object({
     nickname: z.string().trim().min(1).max(NICKNAME_MAX_LENGTH * 4).openapi({ example: 'Ada' }),
@@ -54,13 +50,10 @@ export const authParamsBodySchema = z
   .openapi('AuthParamsBody');
 
 export const authParamsResponseSchema = z
-  .union([
-    z.object({ version: z.literal(1) }),
-    z.object({
-      version: z.literal(2),
-      salt: z.string().openapi({ example: 'q1w2e3r4t5y6u7i8o9p0aa', description: 'Salt Argon2id em base64url sem padding (16 bytes)' }),
-    }),
-  ])
+  .object({
+    version: z.literal(2),
+    salt: z.string().openapi({ example: 'q1w2e3r4t5y6u7i8o9p0aa', description: 'Salt Argon2id em base64url sem padding (16 bytes)' }),
+  })
   .openapi('AuthParamsResponse');
 
 export const recoveryLoginBodySchema = z
@@ -102,46 +95,11 @@ export function createUserController(
         message: 'Login realizado com sucesso!',
         user: userService.toPublicUser(result.user),
         sessionToken: result.sessionToken,
-        authVersion: authVersionOf(result.user),
+        authVersion: 2,
       });
     } catch (error) {
       loginRateLimiter.releaseAttempt(nickname, ip);
       logger.error({ err: error }, 'Failed to log in');
-      res.status(500).json(errorPayload('auth.loginFailed'));
-    }
-  };
-
-  const loginWithKeyfile = async (req: Request, res: Response): Promise<void> => {
-    if (!req.file) {
-      res.status(400).json(errorPayload('auth.keyfileRequired'));
-      return;
-    }
-
-    const ip = req.ip ?? 'unknown';
-
-    if (!loginRateLimiter.reserveAttemptByIp(ip)) {
-      res.status(429).json(errorPayload('rateLimit.loginAttempts'));
-      return;
-    }
-
-    try {
-      const result = await userService.loginWithKeyfile(req.file.buffer, req.headers['user-agent'] ?? '');
-      if (!result) {
-        res.status(401).json(errorPayload('auth.keyfileInvalid'));
-        return;
-      }
-
-      loginRateLimiter.registerSuccessByIp(ip);
-      res.status(200).json({
-        message: 'Login realizado com sucesso!',
-        user: userService.toPublicUser(result.user),
-        sessionToken: result.sessionToken,
-        recoveryToken: result.recoveryToken,
-        authVersion: authVersionOf(result.user),
-      });
-    } catch (error) {
-      loginRateLimiter.releaseAttemptByIp(ip);
-      logger.error({ err: error }, 'Failed to log in with keyfile');
       res.status(500).json(errorPayload('auth.loginFailed'));
     }
   };
@@ -172,7 +130,7 @@ export function createUserController(
         message: 'Login realizado com sucesso!',
         user: userService.toPublicUser(result.user),
         sessionToken: result.sessionToken,
-        authVersion: authVersionOf(result.user),
+        authVersion: 2,
       });
     } catch (error) {
       loginRateLimiter.releaseAttemptByIp(ip);
@@ -237,5 +195,5 @@ export function createUserController(
     res.status(204).end();
   };
 
-  return { login, loginWithKeyfile, loginWithRecovery, getAuthParams, checkNicknameAvailability, logout };
+  return { login, loginWithRecovery, getAuthParams, checkNicknameAvailability, logout };
 }

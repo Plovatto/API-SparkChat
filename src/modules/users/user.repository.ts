@@ -111,7 +111,7 @@ export class UserRepository {
       e2eEncryptedPrivateKeyByPassword: user.e2eEncryptedPrivateKeyByPassword,
       e2eEncryptedPrivateKeyByRecovery: user.e2eEncryptedPrivateKeyByRecovery,
       authSalt: user.authSalt ?? null,
-      authVersion: user.authVersion ?? 1,
+      authVersion: 2,
     });
 
     return user;
@@ -156,22 +156,6 @@ export class UserRepository {
     const updated = { ...current, ...patch };
     cacheProfile(updated);
     return updated;
-  }
-
-  async updateIfLegacyAuth(id: string, patch: Partial<UserRecord>): Promise<UserRecord | null> {
-    const result = await this.db
-      .update(users)
-      .set({ ...patch })
-      .where(and(eq(users.id, id), eq(users.authVersion, 1)));
-    if (result.rowsAffected === 0) {
-      return null;
-    }
-    const current = await this.findById(id);
-    if (!current) {
-      return null;
-    }
-    cacheProfile(current);
-    return current;
   }
 
   async setSigningKeyIfUnset(id: string, publicKey: string, signingPublicKey: string, keySignature: string): Promise<boolean> {
