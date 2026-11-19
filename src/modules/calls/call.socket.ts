@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
-import { AppError } from '../../lib/app-error.js';
+import { AppError, errorPayload } from '../../lib/app-error.js';
 import type { AppSocket } from '../../sockets/events.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
 import { runSocketHandler } from '../../sockets/socket-handler.js';
@@ -95,63 +95,83 @@ function actorOf(socket: AppSocket): CallActor | null {
   return userId ? { userId, socketId: socket.id } : null;
 }
 
-function handle(socket: AppSocket, event: string, work: (actor: CallActor) => Promise<void>): void {
-  runSocketHandler(socket, event, async () => {
-    const actor = actorOf(socket);
-    if (!actor) {
+const MAX_QUEUED_EVENTS = 64;
+
+function createSequentialHandler(socket: AppSocket) {
+  let tail: Promise<void> = Promise.resolve();
+  let queued = 0;
+
+  return (event: string, work: (actor: CallActor) => Promise<void>): void => {
+    if (queued >= MAX_QUEUED_EVENTS) {
+      socket.emit('error', { ...errorPayload('call.rateLimited'), event });
       return;
     }
-    try {
-      await work(actor);
-    } catch (error) {
-      socket.emit('error', { ...extractErrorPayload(isOversizedEnvelope(error) ? AppError.of('call.signalTooLarge') : error), event });
-    }
-  });
+    queued += 1;
+    const run = async (): Promise<void> => {
+      try {
+        const actor = actorOf(socket);
+        if (!actor) {
+          return;
+        }
+        try {
+          await work(actor);
+        } catch (error) {
+          socket.emit('error', { ...extractErrorPayload(isOversizedEnvelope(error) ? AppError.of('call.signalTooLarge') : error), event });
+        }
+      } finally {
+        queued -= 1;
+      }
+    };
+    tail = tail.then(() => new Promise<void>((resolve) => {
+      runSocketHandler(socket, event, () => run().finally(resolve));
+    }));
+  };
 }
 
 export function registerCallSocketHandlers(socket: AppSocket, deps: CallSocketDeps): void {
   const { callService } = deps;
+  const handle = createSequentialHandler(socket);
 
   socket.on('call:start', (payload) => {
-    handle(socket, 'call:start', (actor) => callService.start(actor, startPayloadSchema.parse(payload)));
+    handle('call:start', (actor) => callService.start(actor, startPayloadSchema.parse(payload)));
   });
 
   socket.on('call:accept', (payload) => {
-    handle(socket, 'call:accept', (actor) => callService.accept(actor, acceptPayloadSchema.parse(payload)));
+    handle('call:accept', (actor) => callService.accept(actor, acceptPayloadSchema.parse(payload)));
   });
 
   socket.on('call:decline', (payload) => {
-    handle(socket, 'call:decline', (actor) => callService.decline(actor, callIdPayloadSchema.parse(payload).callId));
+    handle('call:decline', (actor) => callService.decline(actor, callIdPayloadSchema.parse(payload).callId));
   });
 
   socket.on('call:silence', (payload, ack) => {
-    handle(socket, 'call:silence', async (actor) => {
+    handle('call:silence', async (actor) => {
       await callService.silence(actor, callIdPayloadSchema.parse(payload).callId);
       ack?.();
     });
   });
 
   socket.on('call:hangup', (payload) => {
-    handle(socket, 'call:hangup', (actor) => callService.hangup(actor, callIdPayloadSchema.parse(payload).callId));
+    handle('call:hangup', (actor) => callService.hangup(actor, callIdPayloadSchema.parse(payload).callId));
   });
 
   socket.on('call:signal', (payload) => {
-    handle(socket, 'call:signal', (actor) => callService.signal(actor, signalPayloadSchema.parse(payload)));
+    handle('call:signal', (actor) => callService.signal(actor, signalPayloadSchema.parse(payload)));
   });
 
   socket.on('call:heartbeat', (payload) => {
-    handle(socket, 'call:heartbeat', (actor) => callService.heartbeat(actor, callIdPayloadSchema.parse(payload).callId));
+    handle('call:heartbeat', (actor) => callService.heartbeat(actor, callIdPayloadSchema.parse(payload).callId));
   });
 
   socket.on('call:sync', (payload) => {
-    handle(socket, 'call:sync', (actor) => {
+    handle('call:sync', (actor) => {
       syncPayloadSchema.parse(payload);
       return callService.sync(actor);
     });
   });
 
   socket.on('call:ice-servers', (payload) => {
-    handle(socket, 'call:ice-servers', async (actor) => {
+    handle('call:ice-servers', async (actor) => {
       const result = await callService.iceServers(actor, iceServersPayloadSchema.parse(payload));
       socket.emit('call:ice-servers-result', result);
     });

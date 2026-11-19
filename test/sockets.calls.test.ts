@@ -897,6 +897,49 @@ describe('call sync and restart restore', () => {
   });
 });
 
+describe('event ordering', () => {
+  it('handles accept and an immediate ice-servers request in order even when the accept write is slow', async () => {
+    const turn = fakeTurn();
+    const { h, room, aliceClient, bobClient } = await setup({ turn });
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    const original = h.callRepository.accept.bind(h.callRepository);
+    h.callRepository.accept = async (...args: Parameters<typeof original>) => {
+      await settle(50);
+      return original(...args);
+    };
+    const result = waitForEvent<{ iceServers: unknown[] }>(bobClient, 'call:ice-servers-result');
+    const errors = collectEvents<ErrorEvent>(bobClient, 'error');
+
+    bobClient.emit('call:accept', { callId, envelope: 'accept-envelope' });
+    bobClient.emit('call:ice-servers', { callId, protectIp: false });
+
+    expect((await result).iceServers.length).toBeGreaterThan(0);
+    expect(errors).toEqual([]);
+    expect((await callRow(h, callId)).state).toBe('accepted');
+  });
+
+  it('keeps processing after a failing event and bounds the queue', async () => {
+    const { h, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    const original = h.callRepository.findById.bind(h.callRepository);
+    h.callRepository.findById = async (id: string) => {
+      await settle(5);
+      return original(id);
+    };
+    const errors = collectEvents<ErrorEvent>(bobClient, 'error');
+    for (let i = 0; i < 100; i += 1) {
+      bobClient.emit('call:signal', { callId: 'x'.repeat(22), to: 'x', envelope: 'e' });
+    }
+    await settle(400);
+    expect(errors.some((error) => error.code === 'call.rateLimited')).toBe(true);
+    expect(errors.some((error) => error.code === 'call.notFound')).toBe(true);
+
+    const state = waitForEvent(bobClient, 'call:state');
+    bobClient.emit('call:sync', {});
+    expect(await state).toMatchObject({ callId });
+  });
+});
+
 describe('hardening', () => {
   it('caps the worst-case estimate at two credentials per call however often they are reissued', async () => {
     const turn = fakeTurn();
