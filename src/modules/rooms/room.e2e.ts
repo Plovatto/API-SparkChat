@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, notExists, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, notExists, sql, type SQL } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { roomBans, roomKeys, roomParticipants, rooms, users } from '../../database/schema.js';
 
@@ -53,8 +53,6 @@ function sameMembers(a: string[], b: string[]): boolean {
 }
 
 export class RoomKeyRepository {
-  private publishQueue: Promise<unknown> = Promise.resolve();
-
   constructor(private readonly db: Database) {}
 
   private notBanned(executor: Executor) {
@@ -82,90 +80,93 @@ export class RoomKeyRepository {
     return row ?? null;
   }
 
-  publish(publication: RoomKeyPublication): Promise<RoomKeyPublishOutcome> {
-    const run = this.publishQueue.then(() => this.publishInTransaction(publication));
-    this.publishQueue = run.catch(() => undefined);
-    return run;
+  async publish(publication: RoomKeyPublication): Promise<RoomKeyPublishOutcome> {
+    const targets = publication.keys.map((key) => key.userId);
+    if (targets.length === 0 || new Set(targets).size !== targets.length) {
+      return publication.mode === 'generation' ? 'incomplete' : 'conflict';
+    }
+
+    const stored = publication.mode === 'generation' ? await this.storeGeneration(publication) : await this.storeShare(publication);
+    return stored ? publication.mode : this.explainRejection(publication);
   }
 
-  private publishInTransaction(publication: RoomKeyPublication): Promise<RoomKeyPublishOutcome> {
-    return this.db.transaction(async (tx) => {
-      const [room] = await tx
-        .select({ currentEpoch: rooms.currentEpoch, currentKeyId: rooms.currentKeyId, rotationRequired: rooms.rotationRequired })
-        .from(rooms)
-        .where(eq(rooms.id, publication.roomId));
-      if (!room) {
-        return 'stale';
-      }
+  private memberCondition(roomId: string, userIds: SQL): SQL {
+    return sql`(select count(*) from ${roomParticipants} p
+      where p.room_id = ${roomId} and p.user_id in ${userIds}
+        and not exists (select 1 from ${roomBans} b where b.room_id = p.room_id and b.user_id = p.user_id))`;
+  }
 
-      const memberIds = await this.memberIds(tx, publication.roomId);
-      if (!memberIds.includes(publication.senderId)) {
-        return 'stale';
-      }
+  private keyRows(publication: RoomKeyPublication): SQL {
+    const createdAt = new Date().toISOString();
+    const values = sql.join(
+      publication.keys.map((key) => sql`(${key.userId}, ${key.sealedKey})`),
+      sql`, `,
+    );
+    return sql`select ${publication.roomId}, v.column1, ${publication.keyId}, ${publication.epoch}, v.column2, ${publication.senderId}, ${createdAt}
+      from (values ${values}) v`;
+  }
 
-      const createdAt = new Date().toISOString();
-      const insertAll = async () => {
-        for (const key of publication.keys) {
-          await tx.insert(roomKeys).values({
-            roomId: publication.roomId,
-            userId: key.userId,
-            keyId: publication.keyId,
-            epoch: publication.epoch,
-            sealedKey: key.sealedKey,
-            senderId: publication.senderId,
-            createdAt,
-          });
-        }
-      };
+  private async storeGeneration(publication: RoomKeyPublication): Promise<boolean> {
+    const { roomId, keyId, epoch, senderId, keys } = publication;
+    const targetIds = sql`(${sql.join(
+      keys.map((key) => sql`${key.userId}`),
+      sql`, `,
+    )})`;
+    const advance = this.db.run(sql`
+      update ${rooms} set current_epoch = ${epoch}, current_key_id = ${keyId}, rotation_required = null
+      where id = ${roomId}
+        and current_epoch = ${epoch - 1}
+        and (current_epoch = 0 or rotation_required = ${epoch})
+        and ${this.memberCondition(roomId, sql`(${senderId})`)} = 1
+        and ${this.memberCondition(roomId, targetIds)} = ${keys.length}
+        and (select count(*) from ${roomParticipants} p
+          where p.room_id = ${roomId}
+            and not exists (select 1 from ${roomBans} b where b.room_id = p.room_id and b.user_id = p.user_id)) = ${keys.length}
+    `);
+    const insert = this.db.run(sql`
+      insert into ${roomKeys} (room_id, user_id, key_id, epoch, sealed_key, sender_id, created_at)
+      ${this.keyRows(publication)}
+      where changes() = 1
+    `);
 
-      const isNextGeneration =
-        publication.epoch === room.currentEpoch + 1 && (room.currentEpoch === 0 || room.rotationRequired === publication.epoch);
-      if (publication.mode === 'generation') {
-        if (!isNextGeneration) {
-          return 'stale';
-        }
-        if (!sameMembers(publication.keys.map((key) => key.userId), memberIds)) {
-          return 'incomplete';
-        }
-        const advanced = await tx
-          .update(rooms)
-          .set({ currentEpoch: publication.epoch, currentKeyId: publication.keyId, rotationRequired: null })
-          .where(and(eq(rooms.id, publication.roomId), eq(rooms.currentEpoch, room.currentEpoch)));
-        if (advanced.rowsAffected === 0) {
-          return 'stale';
-        }
-        await insertAll();
-        return 'generation';
-      }
+    const [advanced] = await this.db.batch([advance, insert]);
+    return advanced.rowsAffected === 1;
+  }
 
-      if (publication.epoch !== room.currentEpoch || publication.keyId !== room.currentKeyId) {
-        return 'stale';
-      }
+  private async storeShare(publication: RoomKeyPublication): Promise<boolean> {
+    const { roomId, keyId, epoch, senderId, keys } = publication;
+    const targetIds = sql`(${sql.join(
+      keys.map((key) => sql`${key.userId}`),
+      sql`, `,
+    )})`;
+    const result = await this.db.run(sql`
+      insert into ${roomKeys} (room_id, user_id, key_id, epoch, sealed_key, sender_id, created_at)
+      ${this.keyRows(publication)}
+      where exists (select 1 from ${rooms} where id = ${roomId} and current_epoch = ${epoch} and current_key_id = ${keyId})
+        and ${this.memberCondition(roomId, sql`(${senderId})`)} = 1
+        and exists (select 1 from ${roomKeys} k where k.room_id = ${roomId} and k.user_id = ${senderId} and k.key_id = ${keyId})
+        and ${this.memberCondition(roomId, targetIds)} = ${keys.length}
+        and not exists (select 1 from ${roomKeys} k where k.room_id = ${roomId} and k.key_id = ${keyId} and k.user_id in ${targetIds})
+    `);
+    return result.rowsAffected === keys.length;
+  }
 
-      const members = new Set(memberIds);
-      const targets = publication.keys.map((key) => key.userId);
-      if (new Set(targets).size !== targets.length || targets.some((userId) => !members.has(userId))) {
-        return 'conflict';
-      }
+  private async explainRejection(publication: RoomKeyPublication): Promise<RoomKeyPublishOutcome> {
+    const [room, memberIds] = await Promise.all([this.getState(publication.roomId), this.memberIds(this.db, publication.roomId)]);
+    if (!room || !memberIds.includes(publication.senderId)) {
+      return 'stale';
+    }
 
-      const holders = await tx
-        .select({ userId: roomKeys.userId })
-        .from(roomKeys)
-        .where(
-          and(
-            eq(roomKeys.roomId, publication.roomId),
-            eq(roomKeys.keyId, publication.keyId),
-            inArray(roomKeys.userId, [publication.senderId, ...targets]),
-          ),
-        );
-      const holderIds = new Set(holders.map((row) => row.userId));
-      if (!holderIds.has(publication.senderId) || targets.some((userId) => holderIds.has(userId))) {
-        return 'conflict';
-      }
+    if (publication.mode === 'share') {
+      return publication.epoch === room.currentEpoch && publication.keyId === room.currentKeyId ? 'conflict' : 'stale';
+    }
 
-      await insertAll();
-      return 'share';
-    });
+    const isNextGeneration =
+      publication.epoch === room.currentEpoch + 1 && (room.currentEpoch === 0 || room.rotationRequired === publication.epoch);
+    if (!isNextGeneration) {
+      return 'stale';
+    }
+    return sameMembers(publication.keys.map((key) => key.userId), memberIds) ? 'stale' : 'incomplete';
   }
 
   async markRotationRequired(roomId: string): Promise<RoomRotation | null> {

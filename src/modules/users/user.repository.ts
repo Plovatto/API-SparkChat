@@ -117,20 +117,20 @@ export class UserRepository {
     return user;
   }
 
-  updateIdentityRequiringRotation(
+  async updateIdentityRequiringRotation(
     userId: string,
     patch: Partial<Pick<UserRecord, IdentityField>>,
   ): Promise<{ roomId: string; epoch: number }[]> {
-    return this.db.transaction(async (tx) => {
-      await tx.update(users).set(patch).where(eq(users.id, userId));
-      const memberRooms = tx.select({ roomId: roomParticipants.roomId }).from(roomParticipants).where(eq(roomParticipants.userId, userId));
-      const rows = await tx
+    const memberRooms = this.db.select({ roomId: roomParticipants.roomId }).from(roomParticipants).where(eq(roomParticipants.userId, userId));
+    const [, rows] = await this.db.batch([
+      this.db.update(users).set(patch).where(eq(users.id, userId)),
+      this.db
         .update(rooms)
         .set({ rotationRequired: sql`${rooms.currentEpoch} + 1` })
         .where(and(inArray(rooms.id, memberRooms), gt(rooms.currentEpoch, 0)))
-        .returning({ roomId: rooms.id, epoch: rooms.rotationRequired });
-      return rows.flatMap((row) => (row.epoch ? [{ roomId: row.roomId, epoch: row.epoch }] : []));
-    });
+        .returning({ roomId: rooms.id, epoch: rooms.rotationRequired }),
+    ]);
+    return rows.flatMap((row) => (row.epoch ? [{ roomId: row.roomId, epoch: row.epoch }] : []));
   }
 
   async update(id: string, patch: Partial<UserRecord>): Promise<UserRecord | null> {

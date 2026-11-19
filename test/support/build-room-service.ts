@@ -8,8 +8,8 @@ import { UploadRegistry } from '@/storage/upload-registry.js';
 import { createTestDb } from './create-test-db.js';
 import { TEST_RECOVERY_FILE_SECRET } from './test-constants.js';
 
-export async function buildRoomService() {
-  const db = await createTestDb();
+export async function buildRoomService(databaseUrl?: string) {
+  const db = await createTestDb(databaseUrl);
 
   const userRepository = new UserRepository(db);
   const userSessionRepository = new UserSessionRepository(db);
