@@ -12,6 +12,7 @@ import type { UploadRegistry } from '../../storage/upload-registry.js';
 import { verifyFileSignature } from './message.file-signature.js';
 import {
   GIF_UPLOAD_TTL_MS,
+  MAX_LIVE_GIF_BYTES,
   isAllowedGifUploadSize,
   isNeutralUpload,
   NEUTRAL_UPLOAD_EXTENSION,
@@ -63,13 +64,14 @@ interface UploadHandlerOptions<TResponse> {
   validateFile?: (file: Express.Multer.File) => 'upload.invalidGifSize' | null;
   countsTowardUserQuota?: boolean;
   ttlMs?: number;
+  maxExpiringBytes?: number;
 }
 
 function createUploadHandler<TResponse>(
   objectStorage: ObjectStorage,
   storageQuota: StorageQuota,
   uploadRegistry: UploadRegistry,
-  { kind, buildKey, buildResponse, contentDisposition, validateFile, countsTowardUserQuota = true, ttlMs }: UploadHandlerOptions<TResponse>,
+  { kind, buildKey, buildResponse, contentDisposition, validateFile, countsTowardUserQuota = true, ttlMs, maxExpiringBytes }: UploadHandlerOptions<TResponse>,
 ) {
   return async (req: Request, res: Response): Promise<void> => {
     const file = req.file;
@@ -97,6 +99,11 @@ function createUploadHandler<TResponse>(
     }
 
     if (countsTowardUserQuota && (await uploadRegistry.totalBytesFor(uploaderId)) + file.size > MAX_USER_STORAGE_BYTES) {
+      res.status(507).json(errorPayload('upload.userQuotaExceeded'));
+      return;
+    }
+
+    if (maxExpiringBytes !== undefined && (await uploadRegistry.expiringBytesFor(uploaderId)) + file.size > maxExpiringBytes) {
       res.status(507).json(errorPayload('upload.userQuotaExceeded'));
       return;
     }
@@ -162,6 +169,7 @@ export function createMessageController(objectStorage: ObjectStorage, storageQuo
       validateFile: (file) => (isAllowedGifUploadSize(file.size) ? null : 'upload.invalidGifSize'),
       countsTowardUserQuota: false,
       ttlMs: GIF_UPLOAD_TTL_MS,
+      maxExpiringBytes: MAX_LIVE_GIF_BYTES,
     }),
   };
 }

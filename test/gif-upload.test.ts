@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { MAX_USER_STORAGE_BYTES } from '@/modules/messages/message.controller.js';
-import { GIF_UPLOAD_SIZES, GIF_UPLOAD_TTL_MS } from '@/modules/messages/message.upload.js';
+import { GIF_UPLOAD_SIZES, GIF_UPLOAD_TTL_MS, MAX_LIVE_GIF_BYTES } from '@/modules/messages/message.upload.js';
 import { StorageQuota } from '@/storage/storage-quota.js';
 import { StorageUsageRepository } from '@/storage/storage-usage.repository.js';
 import { buildTestApp } from './support/build-test-app.js';
@@ -174,4 +174,36 @@ describe('POST /api/messages/upload/gif', () => {
     const limited = await uploadGif(app, authHeader, 10);
     expect(limited.body).toEqual({ message: 'Muitos GIFs enviados em pouco tempo. Aguarde e tente novamente.', code: 'rateLimit.gifUpload' });
   }, 30000);
+});
+
+describe('live gif bytes per user', () => {
+  it('caps the bytes of a user’s unexpired gifs at 200 MiB', async () => {
+    const { app, authHeader, uploadRegistry, user } = await setup();
+    const future = new Date(Date.now() + GIF_UPLOAD_TTL_MS).toISOString();
+    await uploadRegistry.register('uploads/gifs/old-1.bin', user.id, MAX_LIVE_GIF_BYTES - SMALLEST, { expiresAt: future });
+
+    expect((await uploadGif(app, authHeader, SMALLEST)).status).toBe(201);
+    await expect(uploadRegistry.expiringBytesFor(user.id)).resolves.toBe(MAX_LIVE_GIF_BYTES);
+
+    const refused = await uploadGif(app, authHeader, SMALLEST);
+    expect(refused.status).toBe(507);
+    expect(refused.body).toEqual({
+      message: 'Você atingiu o seu limite de armazenamento. Apague arquivos antigos para enviar novos.',
+      code: 'upload.userQuotaExceeded',
+    });
+  });
+
+  it('only sums uploads that expire, per uploader', async () => {
+    const { uploadRegistry, user } = await setup();
+    const future = new Date(Date.now() + GIF_UPLOAD_TTL_MS).toISOString();
+    await uploadRegistry.register('uploads/gifs/a.bin', user.id, 10, { expiresAt: future });
+    await uploadRegistry.register('uploads/files/b.bin', user.id, 1000);
+    await uploadRegistry.register('uploads/gifs/c.bin', 'someone-else', 5, { expiresAt: future });
+
+    await expect(uploadRegistry.expiringBytesFor(user.id)).resolves.toBe(10);
+  });
+
+  it('sets the cap to 200 MiB', () => {
+    expect(MAX_LIVE_GIF_BYTES).toBe(200 * 1024 * 1024);
+  });
 });

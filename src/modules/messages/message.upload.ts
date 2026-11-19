@@ -96,6 +96,7 @@ const GIF_PADDED_SIZE_STEPS = [256 * 1024, 512 * 1024, 1024 * 1024, 2 * 1024 * 1
 
 export const GIF_UPLOAD_SIZES: readonly number[] = GIF_PADDED_SIZE_STEPS.map((step) => step + ENCRYPTION_OVERHEAD_BYTES);
 export const GIF_UPLOAD_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const MAX_LIVE_GIF_BYTES = 200 * 1024 * 1024;
 
 export function isAllowedGifUploadSize(size: number): boolean {
   return GIF_UPLOAD_SIZES.includes(size);

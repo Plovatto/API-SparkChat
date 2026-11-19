@@ -46,6 +46,14 @@ export class UploadRegistry {
     return Number(row?.total ?? 0);
   }
 
+  async expiringBytesFor(uploaderId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ total: sql<number>`coalesce(sum(${uploads.size}), 0)` })
+      .from(uploads)
+      .where(and(eq(uploads.uploaderId, uploaderId), isNotNull(uploads.expiresAt)));
+    return Number(row?.total ?? 0);
+  }
+
   async claim(keys: string[], uploaderId: string, messageId: string): Promise<boolean> {
     if (keys.length === 0) {
       return true;
@@ -69,8 +77,9 @@ export class UploadRegistry {
     await this.db.update(uploads).set({ messageId: null }).where(eq(uploads.messageId, messageId));
   }
 
-  async remove(key: string): Promise<void> {
-    await this.db.delete(uploads).where(eq(uploads.key, key));
+  async remove(key: string): Promise<boolean> {
+    const removed = await this.db.delete(uploads).where(eq(uploads.key, key)).returning({ key: uploads.key });
+    return removed.length > 0;
   }
 
   async removeIfUnattached(key: string): Promise<boolean> {
