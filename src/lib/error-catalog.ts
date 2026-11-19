@@ -53,6 +53,7 @@ export const ERROR_CATALOG = {
   'message.invalidMedia': () => 'Conteúdo de mídia inválido.',
   'message.blocked': () => 'Você não pode enviar mensagens nesta conversa devido a bloqueios.',
   'message.unsupportedEncryption': () => 'Formato de criptografia não suportado. Atualize o aplicativo e tente novamente.',
+  'message.attachmentKeyRequired': () => 'Anexo sem chave de criptografia. Atualize o aplicativo e tente novamente.',
   'message.staleRoomKey': () => 'A chave da sala mudou. Aguarde a nova chave e tente novamente.',
   'e2e.lookupTooLarge': ({ maxItems }: { maxItems: number }) => `Consulta de chaves com itens demais. Envie no máximo ${maxItems} por vez.`,
   'e2e.keysLocked': () => 'As chaves de criptografia desta conta já estão configuradas e não podem ser substituídas.',

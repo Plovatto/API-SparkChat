@@ -265,7 +265,7 @@ describe('message:send accepts only v2 encrypted fields bound to the current roo
     const h = await start();
     const { alice, room, aliceClient } = await setupPair(h);
     const url = await h.storeUpload(alice.user.id, 'uploads/images/a.bin');
-    const fileMeta = { name: fakeField('a.png'), mimeType: fakeField('image/png'), size: 10 };
+    const fileMeta = { name: fakeField('a.png'), mimeType: fakeField('image/png'), size: 10, key: fakeField('k'.repeat(43)) };
 
     await expectRejected(aliceClient, { roomId: room.id, type: 'image', content: url, fileMeta, caption: 'e2e:v1:legenda' }, 'message.unsupportedEncryption');
     await expectRejected(aliceClient, { roomId: room.id, type: 'image', content: url, fileMeta: { ...fileMeta, name: 'e2e:v1:nome' } }, 'message.unsupportedEncryption');
@@ -314,18 +314,46 @@ describe('message:send accepts only v2 encrypted fields bound to the current roo
     const h = await start();
     const { alice, room, aliceClient } = await setupPair(h);
     const url = await h.storeUpload(alice.user.id, 'uploads/images/p.bin');
-    const fileMeta = { name: fakeField('a.png'), mimeType: fakeField('image/png'), size: 10 };
+    const fileMeta = { name: fakeField('a.png'), mimeType: fakeField('image/png'), size: 10, key: fakeField('k'.repeat(43)) };
     const rawKey = Buffer.alloc(32, 1).toString('base64url');
 
     await expectRejected(aliceClient, { roomId: room.id, type: 'image', content: url, fileMeta: { ...fileMeta, key: rawKey } }, 'message.unsupportedEncryption');
     await expectRejected(
       aliceClient,
-      { roomId: room.id, type: 'image', content: url, fileMeta: { ...fileMeta, thumbnailKey: fakeField('t'.repeat(43), newKeyId()) } },
+      { roomId: room.id, type: 'image', content: url, fileMeta: { ...fileMeta, thumbnailUrl: url, thumbnailKey: fakeField('t'.repeat(43), newKeyId()) } },
       'message.unsupportedEncryption',
     );
-    await expectRejected(aliceClient, { roomId: room.id, content: fakeField('oi'), fileMeta: { ...fileMeta, previewKey: rawKey } }, 'message.unsupportedEncryption');
+    await expectRejected(
+      aliceClient,
+      { roomId: room.id, content: fakeField('oi'), fileMeta: { name: fileMeta.name, mimeType: fileMeta.mimeType, size: 1, previewKey: rawKey } },
+      'message.unsupportedEncryption',
+    );
     await expectRejected(aliceClient, { roomId: room.id, type: 'image', content: url, fileMeta: { ...fileMeta, key: 'x'.repeat(401) } }, 'validation.invalidPayload');
     expect((await h.messageService.getRoomMessagesPage(room.id, { limit: 10 })).messages).toHaveLength(0);
+  });
+
+  it('requires the attachment key, the thumbnail key and the link preview key where they apply', async () => {
+    const h = await start();
+    const { alice, room, aliceClient } = await setupPair(h);
+    const url = await h.storeUpload(alice.user.id, 'uploads/files/r.bin');
+    const thumbnailUrl = await h.storeUpload(alice.user.id, 'uploads/images/r-thumb.bin');
+    const base = { name: fakeField('r.bin'), mimeType: fakeField('application/octet-stream'), size: 10 };
+    const key = fakeField('k'.repeat(43));
+
+    for (const type of ['image', 'audio', 'file'] as const) {
+      await expectRejected(aliceClient, { roomId: room.id, type, content: url, duration: 3, fileMeta: base }, 'message.attachmentKeyRequired');
+    }
+    await expectRejected(aliceClient, { roomId: room.id, type: 'image', content: url, fileMeta: { ...base, key, thumbnailUrl } }, 'message.attachmentKeyRequired');
+    await expectRejected(
+      aliceClient,
+      { roomId: room.id, content: fakeField('veja'), fileMeta: { name: fakeField('link-preview'), mimeType: fakeField('image/webp'), size: 1 } },
+      'message.attachmentKeyRequired',
+    );
+    expect((await h.messageService.getRoomMessagesPage(room.id, { limit: 10 })).messages).toHaveLength(0);
+
+    const delivered = waitForEvent<MessageEvent>(aliceClient, 'message:new');
+    aliceClient.emit('message:send', { roomId: room.id, type: 'audio', content: url, duration: 3, fileMeta: { ...base, key }, messageId: randomUUID() });
+    await expect(delivered).resolves.toMatchObject({ content: url });
   });
 
   it('requires a client message id because the fields are bound to it', async () => {

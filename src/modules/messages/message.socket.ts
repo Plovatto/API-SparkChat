@@ -77,6 +77,16 @@ const linkPreviewSchema = z.object({
   siteName: z.string().trim().max(LINK_PREVIEW_ENCRYPTED_LIMITS.siteName + SIGNED_ENVELOPE_MARGIN).nullable(),
 });
 
+function hasRequiredAttachmentKeys(type: z.infer<typeof sendMessagePayloadSchema>['type'], fileMeta: z.infer<typeof fileMetaSchema> | undefined): boolean {
+  if (!fileMeta) {
+    return true;
+  }
+  if (type === 'text') {
+    return Boolean(fileMeta.previewKey);
+  }
+  return Boolean(fileMeta.key) && (!fileMeta.thumbnailUrl || Boolean(fileMeta.thumbnailKey));
+}
+
 const clientTempIdSchema = z.string().trim().min(1);
 
 const sendMessagePayloadSchema = z
@@ -332,6 +342,11 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
 
     if (fileMeta?.thumbnailUrl && !isUploadedMediaUrl(fileMeta.thumbnailUrl)) {
       socket.emit('error', { ...errorPayload('message.invalidMedia'), clientTempId });
+      return;
+    }
+
+    if (!hasRequiredAttachmentKeys(type, fileMeta)) {
+      socket.emit('error', { ...errorPayload('message.attachmentKeyRequired'), clientTempId });
       return;
     }
 
