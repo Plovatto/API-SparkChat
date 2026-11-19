@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { collectEvents, roundTrip, settle, startSocketHarness, waitForDisconnect, waitForEvent, type TestClient } from './support/socket-harness.js';
-import { fakeField } from './support/room-keys.js';
+import { fakeField, fakeInvite } from './support/room-keys.js';
+import { fakeProof, seedInvite } from './support/invites.js';
 
 type Harness = Awaited<ReturnType<typeof startSocketHarness>>;
 
 interface RoomPayload {
-  room: { id: string; roomCode?: string };
+  room: { id: string };
 }
 
 let harness: Harness | null = null;
@@ -27,20 +28,19 @@ async function joinVisibleRooms(client: TestClient): Promise<void> {
   await listed;
 }
 
-async function createGroup(client: TestClient, roomName: string): Promise<{ id: string; roomCode: string }> {
+async function createGroup(client: TestClient, roomName: string): Promise<{ id: string }> {
   const created = waitForEvent<RoomPayload>(client, 'room:created');
   client.emit('room:create-group', { roomName });
   const { room } = await created;
-  if (!room.roomCode) {
-    throw new Error('group without code');
-  }
-  return { id: room.id, roomCode: room.roomCode };
+  return { id: room.id };
 }
 
-async function joinByCode(client: TestClient, roomCode: string): Promise<void> {
+async function joinByInvite(h: Harness, client: TestClient, roomId: string, userId: string): Promise<string> {
+  const { inviteToken } = await seedInvite(h.db, roomId);
   const joined = waitForEvent(client, 'room:joined');
-  client.emit('room:join-by-code', { roomCode });
+  client.emit('room:join-by-invite', { roomId, inviteToken, proof: fakeProof(userId) });
   await joined;
+  return inviteToken;
 }
 
 describe('presence privacy', () => {
@@ -94,7 +94,7 @@ describe('presence and blocks', () => {
 });
 
 describe('group membership enforcement', () => {
-  it('bans a removed member, rotates the invite code and shares the new code only with who stays', async () => {
+  it('bans a removed member, revokes the invite until the next key generation and hides it from the removed member', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
@@ -103,58 +103,85 @@ describe('group membership enforcement', () => {
     const bobClient = await h.connectAs(bob);
     const carolClient = await h.connectAs(carol);
     const group = await createGroup(aliceClient, 'Amigos');
-    await joinByCode(bobClient, group.roomCode);
-    await joinByCode(carolClient, group.roomCode);
+    await h.establishRoomKey(group.id);
+    const inviteToken = await joinByInvite(h, bobClient, group.id, bob.user.id);
+    await joinByInvite(h, carolClient, group.id, carol.user.id);
     const bobUpdates = collectEvents(bobClient, 'group:user-left');
 
-    const notified = waitForEvent<{ userId: string; roomCode?: string }>(carolClient, 'group:user-left');
+    const notified = waitForEvent<Record<string, unknown>>(carolClient, 'group:user-left');
     const left = waitForEvent(bobClient, 'group:left');
     aliceClient.emit('group:remove-member', { roomId: group.id, userId: bob.user.id });
     const update = await notified;
     await left;
 
     expect(update.userId).toBe(bob.user.id);
-    expect(update.roomCode).toMatch(/^[A-Z0-9]{10}$/);
-    expect(update.roomCode).not.toBe(group.roomCode);
+    expect(update).not.toHaveProperty('roomCode');
     expect(bobUpdates).toHaveLength(0);
+    const revoked = await h.roomService.getRoomById(group.id);
+    expect(revoked?.inviteTokenHash).toBeUndefined();
+    expect(revoked?.encryptedInvite).toBeDefined();
+    expect(revoked?.inviteKeyId).toBe(revoked?.currentKeyId);
 
     const rejected = waitForEvent<{ code: string }>(bobClient, 'error');
-    bobClient.emit('room:join-by-code', { roomCode: update.roomCode });
-    await expect(rejected).resolves.toMatchObject({ code: 'room.notFound' });
+    bobClient.emit('room:join-by-invite', { roomId: group.id, inviteToken, proof: fakeProof(bob.user.id) });
+    await expect(rejected).resolves.toMatchObject({ code: 'room.invalidInvite' });
 
-    const stale = waitForEvent<{ code: string }>(bobClient, 'error');
-    bobClient.emit('room:join-by-code', { roomCode: group.roomCode });
-    await expect(stale).resolves.toMatchObject({ code: 'room.notFound' });
+    const renewed = await seedInvite(h.db, group.id, 'renewed');
+    const banned = waitForEvent<{ code: string }>(bobClient, 'error');
+    bobClient.emit('room:join-by-invite', { roomId: group.id, inviteToken: renewed.inviteToken, proof: fakeProof(bob.user.id) });
+    await expect(banned).resolves.toMatchObject({ code: 'room.notFound' });
 
     const room = await h.roomService.getRoomById(group.id);
     expect(room?.participants).not.toContain(bob.user.id);
   });
 
-  it('lets a member who left voluntarily join again', async () => {
+  it('lets a member who left voluntarily join again with a valid invite', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
     const aliceClient = await h.connectAs(alice);
     const bobClient = await h.connectAs(bob);
     const group = await createGroup(aliceClient, 'Amigos');
-    await joinByCode(bobClient, group.roomCode);
+    await joinByInvite(h, bobClient, group.id, bob.user.id);
 
     const left = waitForEvent(bobClient, 'group:left');
     bobClient.emit('group:leave', { roomId: group.id });
     await left;
 
-    await joinByCode(bobClient, group.roomCode);
+    await joinByInvite(h, bobClient, group.id, bob.user.id);
     const room = await h.roomService.getRoomById(group.id);
     expect(room?.participants).toContain(bob.user.id);
   });
 
-  it('stops accepting invite codes after ten failed attempts in an hour', async () => {
+  it('stops accepting invite tokens after ten failed attempts in an hour', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
     const aliceClient = await h.connectAs(alice);
     const bobClient = await h.connectAs(bob);
     const group = await createGroup(aliceClient, 'Amigos');
+    const { inviteToken } = await seedInvite(h.db, group.id);
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const failed = waitForEvent<{ code: string }>(bobClient, 'error');
+      bobClient.emit('room:join-by-invite', { roomId: group.id, inviteToken: fakeInvite(`wrong-${attempt}`).inviteToken, proof: fakeProof(bob.user.id) });
+      await expect(failed).resolves.toMatchObject({ code: 'room.invalidInvite' });
+    }
+
+    const limited = waitForEvent<{ code: string }>(bobClient, 'error');
+    bobClient.emit('room:join-by-invite', { roomId: group.id, inviteToken, proof: fakeProof(bob.user.id) });
+    await expect(limited).resolves.toMatchObject({ code: 'rateLimit.roomJoin' });
+    expect((await h.roomService.getRoomById(group.id))?.participants).not.toContain(bob.user.id);
+  });
+
+  it('shares the join limit between room codes and invite links', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+    const group = await createGroup(aliceClient, 'Amigos');
+    const { inviteToken } = await seedInvite(h.db, group.id);
 
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const failed = waitForEvent<{ code: string }>(bobClient, 'error');
@@ -163,7 +190,7 @@ describe('group membership enforcement', () => {
     }
 
     const limited = waitForEvent<{ code: string }>(bobClient, 'error');
-    bobClient.emit('room:join-by-code', { roomCode: group.roomCode });
+    bobClient.emit('room:join-by-invite', { roomId: group.id, inviteToken, proof: fakeProof(bob.user.id) });
     await expect(limited).resolves.toMatchObject({ code: 'rateLimit.roomJoin' });
   });
 
@@ -186,19 +213,22 @@ describe('group membership enforcement', () => {
     expect(left).toHaveLength(0);
   });
 
-  it('counts parallel invite code attempts before they finish', async () => {
+  it('counts parallel invite attempts before they finish', async () => {
     const h = await start();
+    const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
+    const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
+    await seedInvite(h.db, group.id);
     const bobClient = await h.connectAs(bob);
     const errors = collectEvents<{ code: string }>(bobClient, 'error');
 
     for (let attempt = 0; attempt < 15; attempt += 1) {
-      bobClient.emit('room:join-by-code', { roomCode: 'BURST' + String(attempt) + 'CODE' });
+      bobClient.emit('room:join-by-invite', { roomId: group.id, inviteToken: fakeInvite(`burst-${attempt}`).inviteToken, proof: fakeProof(bob.user.id) });
     }
     await roundTrip(bobClient);
     await settle(300);
 
-    expect(errors.filter((error) => error.code === 'room.notFound')).toHaveLength(10);
+    expect(errors.filter((error) => error.code === 'room.invalidInvite')).toHaveLength(10);
     expect(errors.filter((error) => error.code === 'rateLimit.roomJoin')).toHaveLength(5);
   });
 
@@ -209,7 +239,7 @@ describe('group membership enforcement', () => {
     const aliceClient = await h.connectAs(alice);
     const bobClient = await h.connectAs(bob);
     const group = await createGroup(aliceClient, 'Amigos');
-    await joinByCode(bobClient, group.roomCode);
+    await joinByInvite(h, bobClient, group.id, bob.user.id);
     const blocked = collectEvents(bobClient, 'user:blocked');
 
     aliceClient.emit('user:block', { roomId: group.id, blockedUserId: bob.user.id });
@@ -227,11 +257,8 @@ describe('group membership enforcement', () => {
     const bob = await h.createAccount('Bob');
     const carol = await h.createAccount('Carol');
     const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
-    if (!group.roomCode) {
-      throw new Error('group without code');
-    }
-    await h.roomService.joinByCode(group.roomCode, bob.user.id);
-    await h.roomService.joinByCode(group.roomCode, carol.user.id);
+    await h.joinGroup(group.id, bob.user.id);
+    await h.joinGroup(group.id, carol.user.id);
     await h.roomRepository.updateParticipant(group.id, alice.user.id, { blockedByUserId: bob.user.id });
     await h.roomRepository.updateParticipant(group.id, carol.user.id, { blockedByUserId: alice.user.id });
 
@@ -258,8 +285,8 @@ describe('connection state recovery and membership', () => {
     const bobClient = await h.connectAs(bob);
     const group = await createGroup(aliceClient, 'Amigos');
     const other = await createGroup(aliceClient, 'Outro');
-    await joinByCode(bobClient, group.roomCode);
-    await joinByCode(bobClient, other.roomCode);
+    await joinByInvite(h, bobClient, group.id, bob.user.id);
+    await joinByInvite(h, bobClient, other.id, bob.user.id);
     await Promise.all([joinVisibleRooms(aliceClient), joinVisibleRooms(bobClient)]);
     await h.establishRoomKey(group.id);
     await h.establishRoomKey(other.id);

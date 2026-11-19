@@ -6,6 +6,7 @@ import { StorageQuota } from '@/storage/storage-quota.js';
 import { StorageUsageRepository } from '@/storage/storage-usage.repository.js';
 import { UploadRegistry } from '@/storage/upload-registry.js';
 import { createTestDb } from './create-test-db.js';
+import { joinGroupWithSeededInvite } from './invites.js';
 import { TEST_RECOVERY_FILE_SECRET } from './test-constants.js';
 
 export async function buildRoomService(databaseUrl?: string) {
@@ -32,8 +33,13 @@ export async function buildRoomService(databaseUrl?: string) {
   const roomService = new RoomService(roomRepository, userService, messageService);
   const roomKeyRepository = new RoomKeyRepository(db);
 
+  function joinGroup(roomId: string, userId: string) {
+    return joinGroupWithSeededInvite(db, roomService, roomId, userId);
+  }
+
   return {
     db,
+    joinGroup,
     roomService,
     roomRepository,
     roomKeyRepository,

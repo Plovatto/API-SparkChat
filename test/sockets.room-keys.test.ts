@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fakeEnvelope, newKeyId } from './support/room-keys.js';
+import { fakeEnvelope, fakeInvite, fakeRoster, newKeyId } from './support/room-keys.js';
+import { fakeProof, seedInvite } from './support/invites.js';
 import { collectEvents, roundTrip, settle, startSocketHarness, waitForEvent, type TestClient } from './support/socket-harness.js';
 
 type Harness = Awaited<ReturnType<typeof startSocketHarness>>;
@@ -26,7 +27,6 @@ interface Rejection {
 
 interface RoomSummaryPayload {
   id: string;
-  roomCode?: string;
   currentEpoch: number;
   currentKeyId: string | null;
   rotationRequiredEpoch: number | null;
@@ -45,16 +45,16 @@ afterEach(async () => {
   harness = null;
 });
 
-async function createGroup(client: TestClient, roomName: string): Promise<{ id: string; roomCode: string }> {
+async function createGroup(client: TestClient, roomName: string): Promise<{ id: string }> {
   const created = waitForEvent<{ room: RoomSummaryPayload }>(client, 'room:created');
   client.emit('room:create-group', { roomName });
   const { room } = await created;
-  return { id: room.id, roomCode: room.roomCode ?? '' };
+  return { id: room.id };
 }
 
-async function joinByCode(client: TestClient, roomCode: string): Promise<void> {
+async function joinByInvite(client: TestClient, roomId: string, userId: string, inviteToken: string): Promise<void> {
   const joined = waitForEvent(client, 'room:joined');
-  client.emit('room:join-by-code', { roomCode });
+  client.emit('room:join-by-invite', { roomId, inviteToken, proof: fakeProof(userId) });
   await joined;
 }
 
@@ -70,6 +70,8 @@ function batch(roomId: string, senderId: string, recipients: string[], epoch = 1
     keyId,
     epoch,
     keys: recipients.map((userId) => ({ userId, sealedKey: fakeEnvelope({ roomId, keyId, epoch, senderId, recipientId: userId }) })),
+    invite: { tokenHash: fakeInvite(keyId).tokenHash, encryptedInvite: fakeInvite(keyId).encryptedInvite },
+    roster: fakeRoster(keyId),
   };
 }
 
@@ -81,8 +83,9 @@ async function groupOfThree(h: Harness) {
   const bobClient = await h.connectAs(bob);
   const carolClient = await h.connectAs(carol);
   const group = await createGroup(aliceClient, 'Amigos');
-  await joinByCode(bobClient, group.roomCode);
-  await joinByCode(carolClient, group.roomCode);
+  const { inviteToken } = await seedInvite(h.db, group.id);
+  await joinByInvite(bobClient, group.id, bob.user.id, inviteToken);
+  await joinByInvite(carolClient, group.id, carol.user.id, inviteToken);
   return { alice, bob, carol, aliceClient, bobClient, carolClient, group, members: [alice.user.id, bob.user.id, carol.user.id] };
 }
 
@@ -226,8 +229,8 @@ describe('room key rotation', () => {
 
     const memberIds = [alice.user.id, bob.user.id];
     expect(await notices).toEqual([
-      { roomId: group.id, epoch: 2, memberIds },
-      { roomId: group.id, epoch: 2, memberIds },
+      { roomId: group.id, epoch: 2, memberIds, inviteProofs: [{ userId: bob.user.id, proof: fakeProof(bob.user.id) }] },
+      { roomId: group.id, epoch: 2, memberIds, inviteProofs: [{ userId: bob.user.id, proof: fakeProof(bob.user.id) }] },
     ]);
     expect(carolNotices).toHaveLength(0);
     expect((await listRooms(bobClient)).find((room) => room.id === group.id)).toMatchObject({ currentEpoch: 1, rotationRequiredEpoch: 2 });
@@ -253,7 +256,12 @@ describe('room key rotation', () => {
     const notice = waitForEvent(bobClient, 'e2e:rotation-required');
     aliceClient.emit('group:remove-member', { roomId: group.id, userId: carol.user.id });
 
-    await expect(notice).resolves.toEqual({ roomId: group.id, epoch: 2, memberIds: [alice.user.id, bob.user.id] });
+    await expect(notice).resolves.toEqual({
+      roomId: group.id,
+      epoch: 2,
+      memberIds: [alice.user.id, bob.user.id],
+      inviteProofs: [{ userId: bob.user.id, proof: fakeProof(bob.user.id) }],
+    });
     expect(await h.roomKeyRepository.getState(group.id)).toMatchObject({ currentEpoch: 1, rotationRequired: 2 });
   });
 
@@ -265,7 +273,12 @@ describe('room key rotation', () => {
     const notice = waitForEvent(bobClient, 'e2e:rotation-required');
     aliceClient.emit('group:remove-member', { roomId: group.id, userId: carol.user.id });
 
-    await expect(notice).resolves.toEqual({ roomId: group.id, epoch: 2, memberIds: [alice.user.id, bob.user.id] });
+    await expect(notice).resolves.toEqual({
+      roomId: group.id,
+      epoch: 2,
+      memberIds: [alice.user.id, bob.user.id],
+      inviteProofs: [{ userId: bob.user.id, proof: fakeProof(bob.user.id) }],
+    });
     expect(await h.roomKeyRepository.getState(group.id)).toMatchObject({ rotationRequired: 2 });
   });
 
@@ -349,15 +362,17 @@ describe('room key rotation', () => {
     const dave = await h.createAccount('Dave');
     const daveClient = await h.connectAs(dave);
     const rotations = collectEvents(bobClient, 'e2e:rotation-required');
+    const joinRequest = waitForEvent(bobClient, 'e2e:key-request');
 
-    await joinByCode(daveClient, group.roomCode);
+    await joinByInvite(daveClient, group.id, dave.user.id, fakeInvite(first.keyId).inviteToken);
+    await expect(joinRequest).resolves.toEqual({ roomId: group.id, requesterId: dave.user.id, proof: fakeProof(dave.user.id) });
     await settle(50);
     expect(rotations).toHaveLength(0);
     expect(await h.roomKeyRepository.getState(group.id)).toMatchObject({ currentEpoch: 1, rotationRequired: null });
 
     const requested = waitForEvent(bobClient, 'e2e:key-request');
     daveClient.emit('e2e:request-room-key', { roomId: group.id });
-    await expect(requested).resolves.toEqual({ roomId: group.id, requesterId: dave.user.id });
+    await expect(requested).resolves.toEqual({ roomId: group.id, requesterId: dave.user.id, proof: fakeProof(dave.user.id) });
 
     const asGeneration = waitForEvent<Rejection>(bobClient, 'e2e:room-key-rejected');
     bobClient.emit('e2e:publish-room-key', batch(group.id, bob.user.id, [dave.user.id], 1, first.keyId));

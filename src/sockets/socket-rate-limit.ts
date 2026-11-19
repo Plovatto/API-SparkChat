@@ -35,6 +35,8 @@ export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
     'room:create-private': roomAction,
     'room:create-group': { capacity: 20, refillPerSecond: 0.2 },
     'room:join-by-code': roomAction,
+    'room:join-by-invite': roomAction,
+    'room:reset-invite': roomAction,
     'room:delete': roomAction,
     'group:leave': roomAction,
     'group:remove-member': roomAction,

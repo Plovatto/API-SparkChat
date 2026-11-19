@@ -728,7 +728,7 @@ async function handlePublishE2eKeys(io: AppServer, socket: AppSocket, deps: User
   try {
     const input = publishE2eKeysPayloadSchema.parse(payload);
     const rotations = await deps.userService.publishE2eKeys(userId, input);
-    notifyRoomRotations(io, rotations);
+    notifyRoomRotations(io, await deps.roomService.attachInviteProofs(rotations));
   } catch (error) {
     socket.emit('error', { ...extractErrorPayload(error), event: 'e2e:publish-keys' });
   }

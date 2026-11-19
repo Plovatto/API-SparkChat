@@ -16,7 +16,7 @@ interface ErrorEvent {
 }
 
 interface RoomPayload {
-  room: { id: string; roomCode?: string };
+  room: { id: string };
 }
 
 let harness: Harness | null = null;
@@ -31,11 +31,11 @@ afterEach(async () => {
   harness = null;
 });
 
-async function createGroup(client: TestClient, roomName: string): Promise<{ id: string; roomCode: string }> {
+async function createGroup(client: TestClient, roomName: string): Promise<{ id: string }> {
   const created = waitForEvent<RoomPayload>(client, 'room:created');
   client.emit('room:create-group', { roomName });
   const { room } = await created;
-  return { id: room.id, roomCode: room.roomCode ?? '' };
+  return { id: room.id };
 }
 
 const ID = '3e3f4a1e-3b7a-4f7b-8f2a-2b7a7b9b2b2a';
@@ -187,7 +187,7 @@ describe('membership-gated socket paths and bans', () => {
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
     const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
-    await h.roomService.joinByCode(group.roomCode ?? '', bob.user.id);
+    await h.joinGroup(group.id, bob.user.id);
     await h.roomService.removeMember(group.id, alice.user.id, bob.user.id);
     await h.db.insert(roomParticipants).values({ roomId: group.id, userId: bob.user.id, isVisible: true });
     const bobClient = await h.connectAs(bob);
