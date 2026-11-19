@@ -316,6 +316,23 @@ describe('UserService.upgradeCredentials', () => {
     expect(await userService.loginWithRecovery(user.id, input.recoveryVerifier)).not.toBeNull();
   });
 
+  it('lets only one of two concurrent upgrades win', async () => {
+    const { userService, userRepository } = await buildRoomService();
+    const { user } = await registerV1(userService);
+    const first = upgradeInput(PASSWORD);
+    const second = upgradeInput(PASSWORD);
+
+    const results = await Promise.allSettled([
+      userService.upgradeCredentials(user.id, first),
+      userService.upgradeCredentials(user.id, second),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = results.find((result) => result.status === 'rejected') as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ code: 'user.credentialsAlreadyUpgraded' });
+    expect((await userRepository.findById(user.id))?.authVersion).toBe(2);
+  });
+
   it('rejects a wrong current password and leaves the account on v1', async () => {
     const { userService, userRepository } = await buildRoomService();
     const { user } = await registerV1(userService);

@@ -65,7 +65,7 @@ export const authParamsResponseSchema = z
 
 export const recoveryLoginBodySchema = z
   .object({
-    userId: z.string().trim().min(1).openapi({ example: '3e3f4a1e-3b7a-4f7b-8f2a-2b7a7b9b2b2a' }),
+    userId: z.string().trim().min(1).max(64).openapi({ example: '3e3f4a1e-3b7a-4f7b-8f2a-2b7a7b9b2b2a' }),
     recoveryKey: z.string().min(1).max(200).openapi({ example: 'q1w2e3r4t5y6u7i8o9p0q1w2e3r4t5y6u7i8o9p0abc', description: 'Chave derivada do segredo do arquivo de recuperação v2, base64url sem padding (32 bytes)' }),
   })
   .openapi('RecoveryLoginBody');

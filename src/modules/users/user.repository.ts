@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { roomKeys, users } from '../../database/schema.js';
 import type { UserRecord } from './user.types.js';
@@ -130,6 +130,22 @@ export class UserRepository {
     const updated = { ...current, ...patch };
     cacheProfile(updated);
     return updated;
+  }
+
+  async updateIfLegacyAuth(id: string, patch: Partial<UserRecord>): Promise<UserRecord | null> {
+    const result = await this.db
+      .update(users)
+      .set({ ...patch })
+      .where(and(eq(users.id, id), eq(users.authVersion, 1)));
+    if (result.rowsAffected === 0) {
+      return null;
+    }
+    const current = await this.findById(id);
+    if (!current) {
+      return null;
+    }
+    cacheProfile(current);
+    return current;
   }
 
   async findByNickname(nicknameNormalized: string): Promise<UserRecord | null> {

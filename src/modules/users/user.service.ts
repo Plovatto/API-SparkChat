@@ -452,7 +452,7 @@ export class UserService {
     await this.assertCurrentPassword(user, input.currentPassword);
 
     const passwordHash = await hashPassword(input.newAuthKey);
-    const updated = await this.repository.update(userId, {
+    const updated = await this.repository.updateIfLegacyAuth(userId, {
       passwordHash,
       authSalt: input.newAuthSalt,
       authVersion: 2,
@@ -460,7 +460,7 @@ export class UserService {
       ...(pair ? recoveryPatch(pair) : {}),
     });
     if (!updated) {
-      throw AppError.of('user.notFound');
+      throw AppError.of('user.credentialsAlreadyUpgraded');
     }
 
     return updated;
