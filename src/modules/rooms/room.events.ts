@@ -16,6 +16,7 @@ export interface RoomKeyDelivery {
   epoch: number;
   senderId: string;
   sealedKey: string;
+  roster?: string;
 }
 
 export interface RoomKeyRejection {
@@ -53,11 +54,13 @@ export interface RoomServerToClientEvents {
   'e2e:room-key-rejected': (payload: RoomKeyRejection) => void;
   'e2e:rotation-required': (payload: { roomId: string; epoch: number; memberIds?: string[]; inviteProofs?: InviteProofView[] }) => void;
   'room:invite-updated': (payload: { roomId: string; invite: RoomInviteView | null; roster: RoomRosterView | null }) => void;
+  'room:name-updated': (payload: { roomId: string; encryptedName: string; keyId: string }) => void;
 }
 
 export interface RoomClientToServerEvents {
   'room:create-private': (payload: { targetNickname: string }) => void;
-  'room:create-group': (payload: { roomName: string }) => void;
+  'room:create-group': (payload?: Record<string, never>) => void;
+  'room:rename': (payload: { roomId: string; name: string; keyId: string }) => void;
   'room:join-by-code': (payload: { roomCode: string }) => void;
   'room:join-by-invite': (payload: { roomId: string; inviteToken: string; proof: string }) => void;
   'room:reset-invite': (payload: { roomId: string }) => void;
@@ -76,6 +79,7 @@ export interface RoomClientToServerEvents {
     keys: { userId: string; sealedKey: string }[];
     invite?: { tokenHash: string; encryptedInvite: string };
     roster?: string;
+    name?: string;
   }) => void;
   'e2e:share-room-key': (payload: {
     roomId: string;
@@ -83,6 +87,6 @@ export interface RoomClientToServerEvents {
     epoch: number;
     keys: { userId: string; sealedKey: string }[];
   }) => void;
-  'e2e:get-room-keys': (payload: { roomIds: string[] }) => void;
+  'e2e:get-room-keys': (payload: { roomIds: string[]; keyIds?: Record<string, string[]> }) => void;
   'e2e:request-room-key': (payload: { roomId: string }) => void;
 }
