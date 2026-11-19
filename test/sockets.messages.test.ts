@@ -90,11 +90,11 @@ describe('replies over sockets', () => {
     aliceClient.emit('message:send', { roomId: room.id, content: 'oi', messageId, clientTempId: 'own-1' });
     await expect(first).resolves.toMatchObject({ id: messageId });
 
-    const duplicate = waitForEvent(aliceClient, 'error', (event) => event.clientTempId === 'own-2');
+    const duplicate = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.clientTempId === 'own-2');
     aliceClient.emit('message:send', { roomId: room.id, content: 'de novo', messageId, clientTempId: 'own-2' });
     await expect(duplicate).resolves.toMatchObject({ clientTempId: 'own-2' });
 
-    const malformed = waitForEvent(aliceClient, 'error', (event) => event.clientTempId === 'own-3');
+    const malformed = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.clientTempId === 'own-3');
     aliceClient.emit('message:send', { roomId: room.id, content: 'x', messageId: 'not-a-uuid', clientTempId: 'own-3' });
     await expect(malformed).resolves.toMatchObject({ clientTempId: 'own-3' });
   });
