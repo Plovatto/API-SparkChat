@@ -10,7 +10,15 @@ export interface EncryptedMessageFields {
   type: 'text' | 'image' | 'audio' | 'file';
   content: string;
   caption?: string | undefined;
-  fileMeta?: { name: string; mimeType: string } | undefined;
+  fileMeta?:
+    | {
+        name: string;
+        mimeType: string;
+        key?: string | undefined;
+        thumbnailKey?: string | undefined;
+        previewKey?: string | undefined;
+      }
+    | undefined;
   linkPreview?:
     | { url: string; title: string; description: string | null; imageUrl: string | null; siteName: string | null }
     | undefined;
@@ -30,6 +38,9 @@ function encryptedValues(fields: EncryptedMessageFields): string[] {
     fields.caption,
     fields.fileMeta?.name,
     fields.fileMeta?.mimeType,
+    fields.fileMeta?.key,
+    fields.fileMeta?.thumbnailKey,
+    fields.fileMeta?.previewKey,
     fields.linkPreview?.url,
     fields.linkPreview?.title,
     fields.linkPreview?.description,

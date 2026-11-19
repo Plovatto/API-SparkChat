@@ -9,6 +9,9 @@ export interface MessageFileMeta {
   mimeType: string;
   size: number;
   thumbnailUrl?: string | undefined;
+  key?: string | undefined;
+  thumbnailKey?: string | undefined;
+  previewKey?: string | undefined;
 }
 
 export interface MessageLinkPreview {

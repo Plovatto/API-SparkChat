@@ -40,6 +40,7 @@ const FIELD_LABELS = {
   caption: 'caption',
   fileName: 'file-name',
   fileMime: 'file-mime',
+  fileKey: 'file-key',
 } as const;
 
 type FieldLabel = (typeof FIELD_LABELS)[keyof typeof FIELD_LABELS];
@@ -51,7 +52,6 @@ interface CurrentRoomKey {
 
 interface MessageReader {
   field(message: MessageRecord, value: string, label: FieldLabel): Promise<string | null>;
-  attachmentKey(keyId: string): Promise<Uint8Array | null>;
 }
 export const AI_PENDING_WELCOME_TTL_MS = 10 * 60 * 1000;
 
@@ -342,7 +342,6 @@ export class AiService {
         }
         return openField(value, roomKey, signingKey, { roomId, senderId: message.senderId, messageId: message.id, label });
       },
-      attachmentKey: (keyId) => this.loadRoomKey(roomId, keyId),
     };
   }
 
@@ -444,10 +443,11 @@ export class AiService {
       return { role, text: plaintext !== null ? this.truncateText(plaintext, AI_MAX_TEXT_CHARS) : '[mensagem ilegível]' };
     }
 
-    const attachmentKey = (keyId: string) => reader.attachmentKey(keyId);
+    const fileKey = message.fileMeta?.key ? await reader.field(message, message.fileMeta.key, FIELD_LABELS.fileKey) : null;
+    const binding = { roomId: message.roomId, messageId: message.id, slot: 'content' } as const;
 
     if (message.type === 'image') {
-      const raw = await loadDecryptedAttachment(message.content, attachmentKey, this.objectStorage, AI_MAX_IMAGE_BYTES);
+      const raw = await loadDecryptedAttachment(message.content, binding, fileKey, this.objectStorage, AI_MAX_IMAGE_BYTES);
       const compressed = raw ? await compressImageForModel(raw).catch(() => null) : null;
       if (!compressed) {
         return { role, text: captionText ?? '[o usuário enviou uma imagem, mas não foi possível carregá-la]' };
@@ -461,7 +461,7 @@ export class AiService {
         return { role, text: `[o usuário enviou um áudio de ${message.duration}s, longo demais para eu ouvir agora]` };
       }
       const [raw, declaredMimeType] = await Promise.all([
-        loadDecryptedAttachment(message.content, attachmentKey, this.objectStorage, AI_MAX_AUDIO_BYTES),
+        loadDecryptedAttachment(message.content, binding, fileKey, this.objectStorage, AI_MAX_AUDIO_BYTES),
         message.fileMeta ? reader.field(message, message.fileMeta.mimeType, FIELD_LABELS.fileMime) : Promise.resolve(null),
       ]);
       const mimeType = resolveAudioMimeType(declaredMimeType, message.content);
@@ -480,7 +480,7 @@ export class AiService {
       if ((message.fileMeta?.size ?? 0) > AI_MAX_PDF_BYTES) {
         return { role, text: `[o usuário enviou o arquivo ${name}, grande demais para eu ler agora]` };
       }
-      const raw = await loadDecryptedAttachment(message.content, attachmentKey, this.objectStorage, AI_MAX_PDF_BYTES);
+      const raw = await loadDecryptedAttachment(message.content, binding, fileKey, this.objectStorage, AI_MAX_PDF_BYTES);
       if (!raw) {
         return { role, text: captionText ?? `[o usuário enviou o arquivo ${name}, mas não foi possível carregá-lo]` };
       }
@@ -488,7 +488,7 @@ export class AiService {
     }
 
     if (mimeType === 'text/plain' || mimeType === 'text/csv') {
-      const raw = await loadDecryptedAttachment(message.content, attachmentKey, this.objectStorage, AI_MAX_TEXT_FILE_BYTES);
+      const raw = await loadDecryptedAttachment(message.content, binding, fileKey, this.objectStorage, AI_MAX_TEXT_FILE_BYTES);
       if (!raw) {
         return { role, text: captionText ?? `[o usuário enviou o arquivo ${name}, mas não foi possível carregá-lo]` };
       }

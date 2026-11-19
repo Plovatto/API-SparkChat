@@ -276,6 +276,58 @@ describe('message:send accepts only v2 encrypted fields bound to the current roo
     await expect(delivered).resolves.toMatchObject({ content: url });
   });
 
+  it('accepts per-attachment keys sealed as v2 fields and stores them without reading them', async () => {
+    const h = await start();
+    const { alice, room, aliceClient } = await setupPair(h);
+    const url = await h.storeUpload(alice.user.id, 'uploads/images/k.bin');
+    const thumbnailUrl = await h.storeUpload(alice.user.id, 'uploads/images/k-thumb.bin');
+    const fileMeta = {
+      name: fakeField('a.png'),
+      mimeType: fakeField('image/png'),
+      size: 10,
+      thumbnailUrl,
+      key: fakeField('k'.repeat(43)),
+      thumbnailKey: fakeField('t'.repeat(43)),
+    };
+
+    const delivered = waitForEvent<MessageEvent & { id: string; fileMeta: Record<string, unknown> }>(aliceClient, 'message:new');
+    aliceClient.emit('message:send', { roomId: room.id, type: 'image', content: url, fileMeta, messageId: randomUUID() });
+    const view = await delivered;
+
+    expect(view.fileMeta).toEqual(fileMeta);
+    expect((await h.messageService.getMessage(view.id))?.fileMeta).toEqual(fileMeta);
+  });
+
+  it('accepts a link preview image key on a text message', async () => {
+    const h = await start();
+    const { room, aliceClient } = await setupPair(h);
+    const fileMeta = { name: fakeField('link-preview'), mimeType: fakeField('image/webp'), size: 1, previewKey: fakeField('p'.repeat(43)) };
+    const linkPreview = { url: fakeField('u'), title: fakeField('t'), description: null, imageUrl: fakeField('i'), siteName: null };
+
+    const delivered = waitForEvent<MessageEvent & { fileMeta: Record<string, unknown> }>(aliceClient, 'message:new');
+    aliceClient.emit('message:send', { roomId: room.id, content: fakeField('veja'), fileMeta, linkPreview, messageId: randomUUID() });
+
+    await expect(delivered).resolves.toMatchObject({ fileMeta: { previewKey: fileMeta.previewKey } });
+  });
+
+  it('rejects an attachment key that is not sealed as a v2 field of the current generation', async () => {
+    const h = await start();
+    const { alice, room, aliceClient } = await setupPair(h);
+    const url = await h.storeUpload(alice.user.id, 'uploads/images/p.bin');
+    const fileMeta = { name: fakeField('a.png'), mimeType: fakeField('image/png'), size: 10 };
+    const rawKey = Buffer.alloc(32, 1).toString('base64url');
+
+    await expectRejected(aliceClient, { roomId: room.id, type: 'image', content: url, fileMeta: { ...fileMeta, key: rawKey } }, 'message.unsupportedEncryption');
+    await expectRejected(
+      aliceClient,
+      { roomId: room.id, type: 'image', content: url, fileMeta: { ...fileMeta, thumbnailKey: fakeField('t'.repeat(43), newKeyId()) } },
+      'message.unsupportedEncryption',
+    );
+    await expectRejected(aliceClient, { roomId: room.id, content: fakeField('oi'), fileMeta: { ...fileMeta, previewKey: rawKey } }, 'message.unsupportedEncryption');
+    await expectRejected(aliceClient, { roomId: room.id, type: 'image', content: url, fileMeta: { ...fileMeta, key: 'x'.repeat(401) } }, 'validation.invalidPayload');
+    expect((await h.messageService.getRoomMessagesPage(room.id, { limit: 10 })).messages).toHaveLength(0);
+  });
+
   it('requires a client message id because the fields are bound to it', async () => {
     const h = await start();
     const { room, aliceClient } = await setupPair(h);

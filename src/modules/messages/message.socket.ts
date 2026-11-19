@@ -55,11 +55,16 @@ const activityEvents = {
   recording: 'recording:update',
 } as const satisfies Record<ActivityKind, string>;
 
+const ATTACHMENT_KEY_FIELD_MAX_LENGTH = 400;
+
 const fileMetaSchema = z.object({
   name: z.string().trim().min(1).max(740),
   mimeType: z.string().trim().min(1).max(440),
   size: z.number().int().positive(),
   thumbnailUrl: z.string().trim().min(1).max(4000).optional(),
+  key: z.string().trim().min(1).max(ATTACHMENT_KEY_FIELD_MAX_LENGTH).optional(),
+  thumbnailKey: z.string().trim().min(1).max(ATTACHMENT_KEY_FIELD_MAX_LENGTH).optional(),
+  previewKey: z.string().trim().min(1).max(ATTACHMENT_KEY_FIELD_MAX_LENGTH).optional(),
 });
 
 const SIGNED_ENVELOPE_MARGIN = 160;
