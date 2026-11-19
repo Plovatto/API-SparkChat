@@ -81,6 +81,39 @@ describe('message:send errors', () => {
 });
 
 describe('replies over sockets', () => {
+  it('uses the client supplied messageId and rejects a duplicate or malformed one', async () => {
+    const h = await start();
+    const { room, aliceClient } = await setupPair(h);
+    const messageId = '6f1d9c1e-2b1a-4f57-9d0e-5f3f0a1b2c3d';
+
+    const first = waitForEvent<MessageEvent>(aliceClient, 'message:new', (event) => event.clientTempId === 'own-1');
+    aliceClient.emit('message:send', { roomId: room.id, content: 'hi', messageId, clientTempId: 'own-1' });
+    await expect(first).resolves.toMatchObject({ id: messageId });
+
+    const duplicate = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.clientTempId === 'own-2');
+    aliceClient.emit('message:send', { roomId: room.id, content: 'again', messageId, clientTempId: 'own-2' });
+    await expect(duplicate).resolves.toMatchObject({ clientTempId: 'own-2', code: 'message.invalidMedia' });
+    expect((await h.messageService.getMessage(messageId))?.content).toBe('hi');
+
+    const malformed = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.clientTempId === 'own-3');
+    aliceClient.emit('message:send', { roomId: room.id, content: 'x', messageId: 'not-a-uuid', clientTempId: 'own-3' });
+    await expect(malformed).resolves.toMatchObject({ clientTempId: 'own-3' });
+  });
+
+  it('rejects an id that belongs to a message of another user and room', async () => {
+    const h = await start();
+    const { room, aliceClient } = await setupPair(h);
+    const carol = await h.createAccount('Carol');
+    const dave = await h.createAccount('Dave');
+    const otherRoom = await h.roomService.createPrivateRoom(carol.user.id, dave.user.id);
+    const foreign = await h.messageService.sendMessage({ roomId: otherRoom.id, senderId: carol.user.id, content: 'private' });
+
+    const rejected = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.clientTempId === 'steal');
+    aliceClient.emit('message:send', { roomId: room.id, content: 'x', messageId: foreign.id, clientTempId: 'steal' });
+    await expect(rejected).resolves.toMatchObject({ clientTempId: 'steal' });
+    expect((await h.messageService.getMessage(foreign.id))?.roomId).toBe(otherRoom.id);
+  });
+
   it('does not leak a message from another room through replyToMessageId', async () => {
     const h = await start();
     const { alice, room, aliceClient } = await setupPair(h);
