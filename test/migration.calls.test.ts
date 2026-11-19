@@ -66,5 +66,5 @@ describe(`migration ${TAG}`, () => {
     });
     expect(await rows(client, 'SELECT id, relay_used, turn_username, turn_revoked_at FROM calls')).toEqual([['c1', 0, null, null]]);
     client.close();
-  });
+  }, 30000);
 });

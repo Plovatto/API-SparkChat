@@ -356,31 +356,34 @@ describe('accept, decline and hangup', () => {
     expect((await message).systemEvent.type).toBe('call.missed');
   });
 
-  it('posts no missed-call message into a room the callee has not opened, but reveals it once the call is answered', async () => {
+  it('reveals a room the callee has not opened before ringing, so a first-contact call can be matched to a local room', async () => {
     const { h, room, aliceClient, bobClient } = await setup({ hiddenRoom: true });
-    const missed = await ring(h, aliceClient, [bobClient], room.id);
-    const ended = waitForEvent(bobClient, 'call:ended');
-    aliceClient.emit('call:hangup', { callId: missed });
-    await ended;
-    expect(await systemEventTypes(h, room.id)).toEqual([]);
-
-    const answered = await ring(h, aliceClient, [bobClient], room.id);
-    await answer(aliceClient, bobClient, answered);
-    const revealed = waitForEvent<{ room: { id: string }; messages: { systemEvent: { type: string } }[] }>(bobClient, 'room:new');
-    aliceClient.emit('call:hangup', { callId: answered });
-    const payload = await revealed;
-    expect(payload.room.id).toBe(room.id);
-    expect(payload.messages.map((message) => message.systemEvent.type)).toEqual(['call.ended']);
+    const order: string[] = [];
+    bobClient.on('room:new', () => order.push('room:new'));
+    bobClient.on('call:incoming', () => order.push('call:incoming'));
+    const revealed = waitForEvent<{ room: { id: string } }>(bobClient, 'room:new');
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    expect((await revealed).room.id).toBe(room.id);
+    expect(order).toEqual(['room:new', 'call:incoming']);
+    expect(room.id).toBeTruthy();
+    expect((await h.roomService.getRoomById(room.id))?.visibleTo).toContain((await callRow(h, callId)).calleeId);
   });
 
-  it('does not post missed-call messages for a callee who deleted the conversation', async () => {
-    const { h, bob, room, aliceClient, bobClient } = await setup();
-    await h.roomService.deleteForUser(room.id, bob.user.id);
+  it('records a missed call in a room that was revealed by the ring', async () => {
+    const { h, room, aliceClient, bobClient } = await setup({ hiddenRoom: true });
     const callId = await ring(h, aliceClient, [bobClient], room.id);
     const ended = waitForEvent(bobClient, 'call:ended');
     aliceClient.emit('call:hangup', { callId });
     await ended;
-    expect(await systemEventTypes(h, room.id)).toEqual([]);
+    await vi.waitFor(async () => expect(await systemEventTypes(h, room.id)).toEqual(['call.missed']));
+  });
+
+  it('brings back a conversation the callee deleted when a call rings, like a message would', async () => {
+    const { h, bob, room, aliceClient, bobClient } = await setup();
+    await h.roomService.deleteForUser(room.id, bob.user.id);
+    const revealed = waitForEvent<{ room: { id: string } }>(bobClient, 'room:new');
+    await ring(h, aliceClient, [bobClient], room.id);
+    expect((await revealed).room.id).toBe(room.id);
   });
 
   it('silence acknowledges without ending the call', async () => {
@@ -894,6 +897,49 @@ describe('call sync and restart restore', () => {
     clock.now += 50_000;
     await restarted.runMaintenance();
     expect((await callRow(h, callId)).endReason).toBe('connection-lost');
+  });
+});
+
+describe('event ordering', () => {
+  it('handles accept and an immediate ice-servers request in order even when the accept write is slow', async () => {
+    const turn = fakeTurn();
+    const { h, room, aliceClient, bobClient } = await setup({ turn });
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    const original = h.callRepository.accept.bind(h.callRepository);
+    h.callRepository.accept = async (...args: Parameters<typeof original>) => {
+      await settle(50);
+      return original(...args);
+    };
+    const result = waitForEvent<{ iceServers: unknown[] }>(bobClient, 'call:ice-servers-result');
+    const errors = collectEvents<ErrorEvent>(bobClient, 'error');
+
+    bobClient.emit('call:accept', { callId, envelope: 'accept-envelope' });
+    bobClient.emit('call:ice-servers', { callId, protectIp: false });
+
+    expect((await result).iceServers.length).toBeGreaterThan(0);
+    expect(errors).toEqual([]);
+    expect((await callRow(h, callId)).state).toBe('accepted');
+  });
+
+  it('keeps processing after a failing event and bounds the queue', async () => {
+    const { h, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    const original = h.callRepository.findById.bind(h.callRepository);
+    h.callRepository.findById = async (id: string) => {
+      await settle(5);
+      return original(id);
+    };
+    const errors = collectEvents<ErrorEvent>(bobClient, 'error');
+    for (let i = 0; i < 100; i += 1) {
+      bobClient.emit('call:signal', { callId: 'x'.repeat(22), to: 'x', envelope: 'e' });
+    }
+    await settle(400);
+    expect(errors.some((error) => error.code === 'call.rateLimited')).toBe(true);
+    expect(errors.some((error) => error.code === 'call.notFound')).toBe(true);
+
+    const state = waitForEvent(bobClient, 'call:state');
+    bobClient.emit('call:sync', {});
+    expect(await state).toMatchObject({ callId });
   });
 });
 
