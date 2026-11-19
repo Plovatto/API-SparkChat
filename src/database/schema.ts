@@ -175,10 +175,12 @@ export const uploads = sqliteTable(
     size: integer('size').notNull(),
     createdAt: text('created_at').notNull(),
     messageId: text('message_id'),
+    expiresAt: text('expires_at'),
   },
   (table) => [
     index('uploads_uploader_id_idx').on(table.uploaderId),
     index('uploads_message_id_created_at_idx').on(table.messageId, table.createdAt),
+    index('uploads_expires_at_idx').on(table.expiresAt),
   ],
 );
 

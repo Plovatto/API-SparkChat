@@ -12,7 +12,7 @@ const SAMPLE_PARAMS: Partial<Record<ErrorCode, object>> = {
   'room.groupFull': { maxMembers: 150 },
 };
 
-const CODE_PATTERN = /^(auth|call|push|user|room|message|e2e|upload|linkPreview|rateLimit|validation|internal)\.[a-z][A-Za-z]+$/;
+const CODE_PATTERN = /^(auth|call|push|user|room|message|e2e|upload|linkPreview|gifs|rateLimit|validation|internal)\.[a-z][A-Za-z]+$/;
 
 describe('error catalog', () => {
   it('lists every catalog entry in ERROR_CODES', () => {

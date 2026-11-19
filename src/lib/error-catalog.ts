@@ -1,21 +1,24 @@
-export type UploadKind = 'image' | 'audio' | 'file';
+export type UploadKind = 'image' | 'audio' | 'file' | 'gif';
 
 const UPLOAD_KIND_LABELS: Record<UploadKind, string> = {
   image: 'imagem',
   audio: 'áudio',
   file: 'arquivo',
+  gif: 'GIF',
 };
 
 const UPLOAD_MISSING_FILE_MESSAGES: Record<UploadKind, string> = {
   image: 'Nenhuma imagem enviada.',
   audio: 'Nenhum áudio enviado.',
   file: 'Nenhum arquivo enviado.',
+  gif: 'Nenhum GIF enviado.',
 };
 
 const UPLOAD_ACCEPTED_TYPES: Record<UploadKind, string> = {
   image: 'JPEG, PNG, GIF ou WEBP',
   audio: 'WEBM, OGG, MP4, AAC, MPEG ou WAV',
   file: 'PDF, vídeo (MP4, WEBM, MOV, AVI), documento do Office, ZIP, TXT ou CSV',
+  gif: 'criptografado',
 };
 
 export const ERROR_CATALOG = {
@@ -76,9 +79,14 @@ export const ERROR_CATALOG = {
   'upload.contentMismatch': () => 'O conteúdo do arquivo não corresponde ao tipo declarado.',
   'upload.quotaExceeded': () => 'Limite de armazenamento do servidor atingido. Tente novamente mais tarde.',
   'upload.userQuotaExceeded': () => 'Você atingiu o seu limite de armazenamento. Apague arquivos antigos para enviar novos.',
+  'upload.invalidGifSize': () => 'Tamanho de GIF inválido. Atualize o aplicativo e tente novamente.',
   'linkPreview.invalidUrl': () => 'URL inválida.',
   'linkPreview.unavailable': () => 'Não foi possível gerar um preview para essa URL.',
   'linkPreview.imageUnavailable': () => 'Não foi possível carregar essa imagem.',
+  'gifs.unavailable': () => 'A galeria de GIFs não está disponível no momento.',
+  'gifs.providerFailed': () => 'Não foi possível carregar os GIFs agora. Tente novamente.',
+  'gifs.invalidMediaUrl': () => 'Endereço de GIF inválido.',
+  'gifs.invalidQuery': () => 'Busca de GIF inválida.',
   'call.disabled': () => 'As chamadas estão desativadas no momento.',
   'call.notAllowed': () => 'Você não pode ligar para este contato.',
   'call.alreadyInCall': () => 'Você já está em uma chamada.',
@@ -94,6 +102,8 @@ export const ERROR_CATALOG = {
   'rateLimit.api': () => 'Muitas requisições em pouco tempo. Aguarde e tente novamente.',
   'rateLimit.linkPreview': () => 'Muitas requisições de preview. Aguarde um momento e tente novamente.',
   'rateLimit.upload': () => 'Muitos envios de arquivo. Aguarde um momento e tente novamente.',
+  'rateLimit.gifs': () => 'Muitas buscas de GIF em pouco tempo. Aguarde um momento e tente novamente.',
+  'rateLimit.gifUpload': () => 'Muitos GIFs enviados em pouco tempo. Aguarde e tente novamente.',
   'rateLimit.loginAttempts': () => 'Muitas tentativas de login. Tente novamente mais tarde.',
   'rateLimit.passwordAttempts': () => 'Muitas tentativas de senha. Tente novamente mais tarde.',
   'rateLimit.resumeAttempts': () => 'Muitas tentativas de reconexão. Aguarde um instante.',

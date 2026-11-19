@@ -3,14 +3,21 @@ import path from 'node:path';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import '../../docs/zod-extend.js';
-import { audioObjectKey, fileObjectKey, imageObjectKey } from '../../config/paths.js';
+import { audioObjectKey, fileObjectKey, gifObjectKey, imageObjectKey } from '../../config/paths.js';
 import { errorPayload } from '../../lib/app-error.js';
 import type { UploadKind } from '../../lib/error-catalog.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import { StorageQuotaExceededError, type StorageQuota } from '../../storage/storage-quota.js';
 import type { UploadRegistry } from '../../storage/upload-registry.js';
 import { verifyFileSignature } from './message.file-signature.js';
-import { isNeutralUpload, NEUTRAL_UPLOAD_EXTENSION, NEUTRAL_UPLOAD_MIME_TYPE } from './message.upload.js';
+import {
+  GIF_UPLOAD_TTL_MS,
+  MAX_LIVE_GIF_BYTES,
+  isAllowedGifUploadSize,
+  isNeutralUpload,
+  NEUTRAL_UPLOAD_EXTENSION,
+  NEUTRAL_UPLOAD_MIME_TYPE,
+} from './message.upload.js';
 
 const INLINE_SAFE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.mov', '.avi']);
 const UPLOAD_CACHE_CONTROL = 'public, max-age=31536000, immutable';
@@ -54,13 +61,17 @@ interface UploadHandlerOptions<TResponse> {
   buildKey: (filename: string) => string;
   buildResponse: (file: Express.Multer.File, url: string) => TResponse;
   contentDisposition?: (originalname: string) => string | undefined;
+  validateFile?: (file: Express.Multer.File) => 'upload.invalidGifSize' | null;
+  countsTowardUserQuota?: boolean;
+  ttlMs?: number;
+  maxExpiringBytes?: number;
 }
 
 function createUploadHandler<TResponse>(
   objectStorage: ObjectStorage,
   storageQuota: StorageQuota,
   uploadRegistry: UploadRegistry,
-  { kind, buildKey, buildResponse, contentDisposition }: UploadHandlerOptions<TResponse>,
+  { kind, buildKey, buildResponse, contentDisposition, validateFile, countsTowardUserQuota = true, ttlMs, maxExpiringBytes }: UploadHandlerOptions<TResponse>,
 ) {
   return async (req: Request, res: Response): Promise<void> => {
     const file = req.file;
@@ -81,7 +92,18 @@ function createUploadHandler<TResponse>(
       return;
     }
 
-    if ((await uploadRegistry.totalBytesFor(uploaderId)) + file.size > MAX_USER_STORAGE_BYTES) {
+    const invalidFileCode = validateFile?.(file) ?? null;
+    if (invalidFileCode) {
+      res.status(400).json(errorPayload(invalidFileCode));
+      return;
+    }
+
+    if (countsTowardUserQuota && (await uploadRegistry.totalBytesFor(uploaderId)) + file.size > MAX_USER_STORAGE_BYTES) {
+      res.status(507).json(errorPayload('upload.userQuotaExceeded'));
+      return;
+    }
+
+    if (maxExpiringBytes !== undefined && (await uploadRegistry.expiringBytesFor(uploaderId)) + file.size > maxExpiringBytes) {
       res.status(507).json(errorPayload('upload.userQuotaExceeded'));
       return;
     }
@@ -108,7 +130,8 @@ function createUploadHandler<TResponse>(
       contentDisposition: encrypted ? 'attachment' : contentDisposition?.(file.originalname),
       cacheControl: UPLOAD_CACHE_CONTROL,
     });
-    await uploadRegistry.register(key, uploaderId, file.size);
+    const expiresAt = ttlMs === undefined ? null : new Date(Date.now() + ttlMs).toISOString();
+    await uploadRegistry.register(key, uploaderId, file.size, { expiresAt });
     await storageQuota.recordUsage(file.size);
 
     const url = withEncryptedMarker(objectStorage.publicUrl(key), encrypted);
@@ -138,6 +161,15 @@ export function createMessageController(objectStorage: ObjectStorage, storageQuo
         mimeType: file.mimetype,
         size: file.size,
       }),
+    }),
+    uploadGif: createUploadHandler(objectStorage, storageQuota, uploadRegistry, {
+      kind: 'gif',
+      buildKey: gifObjectKey,
+      buildResponse: (_file, url) => ({ url }),
+      validateFile: (file) => (isAllowedGifUploadSize(file.size) ? null : 'upload.invalidGifSize'),
+      countsTowardUserQuota: false,
+      ttlMs: GIF_UPLOAD_TTL_MS,
+      maxExpiringBytes: MAX_LIVE_GIF_BYTES,
     }),
   };
 }

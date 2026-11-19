@@ -7,6 +7,7 @@ import { webPushVapidConfig } from './config/web-push-env.js';
 import { db } from './database/turso-client.js';
 import { runMigrations } from './database/migrate.js';
 import { CallBudget, CallRateLimiter, CallRepository, CallService, createCloudflareTurnProvider } from './modules/calls/index.js';
+import { createGifProvider } from './modules/gifs/index.js';
 import { AiService, AiUsageLimiter, createGeminiRouter, ensureAssistantUser, loadAssistantIdentity } from './modules/ai/index.js';
 import { httpLinkPreviewFetcher, LinkPreviewRepository, LinkPreviewService } from './modules/link-preview/index.js';
 import {
@@ -26,6 +27,7 @@ import { SOCKET_MAX_HTTP_BUFFER_SIZE } from './sockets/socket-options.js';
 import { createR2ObjectStorage } from './storage/r2-object-storage.js';
 import { StorageQuota } from './storage/storage-quota.js';
 import { StorageUsageRepository } from './storage/storage-usage.repository.js';
+import { ExpiredUploadSweeper } from './storage/expired-upload-sweeper.js';
 import { OrphanUploadSweeper } from './storage/orphan-upload-sweeper.js';
 import { UploadRegistry } from './storage/upload-registry.js';
 import type {
@@ -58,6 +60,7 @@ const storageUsageRepository = new StorageUsageRepository(db);
 const storageQuota = new StorageQuota(storageUsageRepository);
 const uploadRegistry = new UploadRegistry(db);
 new OrphanUploadSweeper(uploadRegistry, objectStorage, storageQuota).start();
+new ExpiredUploadSweeper(uploadRegistry, objectStorage, storageQuota).start();
 
 const messageRepository = new MessageRepository(db);
 const messageService = new MessageService(messageRepository, userService, objectStorage, storageQuota, uploadRegistry);
@@ -97,7 +100,18 @@ const aiService = new AiService(
   userService,
 );
 
-const app = createApp({ userService, loginRateLimiter, sessionRevocations, linkPreviewService, objectStorage, storageQuota, uploadRegistry });
+const gifProvider = createGifProvider({ nodeEnv: env.NODE_ENV, provider: env.GIF_PROVIDER, klipyApiKey: env.KLIPY_API_KEY });
+
+const app = createApp({
+  userService,
+  loginRateLimiter,
+  sessionRevocations,
+  linkPreviewService,
+  objectStorage,
+  storageQuota,
+  uploadRegistry,
+  gifProvider,
+});
 const httpServer = createServer(app);
 
 const io = new Server<

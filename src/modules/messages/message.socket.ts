@@ -168,7 +168,7 @@ registerServerEvents(
   },
 );
 
-const uploadedMediaPathPattern = new RegExp(`^/${uploadedMediaKeyPrefix}/(images|audio|files)/[^/]+$`);
+const uploadedMediaPathPattern = new RegExp(`^/${uploadedMediaKeyPrefix}/(images|audio|files|gifs)/[^/]+$`);
 
 export function isUploadedMediaUrl(content: string): boolean {
   try {

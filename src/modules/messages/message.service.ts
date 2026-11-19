@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '../../config/logger.js';
+import { isGifObjectKey } from '../../config/paths.js';
 import { AppError } from '../../lib/app-error.js';
 import { resolveObjectKey } from '../../storage/object-storage-url.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
@@ -80,16 +81,24 @@ export class MessageService {
     return key;
   }
 
+  private resolveNonGifObjectKey(url: string): string {
+    const key = this.resolveOwnedObjectKey(url);
+    if (isGifObjectKey(key)) {
+      throw AppError.of('message.invalidMedia');
+    }
+    return key;
+  }
+
   private attachmentKeysOf(input: SendMessageInput): string[] {
     const keys: string[] = [];
     if (input.type && input.type !== 'text') {
-      keys.push(this.resolveOwnedObjectKey(input.content));
+      keys.push(input.type === 'image' ? this.resolveOwnedObjectKey(input.content) : this.resolveNonGifObjectKey(input.content));
       if (input.fileMeta?.thumbnailUrl) {
-        keys.push(this.resolveOwnedObjectKey(input.fileMeta.thumbnailUrl));
+        keys.push(this.resolveNonGifObjectKey(input.fileMeta.thumbnailUrl));
       }
     }
     for (const url of input.attachmentUrls ?? []) {
-      keys.push(this.resolveOwnedObjectKey(url));
+      keys.push(this.resolveNonGifObjectKey(url));
     }
     return [...new Set(keys)];
   }
@@ -264,8 +273,9 @@ export class MessageService {
       handledKeys.add(extra.key);
       try {
         await this.objectStorage.deleteObject(extra.key);
-        releasedBytes += extra.size;
-        await this.uploads.remove(extra.key);
+        if (await this.uploads.remove(extra.key)) {
+          releasedBytes += extra.size;
+        }
       } catch (error) {
         logger.error({ err: error, key: extra.key }, 'Failed to delete attachment object from storage');
       }
@@ -273,7 +283,7 @@ export class MessageService {
 
     for (const url of urls) {
       const key = resolveObjectKey(url);
-      if (!key || handledKeys.has(key) || url.split('?')[0] !== this.objectStorage.publicUrl(key)) {
+      if (!key || handledKeys.has(key) || isGifObjectKey(key) || url.split('?')[0] !== this.objectStorage.publicUrl(key)) {
         continue;
       }
       try {
