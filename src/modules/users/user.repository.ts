@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { roomKeys, users } from '../../database/schema.js';
 import type { UserRecord } from './user.types.js';
@@ -150,6 +150,21 @@ export class UserRepository {
     }
     cacheProfile(current);
     return current;
+  }
+
+  async setSigningKeyIfUnset(id: string, publicKey: string, signingPublicKey: string, keySignature: string): Promise<boolean> {
+    const result = await this.db
+      .update(users)
+      .set({ e2eSigningPublicKey: signingPublicKey, e2eKeySignature: keySignature })
+      .where(and(eq(users.id, id), eq(users.e2ePublicKey, publicKey), isNull(users.e2eSigningPublicKey)));
+    if (result.rowsAffected === 0) {
+      return false;
+    }
+    const current = await this.findById(id);
+    if (current) {
+      cacheProfile(current);
+    }
+    return true;
   }
 
   async findByNickname(nicknameNormalized: string): Promise<UserRecord | null> {

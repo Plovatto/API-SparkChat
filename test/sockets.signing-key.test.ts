@@ -12,6 +12,10 @@ afterEach(async () => {
   harness = null;
 });
 
+async function settle(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 150));
+}
+
 function signingIdentity(userId: string, publicKey: string) {
   const { publicKey: pub, privateKey } = generateKeyPairSync('ed25519');
   const raw = pub.export({ format: 'der', type: 'spki' }).subarray(-32);
@@ -38,7 +42,7 @@ describe('e2e:publish-signing-key', () => {
 
     client.emit('e2e:publish-signing-key', { signingPublicKey: signing.signingPublicKey, keySignature: signing.keySignature });
     const keys = waitForEvent<{ keys: { userId: string; signingPublicKey?: string; keySignature?: string }[] }>(client, 'e2e:public-keys');
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await settle();
     client.emit('e2e:get-public-keys', { userIds: [account.user.id] });
 
     expect((await keys).keys[0]).toMatchObject({ userId: account.user.id, signingPublicKey: signing.signingPublicKey, keySignature: signing.keySignature });
@@ -75,10 +79,10 @@ describe('e2e:publish-signing-key', () => {
     harness = await startSocketHarness();
     const { client } = await accountWithKey(harness, 'Alice', 'pub-alice');
 
-    const error = waitForEvent<{ code?: string }>(client, 'error');
+    const error = waitForEvent<{ code?: string; event?: string }>(client, 'error');
     client.emit('e2e:publish-signing-key', { signingPublicKey: 'short', keySignature: 'short' });
 
-    expect(await error).toBeTruthy();
+    expect(await error).toMatchObject({ event: 'e2e:publish-signing-key' });
   });
 
   it('is idempotent for the same key and locked against a different one', async () => {
@@ -88,7 +92,7 @@ describe('e2e:publish-signing-key', () => {
     const second = signingIdentity(account.user.id, 'pub-alice');
 
     client.emit('e2e:publish-signing-key', { signingPublicKey: first.signingPublicKey, keySignature: first.keySignature });
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await settle();
     client.emit('e2e:publish-signing-key', { signingPublicKey: first.signingPublicKey, keySignature: first.keySignature });
 
     const error = waitForEvent<{ code: string }>(client, 'error');
@@ -115,11 +119,11 @@ describe('e2e:publish-signing-key', () => {
     const { account, client } = await accountWithKey(harness, 'Alice', 'pub-alice');
     const signing = signingIdentity(account.user.id, 'pub-alice');
     client.emit('e2e:publish-signing-key', { signingPublicKey: signing.signingPublicKey, keySignature: signing.keySignature });
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await settle();
     expect((await harness.userRepository.findById(account.user.id))?.e2eSigningPublicKey).toBe(signing.signingPublicKey);
 
     client.emit('e2e:publish-keys', { publicKey: 'pub-alice-new' });
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await settle();
 
     const after = await harness.userRepository.findById(account.user.id);
     expect(after?.e2ePublicKey).toBe('pub-alice-new');
@@ -134,7 +138,7 @@ describe('e2e:publish-signing-key', () => {
     const signing = signingIdentity(account.user.id, 'pub-carol');
 
     client.emit('e2e:publish-keys', { publicKey: 'pub-carol', signingPublicKey: signing.signingPublicKey, keySignature: signing.keySignature });
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await settle();
 
     const stored = await harness.userRepository.findById(account.user.id);
     expect(stored).toMatchObject({ e2ePublicKey: 'pub-carol', e2eSigningPublicKey: signing.signingPublicKey, e2eKeySignature: signing.keySignature });
@@ -161,5 +165,67 @@ describe('e2e:publish-signing-key', () => {
     client.emit('e2e:publish-keys', { publicKey: 'pub-eve-2', signingPublicKey: 'A'.repeat(43) });
 
     expect(await error).toBeTruthy();
+  });
+
+  it('binds the signature to a fixed message format shared with the client', () => {
+    expect(identityBindingMessage('user-1', 'pk').toString('utf8')).toBe('sparkchat:identity-binding:v1:user-1:pk');
+  });
+
+  it('keeps room keys when a key change arrives with an invalid signing proof', async () => {
+    harness = await startSocketHarness();
+    const h = harness;
+    const { account, client } = await accountWithKey(h, 'Frank', 'pub-frank');
+    const other = await h.createAccount('Grace');
+    const room = await h.roomService.createPrivateRoom(account.user.id, other.user.id);
+    await h.roomKeyRepository.publish(room.id, account.user.id, 'sealed');
+    const signing = signingIdentity(account.user.id, 'unrelated');
+
+    const error = waitForEvent<{ code: string }>(client, 'error');
+    client.emit('e2e:publish-keys', { publicKey: 'pub-frank-new', signingPublicKey: signing.signingPublicKey, keySignature: signing.keySignature });
+
+    expect(await error).toMatchObject({ code: 'e2e.invalidSigningKey' });
+    expect((await h.userRepository.findById(account.user.id))?.e2ePublicKey).toBe('pub-frank');
+    expect(await h.roomKeyRepository.findForUser(room.id, account.user.id)).toBe('sealed');
+  });
+
+  it('rejects a different signing key through e2e:publish-keys once one is stored', async () => {
+    harness = await startSocketHarness();
+    const { account, client } = await accountWithKey(harness, 'Heidi', 'pub-heidi');
+    const first = signingIdentity(account.user.id, 'pub-heidi');
+    const second = signingIdentity(account.user.id, 'pub-heidi');
+    client.emit('e2e:publish-signing-key', { signingPublicKey: first.signingPublicKey, keySignature: first.keySignature });
+    await settle();
+
+    const error = waitForEvent<{ code: string }>(client, 'error');
+    client.emit('e2e:publish-keys', { signingPublicKey: second.signingPublicKey, keySignature: second.keySignature });
+
+    expect(await error).toMatchObject({ code: 'e2e.signingKeyLocked' });
+  });
+
+  it('omits the signing fields for peers without a signing key', async () => {
+    harness = await startSocketHarness();
+    const { account, client } = await accountWithKey(harness, 'Ivan', 'pub-ivan');
+
+    const keys = waitForEvent<{ keys: Record<string, unknown>[] }>(client, 'e2e:public-keys');
+    client.emit('e2e:get-public-keys', { userIds: [account.user.id] });
+
+    expect((await keys).keys[0]).toEqual({ userId: account.user.id, publicKey: 'pub-ivan' });
+  });
+
+  it('keeps exactly one signing key when two different valid keys are published concurrently', async () => {
+    harness = await startSocketHarness();
+    const h = harness;
+    const { account } = await accountWithKey(h, 'Judy', 'pub-judy');
+    const first = signingIdentity(account.user.id, 'pub-judy');
+    const second = signingIdentity(account.user.id, 'pub-judy');
+
+    const results = await Promise.allSettled([
+      h.userService.publishSigningKey(account.user.id, first),
+      h.userService.publishSigningKey(account.user.id, second),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const stored = (await h.userRepository.findById(account.user.id))?.e2eSigningPublicKey;
+    expect([first.signingPublicKey, second.signingPublicKey]).toContain(stored);
   });
 });

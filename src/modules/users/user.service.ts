@@ -598,10 +598,6 @@ export class UserService {
       }
     }
 
-    const previousPublicKey = patch.e2ePublicKey === undefined ? undefined : current?.e2ePublicKey;
-    if (previousPublicKey && previousPublicKey !== patch.e2ePublicKey) {
-      await this.repository.deleteRoomKeys(userId);
-    }
     const publicKeyChanges = patch.e2ePublicKey !== undefined && patch.e2ePublicKey !== current?.e2ePublicKey;
     if (publicKeyChanges) {
       patch.e2eSigningPublicKey = null;
@@ -621,6 +617,11 @@ export class UserService {
       }
       patch.e2eSigningPublicKey = input.signingPublicKey;
       patch.e2eKeySignature = input.keySignature;
+    }
+
+    const previousPublicKey = patch.e2ePublicKey === undefined ? undefined : current?.e2ePublicKey;
+    if (previousPublicKey && previousPublicKey !== patch.e2ePublicKey) {
+      await this.repository.deleteRoomKeys(userId);
     }
 
     await this.repository.update(userId, patch);
@@ -649,7 +650,14 @@ export class UserService {
       throw AppError.of('e2e.signingKeyLocked');
     }
 
-    await this.repository.update(userId, { e2eSigningPublicKey: input.signingPublicKey, e2eKeySignature: input.keySignature });
+    const stored = await this.repository.setSigningKeyIfUnset(userId, current.e2ePublicKey, input.signingPublicKey, input.keySignature);
+    if (!stored) {
+      const latest = await this.repository.findById(userId);
+      if (latest?.e2eSigningPublicKey === input.signingPublicKey && latest.e2ePublicKey === current.e2ePublicKey) {
+        return;
+      }
+      throw AppError.of('e2e.signingKeyLocked');
+    }
   }
 
   async getPublicKeys(userIds: string[]): Promise<E2ePublicKeyEntry[]> {
