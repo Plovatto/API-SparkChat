@@ -18,6 +18,7 @@ import {
   RING_TIMEOUT_MS,
   TURN_TTL_SECONDS,
   type CallDegrade,
+  type CallEndReason,
   type CallKind,
   type CallRecord,
   type CallRole,
@@ -36,9 +37,15 @@ export interface CallActor {
   socketId: string;
 }
 
+export interface CallPushNotifier {
+  incomingCall(input: { userId: string; callId: string; roomId: string; kind: CallKind; ringExpiresAtMs: number }): void;
+  callEnded(input: { userId: string; callId: string; reason: CallEndReason | 'answered' }): void;
+}
+
 export interface CallServiceOptions {
   enabled?: boolean;
   now?: () => number;
+  push?: CallPushNotifier;
 }
 
 export interface IceServersResult {
@@ -83,6 +90,7 @@ export class CallService {
   private readonly now: () => number;
   private readonly enabled: boolean;
   private readonly graceUntil: number;
+  private readonly push: CallPushNotifier | null;
 
   constructor(
     private readonly io: AppServer,
@@ -97,6 +105,7 @@ export class CallService {
     this.now = options.now ?? Date.now;
     this.enabled = options.enabled ?? true;
     this.graceUntil = this.now() + RESTART_GRACE_MS;
+    this.push = options.push ?? null;
   }
 
   async getConfig(): Promise<CallConfig> {
@@ -186,6 +195,13 @@ export class CallService {
       envelope: input.envelope,
       ringExpiresAt: new Date(createdAtMs + RING_TIMEOUT_MS).toISOString(),
     });
+    this.push?.incomingCall({
+      userId: calleeId,
+      callId: input.callId,
+      roomId: input.roomId,
+      kind: input.kind,
+      ringExpiresAtMs: createdAtMs + RING_TIMEOUT_MS,
+    });
   }
 
   async accept(actor: CallActor, input: { callId: string; envelope: string }): Promise<void> {
@@ -221,6 +237,7 @@ export class CallService {
     this.io.to(userRoom(call.callerId)).emit('call:accepted', { callId: call.id, envelope: input.envelope, deviceId: actor.socketId });
     this.io.to(actor.socketId).emit('call:accepted', { callId: call.id, envelope: input.envelope, deviceId: actor.socketId });
     this.io.in(userRoom(call.calleeId)).except(actor.socketId).emit('call:answered-elsewhere', { callId: call.id });
+    this.push?.callEnded({ userId: call.calleeId, callId: call.id, reason: 'answered' });
   }
 
   async decline(actor: CallActor, callId: string): Promise<void> {
@@ -467,6 +484,9 @@ export class CallService {
 
     const payload = { callId: call.id, reason: call.endReason ?? 'failed', endedAt: call.endedAt ?? new Date(this.now()).toISOString() };
     this.io.to(userRoom(call.callerId)).to(userRoom(call.calleeId)).emit('call:ended', payload);
+    if (!call.answeredAt) {
+      this.push?.callEnded({ userId: call.calleeId, callId: call.id, reason: payload.reason });
+    }
 
     this.budget.invalidate();
     await this.postSystemMessage(call);
