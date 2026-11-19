@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
+import { validateWebPushEnv } from './web-push-env.js';
 
 const optionalSecret = z.preprocess((value) => (value === '' ? undefined : value), z.string().min(1).optional());
 
@@ -31,9 +32,17 @@ const envSchema = z.object({
   R2_PUBLIC_BASE_URL: z.string().url(),
   CLOUDFLARE_TURN_KEY_ID: optionalSecret,
   CLOUDFLARE_TURN_API_TOKEN: optionalSecret,
+  WEB_PUSH_VAPID_PUBLIC_KEY: optionalSecret,
+  WEB_PUSH_VAPID_PRIVATE_KEY: optionalSecret,
+  WEB_PUSH_SUBJECT: optionalSecret,
 }).refine((value) => Boolean(value.CLOUDFLARE_TURN_KEY_ID) === Boolean(value.CLOUDFLARE_TURN_API_TOKEN), {
   message: 'CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN must be set together',
   path: ['CLOUDFLARE_TURN_API_TOKEN'],
+}).superRefine((value, ctx) => {
+  const issue = validateWebPushEnv(value);
+  if (issue) {
+    ctx.addIssue({ code: 'custom', message: issue.message, path: [issue.path] });
+  }
 });
 
 const parsed = envSchema.safeParse(process.env);
