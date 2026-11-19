@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getSodium, openField, openRoomKeyEnvelope, readFieldKeyId, sealField, type EnvelopeOpening } from '@/modules/ai/ai.crypto.js';
+import { deriveKeyId, getSodium, openField, openRoomKeyEnvelope, readFieldKeyId, sealField, type EnvelopeOpening } from '@/modules/ai/ai.crypto.js';
 import { verifyIdentityBinding } from '@/modules/users/user.signing-key.js';
 import { createIdentity, newKeyId, sealEnvelope } from './support/room-keys.js';
 
@@ -76,7 +76,7 @@ describe('room key envelopes v2', () => {
     const alice = await createIdentity('alice');
     const assistant = await createIdentity('spark-ai');
     const roomKey = await freshRoomKey();
-    const keyId = newKeyId();
+    const keyId = await deriveKeyId(roomKey);
     const sealedKey = await sealEnvelope({
       roomId: 'room-1',
       keyId,
@@ -141,6 +141,31 @@ describe('room key envelopes v2', () => {
     await expect(openRoomKeyEnvelope({ ...opening, keyId: newKeyId() })).resolves.toBeNull();
     await expect(openRoomKeyEnvelope({ ...opening, epoch: 4 })).resolves.toBeNull();
     await expect(openRoomKeyEnvelope({ ...opening, senderId: 'bob' })).resolves.toBeNull();
+  });
+
+  it('discards an envelope whose key id is not derived from the key it carries', async () => {
+    const { alice, assistant, roomKey, opening } = await scenario();
+    const wrongKeyId = newKeyId();
+    const sealedKey = await sealEnvelope({
+      roomId: 'room-1',
+      keyId: wrongKeyId,
+      epoch: 3,
+      roomKey,
+      sender: alice,
+      recipientId: assistant.userId,
+      recipientPublicKey: assistant.publicKey,
+    });
+
+    await expect(openRoomKeyEnvelope({ ...opening, sealedKey, keyId: wrongKeyId })).resolves.toBeNull();
+  });
+
+  it('derives the key id from the room key as the client does', async () => {
+    const sodium = await getSodium();
+    const roomKey = new Uint8Array(32).fill(1);
+    const expected = sodium.to_base64(sodium.crypto_generichash(32, sodium.from_string('sparkchat:key-id:v1'), roomKey).subarray(0, 16));
+
+    expect(await deriveKeyId(roomKey)).toBe(expected);
+    expect(expected).toMatch(/^[A-Za-z0-9_-]{22}$/);
   });
 
   it('discards an envelope signed for an old recipient key', async () => {

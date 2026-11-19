@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getSodium, readFieldKeyId, sealField } from '@/modules/ai/ai.crypto.js';
+import { deriveKeyId, getSodium, readFieldKeyId, sealField } from '@/modules/ai/ai.crypto.js';
 import { ensureAssistantUser } from '@/modules/ai/ai.identity.js';
 import { AiRouter } from '@/modules/ai/ai.provider.js';
 import type { AiConversationMessage } from '@/modules/ai/ai.provider.js';
 import { createFakeServer, setupAssistantRoom } from './support/ai-fixture.js';
-import { createIdentity, newKeyId, sealEnvelope } from './support/room-keys.js';
+import { createIdentity, sealEnvelope } from './support/room-keys.js';
 
 const PAST_RETRIES_MS = 5000;
 
@@ -91,7 +91,7 @@ describe('SparkAI with authenticated room keys', () => {
       e2eSigningPublicKey: malloryIdentity.signingPublicKey,
       e2eKeySignature: malloryIdentity.keySignature,
     });
-    const keyId = newKeyId();
+    const keyId = await deriveKeyId(context.roomKey);
     const envelope = (recipientId: string, recipientPublicKey: string) =>
       sealEnvelope({ roomId: context.room.id, keyId, epoch: 1, roomKey: context.roomKey, sender: malloryIdentity, recipientId, recipientPublicKey });
     await context.roomKeyRepository.publish({
@@ -121,7 +121,7 @@ describe('SparkAI with authenticated room keys', () => {
 
     await context.roomKeyRepository.markRotationRequired(context.room.id);
     const nextKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
-    const nextKeyId = newKeyId();
+    const nextKeyId = await deriveKeyId(nextKey);
     const envelope = (recipientId: string, recipientPublicKey: string) =>
       sealEnvelope({ roomId: context.room.id, keyId: nextKeyId, epoch: 2, roomKey: nextKey, sender: context.aliceIdentity, recipientId, recipientPublicKey });
     await context.roomKeyRepository.publish({

@@ -7,12 +7,20 @@ const SIGNATURE_CONTEXT = 'sparkchat:msg-sig:v2';
 const SIGNING_SEED_CONTEXT = 'sparkchat:signing-seed:v1';
 const IDENTITY_BINDING_PREFIX = 'sparkchat:identity-binding:v1:';
 const FIELD_SEPARATOR = '|';
+const KEY_ID_CONTEXT = 'sparkchat:key-id:v1';
+const KEY_ID_BYTES = 16;
 
 let readyPromise: Promise<typeof sodium> | null = null;
 
 export function getSodium(): Promise<typeof sodium> {
   readyPromise ??= sodium.ready.then(() => sodium);
   return readyPromise;
+}
+
+export async function deriveKeyId(roomKey: Uint8Array): Promise<string> {
+  const s = await getSodium();
+  const digest = s.crypto_generichash(32, s.from_string(KEY_ID_CONTEXT), roomKey);
+  return s.to_base64(digest.subarray(0, KEY_ID_BYTES));
 }
 
 export interface FieldContext {
@@ -156,7 +164,10 @@ export async function openRoomKeyEnvelope(opening: EnvelopeOpening): Promise<Uin
       s.from_base64(opening.senderPublicKey),
       opening.recipientPrivateKey,
     );
-    return roomKey.length === s.crypto_secretbox_KEYBYTES ? roomKey : null;
+    if (roomKey.length !== s.crypto_secretbox_KEYBYTES || (await deriveKeyId(roomKey)) !== envelope.keyId) {
+      return null;
+    }
+    return roomKey;
   } catch {
     return null;
   }

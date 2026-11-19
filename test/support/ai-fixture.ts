@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { getSodium, openField, sealField } from '@/modules/ai/ai.crypto.js';
+import { deriveKeyId, getSodium, openField, sealField } from '@/modules/ai/ai.crypto.js';
 import { AiRouter } from '@/modules/ai/ai.provider.js';
 import { AiService } from '@/modules/ai/ai.service.js';
 import { AiUsageLimiter } from '@/modules/ai/ai.usage-limiter.js';
 import { RoomPresenceService, TypingService, type MessageRecord } from '@/modules/messages/index.js';
 import type { AppServer } from '@/sockets/events.js';
 import { buildRoomService } from './build-room-service.js';
-import { createIdentity, newKeyId, sealEnvelope } from './room-keys.js';
+import { createIdentity, sealEnvelope } from './room-keys.js';
 
 const PASSWORD = 'correct-horse-battery-staple';
 
@@ -39,7 +39,7 @@ export async function setupAssistantRoom(options: AssistantRoomOptions = {}) {
 
   const room = await roomService.createPrivateRoom(alice.id, assistant.id);
   const roomKey = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES);
-  const keyId = newKeyId();
+  const keyId = await deriveKeyId(roomKey);
 
   async function publishKey(): Promise<void> {
     const envelope = (recipientId: string, recipientPublicKey: string) =>
