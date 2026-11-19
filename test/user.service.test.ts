@@ -15,7 +15,11 @@ async function legacyHashPassword(password: string): Promise<string> {
 }
 
 async function registerAlice(userService: Awaited<ReturnType<typeof buildRoomService>>['userService']) {
-  return userService.registerAccount({ nickname: 'Alice', avatar: 0, password: PASSWORD });
+  const result = await userService.registerAccount({ nickname: 'Alice', avatar: 0, password: PASSWORD });
+  if (!result.recoveryFile || !result.recoveryToken) {
+    throw new Error('legacy registration must return a recovery file');
+  }
+  return { ...result, recoveryFile: result.recoveryFile, recoveryToken: result.recoveryToken };
 }
 
 describe('UserService.registerAccount', () => {
@@ -528,7 +532,7 @@ describe('UserService.regenerateRecoveryFile', () => {
     const after = await userSessionRepository.listByUser(user.id);
     expect(after.map((session) => session.id)).toEqual([sessionId]);
     expect(await userService.loginWithKeyfile(oldRecoveryFile)).toBeNull();
-    expect(await userService.loginWithKeyfile(recoveryFile)).not.toBeNull();
+    expect(await userService.loginWithKeyfile(recoveryFile ?? Buffer.alloc(0))).not.toBeNull();
   });
 });
 

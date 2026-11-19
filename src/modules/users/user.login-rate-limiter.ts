@@ -11,6 +11,7 @@ const REAUTH_MAX_ATTEMPTS = 5;
 const RESUME_WINDOW_MS = 60 * 1000;
 const MAX_RESUMES_PER_SOCKET = 20;
 const MAX_RESUMES_PER_IP = 120;
+const AUTH_PARAMS_MAX_PER_IP = 60;
 
 function normalizeNickname(nickname: string): string {
   return nickname.trim().toLowerCase();
@@ -35,6 +36,10 @@ function buildAccountKey(nickname: string, ip: string): string {
 
 function buildKeyfileKey(ip: string): string {
   return `keyfile:${ip}`;
+}
+
+function buildAuthParamsKey(ip: string): string {
+  return `auth-params:${ip}`;
 }
 
 function buildRegisterKey(ip: string): string {
@@ -66,6 +71,7 @@ export class LoginRateLimiter {
   private readonly failures = new SlidingWindowCounter(WINDOW_MS);
   private readonly accountFailures = new SlidingWindowCounter(ACCOUNT_WINDOW_MS);
   private readonly resumes = new SlidingWindowCounter(RESUME_WINDOW_MS);
+  private readonly authParamsLookups = new SlidingWindowCounter(WINDOW_MS);
 
   isBlocked(nickname: string, ip: string): boolean {
     return this.failures.count(buildKey(nickname, ip)) >= MAX_ATTEMPTS || this.isAccountBackingOff(nickname, ip);
@@ -110,6 +116,16 @@ export class LoginRateLimiter {
 
   registerSuccessByIp(ip: string): void {
     this.failures.reset(buildKeyfileKey(ip));
+  }
+
+  reserveAuthParamsLookup(ip: string): boolean {
+    const key = buildAuthParamsKey(ip);
+    if (this.authParamsLookups.count(key) >= AUTH_PARAMS_MAX_PER_IP) {
+      return false;
+    }
+
+    this.authParamsLookups.record(key);
+    return true;
   }
 
   isBlockedForRegistration(ip: string): boolean {

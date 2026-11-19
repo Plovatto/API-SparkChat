@@ -12,8 +12,9 @@ import { bindSocketSession, clearSocketSession, requireSocketUserId } from '../.
 import { findSocketsBoundToUser, hasVisibleUserSocket, userRoom } from '../../sockets/user-sockets.js';
 import { emitMessageUpdate, type MessageService } from '../messages/index.js';
 import type { RoomService } from '../rooms/index.js';
+import { authSaltSchema, authVersionOf, clientSecretSchema } from './user.credentials.js';
 import { describeDevice } from './user.device.js';
-import { getPublicKeysPayloadSchema, publishE2eKeysPayloadSchema } from './user.e2e-keys.js';
+import { getPublicKeysPayloadSchema, publishE2eKeysPayloadSchema, wrappedPrivateKeySchema } from './user.e2e-keys.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
 import {
   type AuthMethod,
@@ -46,6 +47,8 @@ const joinPayloadSchema = z.discriminatedUnion('mode', [
     nickname: z.string().trim().min(NICKNAME_MIN_LENGTH).max(NICKNAME_MAX_LENGTH),
     avatar: z.number().int().min(0),
     password: z.string().min(PASSWORD_MIN_LENGTH),
+    authSalt: authSaltSchema.optional(),
+    recoveryVerifier: clientSecretSchema.optional(),
   }),
   z.object({
     mode: z.literal('resume'),
@@ -66,6 +69,8 @@ const updateProfilePayloadSchema = z.object({
 
 const regenerateRecoveryFilePayloadSchema = z.object({
   currentPassword: currentPasswordSchema,
+  recoveryVerifier: clientSecretSchema.optional(),
+  encryptedPrivateKeyByRecovery: wrappedPrivateKeySchema.optional(),
 });
 
 const updateStatusTextPayloadSchema = z.object({
@@ -79,6 +84,23 @@ const visibilityPayloadSchema = z.object({
 const changePasswordPayloadSchema = z.object({
   currentPassword: currentPasswordSchema,
   newPassword: z.string().min(PASSWORD_MIN_LENGTH),
+  newAuthSalt: authSaltSchema.optional(),
+  encryptedPrivateKeyByPassword: wrappedPrivateKeySchema.optional(),
+  recoveryVerifier: clientSecretSchema.optional(),
+  encryptedPrivateKeyByRecovery: wrappedPrivateKeySchema.optional(),
+});
+
+const upgradeCredentialsPayloadSchema = z.object({
+  currentPassword: z.string().min(1),
+  newAuthSalt: authSaltSchema,
+  newAuthKey: clientSecretSchema,
+  encryptedPrivateKeyByPassword: wrappedPrivateKeySchema,
+  recoveryVerifier: clientSecretSchema,
+  encryptedPrivateKeyByRecovery: wrappedPrivateKeySchema,
+});
+
+const credentialsUpgradedPayloadSchema = z.object({
+  authVersion: z.literal(2),
 });
 
 const revokeSessionPayloadSchema = z.object({
@@ -96,7 +118,7 @@ const authFailedPayloadSchema = errorPayloadSchema.extend({
 
 const errorEventPayloadSchema = errorPayloadSchema.extend({
   clientTempId: z.string().optional().openapi({ description: 'Presente quando o erro se refere a um message:send que trouxe clientTempId' }),
-  event: z.string().optional().openapi({ description: 'Evento de origem, presente nos erros das consultas de chaves E2EE' }),
+  event: z.string().optional().openapi({ description: 'Evento de origem, presente nos erros das consultas de chaves E2EE, de e2e:publish-keys e de user:upgrade-credentials' }),
 });
 
 registerClientEvents('users', {
@@ -109,6 +131,7 @@ registerClientEvents('users', {
   'user:set-locale': setLocalePayloadSchema,
   'user:change-password': changePasswordPayloadSchema,
   'user:regenerate-recovery-file': regenerateRecoveryFilePayloadSchema,
+  'user:upgrade-credentials': upgradeCredentialsPayloadSchema,
   'user:logout': null,
   'user:list-sessions': null,
   'user:revoke-session': revokeSessionPayloadSchema,
@@ -127,6 +150,7 @@ registerServerEvents('users', [
   'user:profile-updated-success',
   'user:password-changed',
   'user:recovery-file-regenerated',
+  'user:credentials-upgraded',
   'user:sessions',
   'user:session-revoked',
   'user:chat-settings-updated',
@@ -135,6 +159,7 @@ registerServerEvents('users', [
   'error',
 ], {
   'user:auth-failed': authFailedPayloadSchema,
+  'user:credentials-upgraded': credentialsUpgradedPayloadSchema,
   error: errorEventPayloadSchema,
 });
 
@@ -176,6 +201,10 @@ export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, dep
 
   socket.on('user:regenerate-recovery-file', (payload) => {
     runSocketHandler(socket, 'user:regenerate-recovery-file', () => handleRegenerateRecoveryFile(io, socket, deps, payload));
+  });
+
+  socket.on('user:upgrade-credentials', (payload) => {
+    runSocketHandler(socket, 'user:upgrade-credentials', () => handleUpgradeCredentials(socket, deps, payload));
   });
 
   socket.on('user:logout', () => {
@@ -236,6 +265,8 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
         nickname: input.nickname,
         avatar: input.avatar,
         password: input.password,
+        authSalt: input.authSalt,
+        recoveryVerifier: input.recoveryVerifier,
         userAgent: socket.handshake.headers['user-agent'] ?? '',
       });
 
@@ -245,7 +276,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
       socket.emit('user:registered', {
         user: userService.toPublicUser(user),
         sessionToken,
-        recoveryFile: recoveryFile.toString('base64'),
+        recoveryFile: recoveryFile ? recoveryFile.toString('base64') : null,
         recoveryToken,
         authMethod: 'password',
       });
@@ -388,7 +419,7 @@ async function handleUpdateProfile(io: AppServer, socket: AppSocket, deps: UserS
       return;
     }
 
-    if (result.recoveryToken) {
+    if (result.revokedOtherSessions) {
       revokeUserSockets(io, session.userId, socket, (target) => target.data.sessionId !== session.sessionId);
     }
 
@@ -572,7 +603,7 @@ async function handleChangePassword(io: AppServer, socket: AppSocket, deps: User
   }
 
   try {
-    const { currentPassword, newPassword } = changePasswordPayloadSchema.parse(payload);
+    const { currentPassword, newPassword, ...credentials } = changePasswordPayloadSchema.parse(payload);
     const session = await requireActiveSocketSession(socket, deps);
     if (!session) {
       return;
@@ -580,12 +611,12 @@ async function handleChangePassword(io: AppServer, socket: AppSocket, deps: User
 
     const { userId, sessionId } = session;
     const { recoveryFile, recoveryToken } = await withPasswordAttempt(deps, userId, currentPassword, () =>
-      deps.userService.changePassword(userId, { currentPassword, newPassword, sessionId }),
+      deps.userService.changePassword(userId, { currentPassword, newPassword, sessionId, ...credentials }),
     );
 
     revokeUserSockets(io, userId, socket, () => true);
     await releaseSocketUser(io, socket, deps);
-    socket.emit('user:password-changed', { recoveryFile: recoveryFile.toString('base64'), recoveryToken });
+    socket.emit('user:password-changed', { recoveryFile: recoveryFile ? recoveryFile.toString('base64') : null, recoveryToken });
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
@@ -597,7 +628,7 @@ async function handleRegenerateRecoveryFile(io: AppServer, socket: AppSocket, de
   }
 
   try {
-    const { currentPassword } = regenerateRecoveryFilePayloadSchema.parse(payload ?? {});
+    const { currentPassword, ...recovery } = regenerateRecoveryFilePayloadSchema.parse(payload ?? {});
     const session = await requireActiveSocketSession(socket, deps);
     if (!session) {
       return;
@@ -605,14 +636,33 @@ async function handleRegenerateRecoveryFile(io: AppServer, socket: AppSocket, de
 
     const { userId, sessionId } = session;
     const { recoveryFile, recoveryToken } = await withPasswordAttempt(deps, userId, currentPassword, () =>
-      deps.userService.regenerateRecoveryFile(userId, currentPassword, sessionId),
+      deps.userService.regenerateRecoveryFile(userId, currentPassword, sessionId, recovery),
     );
 
     revokeUserSockets(io, userId, socket, (target) => target.data.sessionId !== sessionId);
 
-    socket.emit('user:recovery-file-regenerated', { recoveryFile: recoveryFile.toString('base64'), recoveryToken });
+    socket.emit('user:recovery-file-regenerated', { recoveryFile: recoveryFile ? recoveryFile.toString('base64') : null, recoveryToken });
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
+  }
+}
+
+async function handleUpgradeCredentials(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+  if (!requireSocketUserId(socket)) {
+    return;
+  }
+
+  try {
+    const input = upgradeCredentialsPayloadSchema.parse(payload);
+    const session = await requireActiveSocketSession(socket, deps);
+    if (!session) {
+      return;
+    }
+
+    await withPasswordAttempt(deps, session.userId, input.currentPassword, () => deps.userService.upgradeCredentials(session.userId, input));
+    socket.emit('user:credentials-upgraded', { authVersion: 2 });
+  } catch (error) {
+    socket.emit('error', { ...extractErrorPayload(error), event: 'user:upgrade-credentials' });
   }
 }
 
@@ -674,7 +724,7 @@ async function handlePublishE2eKeys(socket: AppSocket, deps: UserSocketDeps, pay
     const input = publishE2eKeysPayloadSchema.parse(payload);
     await deps.userService.publishE2eKeys(userId, input);
   } catch (error) {
-    socket.emit('error', extractErrorPayload(error));
+    socket.emit('error', { ...extractErrorPayload(error), event: 'e2e:publish-keys' });
   }
 }
 
@@ -714,5 +764,6 @@ async function handleGetMyKeys(socket: AppSocket, deps: UserSocketDeps): Promise
     publicKey: user.e2ePublicKey ?? null,
     encryptedPrivateKeyByPassword: user.e2eEncryptedPrivateKeyByPassword ?? null,
     encryptedPrivateKeyByRecovery: user.e2eEncryptedPrivateKeyByRecovery ?? null,
+    authVersion: authVersionOf(user),
   });
 }

@@ -139,6 +139,9 @@ describe('password change over sockets', () => {
   it('lets a fresh keyfile session change the password without the current one', async () => {
     const h = await start();
     const { recoveryFile } = await h.userService.registerAccount({ nickname: 'Alice', avatar: 0, password: TEST_PASSWORD });
+    if (!recoveryFile) {
+      throw new Error('legacy registration must return a recovery file');
+    }
     const keyfileLogin = await h.userService.loginWithKeyfile(recoveryFile);
     if (!keyfileLogin) {
       throw new Error('keyfile login failed');

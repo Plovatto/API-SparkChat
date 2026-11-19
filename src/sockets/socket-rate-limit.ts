@@ -56,6 +56,7 @@ export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
     'user:set-locale': roomAction,
     'user:change-password': accountAction,
     'user:regenerate-recovery-file': accountAction,
+    'user:upgrade-credentials': accountAction,
     'user:logout': accountAction,
     'user:list-sessions': roomAction,
     'user:revoke-session': accountAction,
