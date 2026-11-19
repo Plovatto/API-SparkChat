@@ -148,6 +148,13 @@
       "when": 1795095505090,
       "tag": "0020_group_invite_links",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1795098041179,
+      "tag": "0021_group_verified_roster",
+      "breakpoints": true
     }
   ]
 }

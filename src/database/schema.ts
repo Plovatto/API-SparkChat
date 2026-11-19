@@ -63,6 +63,8 @@ export const rooms = sqliteTable('rooms', {
   inviteTokenHash: text('invite_token_hash'),
   encryptedInvite: text('encrypted_invite'),
   inviteKeyId: text('invite_key_id'),
+  encryptedRoster: text('encrypted_roster'),
+  rosterKeyId: text('roster_key_id'),
 });
 
 export const roomParticipants = sqliteTable(
