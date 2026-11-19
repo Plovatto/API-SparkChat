@@ -1,3 +1,11 @@
+function formatCallDuration(totalSeconds: number): string {
+  const seconds = Number.isFinite(totalSeconds) && totalSeconds > 0 ? Math.floor(totalSeconds) : 0;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const rest = String(seconds % 60).padStart(2, '0');
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${rest}` : `${minutes}:${rest}`;
+}
+
 export const SYSTEM_EVENT_CATALOG = {
   'group.created': ({ actor }: { actor: string | null }) => `${actor ?? 'Alguém'} criou o grupo`,
   'group.memberJoined': ({ actor }: { actor: string }) => `${actor} entrou no grupo`,
@@ -5,6 +13,10 @@ export const SYSTEM_EVENT_CATALOG = {
   'group.memberRemoved': ({ target, actor }: { target: string; actor: string }) => `${target} foi removido do grupo por ${actor}`,
   'group.adminPromoted': ({ target, actor }: { target: string; actor: string }) =>
     `${target} foi promovido a administrador por ${actor}`,
+  'call.ended': ({ kind, durationSec }: { kind: string; durationSec: string; callerId: string; reason: string }) =>
+    `Chamada de ${kind === 'video' ? 'vídeo' : 'voz'} encerrada (${formatCallDuration(Number(durationSec))})`,
+  'call.missed': ({ kind }: { kind: string; callerId: string; reason: string }) =>
+    `Chamada de ${kind === 'video' ? 'vídeo' : 'voz'} perdida`,
   'ai.dailyLimitReached': () => 'Você atingiu o limite diário de mensagens com a IA. Tente novamente amanhã.',
   'ai.encryptionUnavailable': () =>
     'Não foi possível preparar a conversa criptografada. Tente enviar a mensagem novamente em instantes.',
