@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import { callUsage, calls } from '../../database/schema.js';
 import type { Database } from '../../database/turso-client.js';
+import { BITRATE_CEILING_BYTES_PER_SECOND } from './call-budget.js';
 import type { CallEndReason, CallKind, CallRecord, CallRole, CallState } from './call.types.js';
 
 type CallRow = typeof calls.$inferSelect;
@@ -21,6 +22,10 @@ export interface NewCall {
   calleeId: string;
   kind: CallKind;
   createdAt: string;
+}
+
+export interface EndOptions {
+  markRevoked?: boolean;
 }
 
 export class CallRepository {
@@ -101,25 +106,63 @@ export class CallRepository {
       .where(and(eq(calls.id, id), inArray(calls.state, ['accepted', 'active'])));
   }
 
-  async end(id: string, fromState: CallState, reason: CallEndReason, endedAtIso: string): Promise<CallRecord | null> {
-    const [row] = await this.db
+  async end(id: string, fromState: CallState, reason: CallEndReason, endedAtIso: string, options: EndOptions = {}): Promise<CallRecord | null> {
+    const endStatement = this.db
       .update(calls)
       .set({ state: 'ended', endReason: reason, endedAt: endedAtIso })
       .where(and(eq(calls.id, id), eq(calls.state, fromState)))
       .returning();
+    const usageStatement = this.db.run(sql`
+      INSERT INTO call_usage (month, estimated_bytes)
+      SELECT substr(ended_at, 1, 7),
+        CAST((CAST(strftime('%s', ended_at) AS INTEGER) - CAST(strftime('%s', answered_at) AS INTEGER)) * ${BITRATE_CEILING_BYTES_PER_SECOND} * MIN(2, relay_used) AS INTEGER)
+      FROM calls
+      WHERE id = ${id} AND changes() > 0 AND relay_used > 0 AND answered_at IS NOT NULL AND ended_at IS NOT NULL
+      ON CONFLICT(month) DO UPDATE SET estimated_bytes = estimated_bytes + excluded.estimated_bytes
+    `);
+    const markerStatement = options.markRevoked
+      ? this.db
+          .update(calls)
+          .set({ turnRevokedAt: endedAtIso })
+          .where(and(eq(calls.id, id), eq(calls.state, 'ended'), or(isNotNull(calls.turnUsername), isNotNull(calls.calleeTurnUsername))))
+      : this.db.run(sql`SELECT 1`);
+    const [rows] = await this.db.batch([endStatement, usageStatement, markerStatement]);
+    const [row] = rows;
     return row ? toRecord(row) : null;
   }
 
-  async recordTurnIssued(id: string, role: CallRole, username: string): Promise<boolean> {
+  async recordTurnIssued(id: string, role: CallRole, stored: string): Promise<boolean> {
     const rows = await this.db
       .update(calls)
-      .set({
-        ...(role === 'caller' ? { turnUsername: username } : { calleeTurnUsername: username }),
-        relayUsed: sql`${calls.relayUsed} + 1`,
-      })
+      .set(
+        role === 'caller'
+          ? { turnUsername: stored, relayUsed: sql`1 + (${calls.calleeTurnUsername} IS NOT NULL)` }
+          : { calleeTurnUsername: stored, relayUsed: sql`(${calls.turnUsername} IS NOT NULL) + 1` },
+      )
       .where(and(eq(calls.id, id), inArray(calls.state, ['accepted', 'active'])))
       .returning({ id: calls.id });
     return rows.length > 0;
+  }
+
+  async relaySecondsForUser(userId: string, monthStartIso: string, nowIso: string): Promise<number> {
+    const rows = await this.db
+      .select()
+      .from(calls)
+      .where(
+        and(
+          sql`${calls.answeredAt} >= ${monthStartIso}`,
+          or(
+            and(eq(calls.callerId, userId), isNotNull(calls.turnUsername)),
+            and(eq(calls.calleeId, userId), isNotNull(calls.calleeTurnUsername)),
+          ),
+        ),
+      );
+    return rows.reduce((total, row) => {
+      if (!row.answeredAt) {
+        return total;
+      }
+      return total + Math.max(0, (Date.parse(row.endedAt ?? nowIso) - Date.parse(row.answeredAt)) / 1000);
+    }, 0);
   }
 
   async findEndedWithUnrevokedCredentials(limit: number): Promise<CallRecord[]> {

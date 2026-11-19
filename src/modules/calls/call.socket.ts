@@ -1,18 +1,19 @@
 import { z } from 'zod';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
+import { AppError } from '../../lib/app-error.js';
 import type { AppSocket } from '../../sockets/events.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
 import { runSocketHandler } from '../../sockets/socket-handler.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
 import type { CallActor, CallService } from './call.service.js';
-import { CALL_ID_PATTERN } from './call.types.js';
+import { CALL_ID_PATTERN, MAX_ENVELOPE_LENGTH } from './call.types.js';
 
 export interface CallSocketDeps {
   callService: CallService;
 }
 
 const callIdSchema = z.string().regex(CALL_ID_PATTERN).openapi({ description: '16 bytes aleatórios em base64url sem preenchimento' });
-const envelopeSchema = z.string().min(1).openapi({ description: 'Texto opaco para o servidor; no máximo 16 KB' });
+const envelopeSchema = z.string().min(1).max(MAX_ENVELOPE_LENGTH).openapi({ description: 'Texto opaco para o servidor; no máximo 16 KB' });
 const kindSchema = z.enum(['voice', 'video']);
 const degradeSchema = z.enum(['none', 'video-360', 'audio-only-relay']);
 const endReasonSchema = z.enum(['completed', 'missed', 'declined', 'cancelled', 'busy', 'failed', 'connection-lost']);
@@ -85,6 +86,10 @@ registerServerEvents(
   },
 );
 
+function isOversizedEnvelope(error: unknown): boolean {
+  return error instanceof z.ZodError && error.issues.some((issue) => issue.code === 'too_big' && issue.path.at(-1) === 'envelope');
+}
+
 function actorOf(socket: AppSocket): CallActor | null {
   const userId = requireSocketUserId(socket);
   return userId ? { userId, socketId: socket.id } : null;
@@ -99,7 +104,7 @@ function handle(socket: AppSocket, event: string, work: (actor: CallActor) => Pr
     try {
       await work(actor);
     } catch (error) {
-      socket.emit('error', { ...extractErrorPayload(error), event });
+      socket.emit('error', { ...extractErrorPayload(isOversizedEnvelope(error) ? AppError.of('call.signalTooLarge') : error), event });
     }
   });
 }

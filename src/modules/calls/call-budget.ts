@@ -15,10 +15,11 @@ export interface BudgetSnapshot {
 }
 
 export function estimateRelayBytes(durationMs: number, credentialsIssued: number): number {
-  if (durationMs <= 0 || credentialsIssued <= 0) {
+  const credentials = Math.min(2, credentialsIssued);
+  if (durationMs <= 0 || credentials <= 0) {
     return 0;
   }
-  return Math.ceil((durationMs / 1000) * BITRATE_CEILING_BYTES_PER_SECOND * credentialsIssued);
+  return Math.ceil((durationMs / 1000) * BITRATE_CEILING_BYTES_PER_SECOND * credentials);
 }
 
 export function budgetStep(usedBytes: number, tierBytes: number = FREE_TIER_BYTES): Pick<BudgetSnapshot, 'degrade' | 'relayAvailable'> {

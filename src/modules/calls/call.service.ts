@@ -5,7 +5,7 @@ import { emitToUser, joinUserSocketsToRoom, listUserSockets, userRoom } from '..
 import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService } from '../messages/index.js';
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import { ASSISTANT_USER_ID } from '../users/index.js';
-import { estimateRelayBytes, monthKey, type CallBudget } from './call-budget.js';
+import { monthKey, type CallBudget } from './call-budget.js';
 import type { CallStatePayload } from './call.events.js';
 import type { CallRateLimiter } from './call.rate-limiter.js';
 import type { CallRepository } from './call.repository.js';
@@ -27,6 +27,9 @@ import { STUN_ONLY_SERVERS, type TurnProvider } from './turn-credentials.js';
 
 const SWEEP_INTERVAL_MS = 2000;
 const REVOKE_SWEEP_BATCH = 50;
+const MONTHLY_RELAY_SECONDS_PER_USER = 20 * 60 * 60;
+const SIGNAL_QUEUE_TTL_MS = 15_000;
+const SIGNAL_QUEUE_LIMIT = 64;
 
 export interface CallActor {
   userId: string;
@@ -52,6 +55,12 @@ export interface CallConfig {
   degrade: CallDegrade;
 }
 
+interface QueuedSignal {
+  role: CallRole;
+  at: number;
+  payload: { callId: string; from: string; envelope: string };
+}
+
 interface SocketBindings {
   caller?: string;
   callee?: string;
@@ -70,6 +79,7 @@ function peerOf(call: CallRecord, role: CallRole): string {
 
 export class CallService {
   private readonly bindings = new Map<string, SocketBindings>();
+  private readonly pending = new Map<string, QueuedSignal[]>();
   private readonly now: () => number;
   private readonly enabled: boolean;
   private readonly graceUntil: number;
@@ -110,6 +120,7 @@ export class CallService {
   async runMaintenance(): Promise<void> {
     await this.sweepOpenCalls();
     await this.sweepCredentials();
+    this.limiter.purge();
   }
 
   async start(actor: CallActor, input: { callId: string; roomId: string; kind: CallKind; envelope: string }): Promise<void> {
@@ -211,8 +222,10 @@ export class CallService {
     if (call.state !== 'ringing') {
       throw AppError.of('call.invalidState');
     }
-    this.io.in(userRoom(call.calleeId)).except(actor.socketId).emit('call:declined-elsewhere', { callId });
-    await this.finish(callId, { type: 'decline' });
+    const ended = await this.finish(callId, { type: 'decline' });
+    if (ended) {
+      this.io.in(userRoom(call.calleeId)).except(actor.socketId).emit('call:declined-elsewhere', { callId });
+    }
   }
 
   async hangup(actor: CallActor, callId: string): Promise<void> {
@@ -222,10 +235,10 @@ export class CallService {
       return;
     }
     const role = roleOf(call, actor.userId);
-    if (role === 'callee' && call.state === 'ringing') {
+    const ended = await this.finish(callId, { type: 'hangup', by: role ?? 'caller' });
+    if (ended && role === 'callee' && call.state === 'ringing') {
       this.io.in(userRoom(call.calleeId)).except(actor.socketId).emit('call:declined-elsewhere', { callId });
     }
-    await this.finish(callId, { type: 'hangup', by: role ?? 'caller' });
   }
 
   async silence(actor: CallActor, callId: string): Promise<void> {
@@ -249,28 +262,31 @@ export class CallService {
       throw AppError.of('call.rateLimited');
     }
 
-    const bindings = this.bindings.get(call.id) ?? {};
-    const bound = bindings[role];
-    if (bound !== undefined && bound !== actor.socketId && this.io.sockets.sockets.has(bound)) {
-      throw AppError.of('call.notAllowed');
-    }
-    bindings[role] = actor.socketId;
-    this.bindings.set(call.id, bindings);
+    this.requireBoundSocket(call, role, actor.socketId);
 
     if (role === 'callee' && call.state === 'accepted') {
       await this.repository.markActive(call.id);
     }
 
     const peerRole: CallRole = role === 'caller' ? 'callee' : 'caller';
-    const peerSocket = bindings[peerRole];
-    const target = peerSocket !== undefined && this.io.sockets.sockets.has(peerSocket) ? peerSocket : userRoom(input.to);
-    this.io.to(target).emit('call:signal', { callId: call.id, from: actor.userId, envelope: input.envelope });
+    const payload = { callId: call.id, from: actor.userId, envelope: input.envelope };
+    const peerSocket = this.boundSocket(call, peerRole);
+    if (peerSocket !== undefined && this.io.sockets.sockets.has(peerSocket)) {
+      this.io.to(peerSocket).emit('call:signal', payload);
+      return;
+    }
+    this.enqueueSignal(call.id, peerRole, payload);
   }
 
   async heartbeat(actor: CallActor, callId: string): Promise<void> {
     this.requireEnabled();
     const call = await this.requireParticipant(callId, actor.userId);
     if (call.state === 'accepted' || call.state === 'active') {
+      const role = roleOf(call, actor.userId);
+      if (!role) {
+        throw AppError.of('call.notAllowed');
+      }
+      this.requireBoundSocket(call, role, actor.socketId);
       await this.repository.touchHeartbeat(callId, new Date(this.now()).toISOString());
     }
   }
@@ -285,13 +301,16 @@ export class CallService {
     }
 
     if (call.state === 'accepted' || call.state === 'active') {
-      const bindings = this.bindings.get(call.id) ?? {};
-      bindings[role] = actor.socketId;
-      this.bindings.set(call.id, bindings);
-      if (role === 'callee') {
-        await this.repository.rebindAcceptedDevice(call.id, actor.socketId);
+      if (this.canTakeOver(call, role, actor.socketId)) {
+        const bindings = this.bindings.get(call.id) ?? {};
+        bindings[role] = actor.socketId;
+        this.bindings.set(call.id, bindings);
+        if (role === 'callee') {
+          await this.repository.rebindAcceptedDevice(call.id, actor.socketId);
+        }
+        await this.repository.touchHeartbeat(call.id, new Date(this.now()).toISOString());
+        this.flushSignals(call.id, role, actor.socketId);
       }
-      await this.repository.touchHeartbeat(call.id, new Date(this.now()).toISOString());
     }
 
     const payload: CallStatePayload = {
@@ -330,7 +349,8 @@ export class CallService {
     });
 
     const provider = this.turnProvider;
-    if (!provider || !snapshot.relayAvailable) {
+    const userExhausted = provider !== null && snapshot.relayAvailable && (await this.userRelayExhausted(actor.userId));
+    if (!provider || !snapshot.relayAvailable || userExhausted) {
       if (input.protectIp) {
         throw AppError.of('call.relayUnavailable');
       }
@@ -348,15 +368,13 @@ export class CallService {
       return stunOnly();
     }
 
-    const previousUsername = role === 'caller' ? call.turnUsername : call.calleeTurnUsername;
-    const recorded = await this.repository.recordTurnIssued(call.id, role, credential.username);
+    const previous = splitUsernames(role === 'caller' ? call.turnUsername : call.calleeTurnUsername);
+    const stillPending = previous.length > 0 ? await this.revokeUsernames(provider, previous) : [];
+    const recorded = await this.repository.recordTurnIssued(call.id, role, [credential.username, ...stillPending].join(','));
     this.budget.invalidate();
     if (!recorded) {
       await provider.revoke(credential.username).catch(() => undefined);
       throw AppError.of('call.invalidState');
-    }
-    if (previousUsername) {
-      await provider.revoke(previousUsername).catch(() => undefined);
     }
 
     return {
@@ -423,7 +441,9 @@ export class CallService {
       if (!next?.endReason) {
         return null;
       }
-      const ended = await this.repository.end(callId, call.state, next.endReason, new Date(endedAtMs).toISOString());
+      const ended = await this.repository.end(callId, call.state, next.endReason, new Date(endedAtMs).toISOString(), {
+        markRevoked: this.turnProvider === null,
+      });
       if (ended) {
         await this.afterEnd(ended);
         return ended;
@@ -434,28 +454,15 @@ export class CallService {
 
   private async afterEnd(call: CallRecord): Promise<void> {
     this.bindings.delete(call.id);
+    this.pending.delete(call.id);
     this.limiter.forgetCall(call.id);
 
     const payload = { callId: call.id, reason: call.endReason ?? 'failed', endedAt: call.endedAt ?? new Date(this.now()).toISOString() };
     this.io.to(userRoom(call.callerId)).to(userRoom(call.calleeId)).emit('call:ended', payload);
 
-    await this.recordUsage(call);
+    this.budget.invalidate();
     await this.postSystemMessage(call);
     await this.revokeCredentials(call);
-  }
-
-  private async recordUsage(call: CallRecord): Promise<void> {
-    if (call.relayUsed <= 0 || !call.answeredAt || !call.endedAt) {
-      return;
-    }
-    const durationMs = Date.parse(call.endedAt) - Date.parse(call.answeredAt);
-    const bytes = estimateRelayBytes(durationMs, call.relayUsed);
-    try {
-      await this.repository.addUsage(monthKey(Date.parse(call.endedAt)), bytes);
-      this.budget.invalidate();
-    } catch (err) {
-      logger.error({ err, callId: call.id }, 'Failed to record call usage');
-    }
   }
 
   private async postSystemMessage(call: CallRecord): Promise<void> {
@@ -468,11 +475,12 @@ export class CallService {
           })
         : systemEvent('call.missed', base);
       const room = await this.roomService.getRoomById(call.roomId);
+      if (!room || (!call.answeredAt && !room.visibleTo.includes(call.calleeId))) {
+        return;
+      }
       const message = await this.messageService.createSystemMessage(call.roomId, event);
       this.io.to(call.roomId).emit('message:new', await this.messageService.toView(message));
-      if (room) {
-        await this.revealRoom(room, message.timestamp);
-      }
+      await this.revealRoom(room, message.timestamp);
     } catch (err) {
       logger.error({ err, callId: call.id }, 'Failed to record call system message');
     }
@@ -499,18 +507,73 @@ export class CallService {
     }
   }
 
+  private async revokeUsernames(provider: TurnProvider, usernames: string[]): Promise<string[]> {
+    const results = await Promise.allSettled(usernames.map((username) => provider.revoke(username)));
+    return usernames.filter((_, index) => results[index]?.status === 'rejected');
+  }
+
+  private async userRelayExhausted(userId: string): Promise<boolean> {
+    const current = this.now();
+    const monthStart = `${monthKey(current)}-01T00:00:00.000Z`;
+    const seconds = await this.repository.relaySecondsForUser(userId, monthStart, new Date(current).toISOString());
+    return seconds >= MONTHLY_RELAY_SECONDS_PER_USER;
+  }
+
+  private requireBoundSocket(call: CallRecord, role: CallRole, socketId: string): void {
+    if (this.boundSocket(call, role) !== socketId) {
+      throw AppError.of('call.notAllowed');
+    }
+  }
+
+  private boundSocket(call: CallRecord, role: CallRole): string | undefined {
+    const bound = this.bindings.get(call.id)?.[role];
+    if (bound !== undefined) {
+      return bound;
+    }
+    return role === 'callee' ? (call.acceptedDeviceId ?? undefined) : undefined;
+  }
+
+  private canTakeOver(call: CallRecord, role: CallRole, socketId: string): boolean {
+    const bound = this.boundSocket(call, role);
+    return bound === undefined || bound === socketId || !this.io.sockets.sockets.has(bound);
+  }
+
+  private enqueueSignal(callId: string, role: CallRole, payload: QueuedSignal['payload']): void {
+    const queue = this.pending.get(callId) ?? [];
+    const current = this.now();
+    const fresh = queue.filter((entry) => current - entry.at < SIGNAL_QUEUE_TTL_MS);
+    if (fresh.length < SIGNAL_QUEUE_LIMIT) {
+      fresh.push({ role, at: current, payload });
+    }
+    this.pending.set(callId, fresh);
+  }
+
+  private flushSignals(callId: string, role: CallRole, socketId: string): void {
+    const queue = this.pending.get(callId);
+    if (!queue) {
+      return;
+    }
+    const current = this.now();
+    for (const entry of queue) {
+      if (entry.role === role && current - entry.at < SIGNAL_QUEUE_TTL_MS) {
+        this.io.to(socketId).emit('call:signal', entry.payload);
+      }
+    }
+    const rest = queue.filter((entry) => entry.role !== role && current - entry.at < SIGNAL_QUEUE_TTL_MS);
+    if (rest.length === 0) {
+      this.pending.delete(callId);
+    } else {
+      this.pending.set(callId, rest);
+    }
+  }
+
   private async revokeCredentials(call: CallRecord): Promise<void> {
-    const usernames = [call.turnUsername, call.calleeTurnUsername].filter((name): name is string => Boolean(name));
+    const usernames = [...splitUsernames(call.turnUsername), ...splitUsernames(call.calleeTurnUsername)];
     if (usernames.length === 0 || call.turnRevokedAt) {
       return;
     }
     const provider = this.turnProvider;
-    if (!provider) {
-      await this.repository.markRevoked(call.id, new Date(this.now()).toISOString());
-      return;
-    }
-    const results = await Promise.allSettled(usernames.map((username) => provider.revoke(username)));
-    if (results.every((result) => result.status === 'fulfilled')) {
+    if (!provider || (await this.revokeUsernames(provider, usernames)).length === 0) {
       await this.repository.markRevoked(call.id, new Date(this.now()).toISOString());
     }
   }
@@ -554,6 +617,10 @@ function assertEnvelopeSize(envelope: string): void {
   if (envelope.length > MAX_ENVELOPE_LENGTH) {
     throw AppError.of('call.signalTooLarge');
   }
+}
+
+function splitUsernames(stored: string | null): string[] {
+  return stored ? stored.split(',').filter((name) => name.length > 0) : [];
 }
 
 function describeError(err: unknown): string {

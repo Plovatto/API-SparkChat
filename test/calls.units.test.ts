@@ -88,6 +88,18 @@ describe('call rate limiter', () => {
     expect(limiter.tryStart('a', 'b')).toBe(true);
   });
 
+  it('caps starts per pair at thirty a day', () => {
+    let now = 0;
+    const limiter = new CallRateLimiter(() => now);
+    for (let i = 0; i < 30; i += 1) {
+      expect(limiter.tryStart('a', 'b')).toBe(true);
+      now += 21_000;
+    }
+    expect(limiter.tryStart('a', 'b')).toBe(false);
+    now += 24 * 3_600_000;
+    expect(limiter.tryStart('a', 'b')).toBe(true);
+  });
+
   it('limits signals to 60 per second per call', () => {
     let now = 5000;
     const limiter = new CallRateLimiter(() => now);
@@ -113,7 +125,11 @@ describe('call rate limiter', () => {
     now += 11_000;
     expect(limiter.tryIceServers('c', 'u')).toBe(false);
     limiter.forgetCall('c');
-    expect(limiter.tryIceServers('c', 'u')).toBe(true);
+    expect(limiter.tryIceServers('c', 'u')).toBe(false);
+    expect(limiter.trySignal('c')).toBe(false);
+    now += 61_000;
+    limiter.purge();
+    expect(limiter.size()).toBe(0);
   });
 });
 
@@ -136,6 +152,7 @@ describe('call budget steps', () => {
   it('estimates the worst case from the bitrate ceiling and the credentials issued', () => {
     expect(estimateRelayBytes(3_600_000, 1)).toBe(675_000_000);
     expect(estimateRelayBytes(3_600_000, 2)).toBe(1_350_000_000);
+    expect(estimateRelayBytes(3_600_000, 9)).toBe(1_350_000_000);
     expect(estimateRelayBytes(0, 2)).toBe(0);
     expect(estimateRelayBytes(1000, 0)).toBe(0);
     expect(estimateRelayBytes(-5, 1)).toBe(0);

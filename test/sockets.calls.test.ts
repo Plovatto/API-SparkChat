@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { sql } from 'drizzle-orm';
 import { users } from '@/database/schema.js';
 import { monthKey } from '@/modules/calls/call-budget.js';
 import { CallBudget, CallRateLimiter, CallService } from '@/modules/calls/index.js';
@@ -71,7 +72,7 @@ function fakeTurn(): FakeTurn {
   return turn;
 }
 
-async function setup(options: { turn?: FakeTurn; enabled?: boolean } = {}) {
+async function setup(options: { turn?: FakeTurn; enabled?: boolean; hiddenRoom?: boolean } = {}) {
   clock.now = Date.UTC(2026, 5, 15, 12, 0, 0);
   const h = await startSocketHarness({
     calls: { now: () => clock.now, ...(options.turn ? { turnProvider: options.turn } : {}), ...(options.enabled === undefined ? {} : { enabled: options.enabled }) },
@@ -81,6 +82,9 @@ async function setup(options: { turn?: FakeTurn; enabled?: boolean } = {}) {
   const bob = await h.createAccount('Bobby');
   const carol = await h.createAccount('Carol');
   const room = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
+  if (!options.hiddenRoom) {
+    await h.roomService.makeVisibleForAll(room, new Date().toISOString());
+  }
   const aliceClient = await h.connectAs(alice);
   const bobClient = await h.connectAs(bob);
   return { h, alice, bob, carol, room, aliceClient, bobClient };
@@ -352,14 +356,31 @@ describe('accept, decline and hangup', () => {
     expect((await message).systemEvent.type).toBe('call.missed');
   });
 
-  it('reveals the conversation to a callee who had not seen it yet when the call is missed', async () => {
-    const { h, room, aliceClient, bobClient } = await setup();
-    const callId = await ring(h, aliceClient, [bobClient], room.id);
+  it('posts no missed-call message into a room the callee has not opened, but reveals it once the call is answered', async () => {
+    const { h, room, aliceClient, bobClient } = await setup({ hiddenRoom: true });
+    const missed = await ring(h, aliceClient, [bobClient], room.id);
+    const ended = waitForEvent(bobClient, 'call:ended');
+    aliceClient.emit('call:hangup', { callId: missed });
+    await ended;
+    expect(await systemEventTypes(h, room.id)).toEqual([]);
+
+    const answered = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, answered);
     const revealed = waitForEvent<{ room: { id: string }; messages: { systemEvent: { type: string } }[] }>(bobClient, 'room:new');
-    aliceClient.emit('call:hangup', { callId });
+    aliceClient.emit('call:hangup', { callId: answered });
     const payload = await revealed;
     expect(payload.room.id).toBe(room.id);
-    expect(payload.messages.map((message) => message.systemEvent.type)).toEqual(['call.missed']);
+    expect(payload.messages.map((message) => message.systemEvent.type)).toEqual(['call.ended']);
+  });
+
+  it('does not post missed-call messages for a callee who deleted the conversation', async () => {
+    const { h, bob, room, aliceClient, bobClient } = await setup();
+    await h.roomService.deleteForUser(room.id, bob.user.id);
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    const ended = waitForEvent(bobClient, 'call:ended');
+    aliceClient.emit('call:hangup', { callId });
+    await ended;
+    expect(await systemEventTypes(h, room.id)).toEqual([]);
   });
 
   it('silence acknowledges without ending the call', async () => {
@@ -853,5 +874,170 @@ describe('call sync and restart restore', () => {
     clock.now += 50_000;
     await restarted.runMaintenance();
     expect((await callRow(h, callId)).endReason).toBe('connection-lost');
+  });
+});
+
+describe('hardening', () => {
+  it('caps the worst-case estimate at two credentials per call however often they are reissued', async () => {
+    const turn = fakeTurn();
+    const { h, room, aliceClient, bobClient } = await setup({ turn });
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+
+    for (let i = 0; i < 3; i += 1) {
+      const issued = waitForEvent(aliceClient, 'call:ice-servers-result');
+      aliceClient.emit('call:ice-servers', { callId, protectIp: false });
+      await issued;
+      clock.now += 11_000;
+      await h.callRepository.touchHeartbeat(callId, new Date(clock.now).toISOString());
+    }
+    const calleeIssued = waitForEvent(bobClient, 'call:ice-servers-result');
+    bobClient.emit('call:ice-servers', { callId, protectIp: false });
+    await calleeIssued;
+    expect((await callRow(h, callId)).relayUsed).toBe(2);
+
+    clock.now = Date.parse((await callRow(h, callId)).answeredAt as string) + 3_600_000;
+    await h.callRepository.touchHeartbeat(callId, new Date(clock.now).toISOString());
+    const ended = waitForEvent(bobClient, 'call:ended');
+    aliceClient.emit('call:hangup', { callId });
+    await ended;
+    expect(await h.callRepository.getUsage(monthKey(clock.now))).toBe(1_350_000_000);
+  });
+
+  it('serves STUN only to a user who used more than twenty relayed hours this month', async () => {
+    const turn = fakeTurn();
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup({ turn });
+    const earlier = new Date(clock.now - 3_600_000 * 25).toISOString();
+    const earlierEnd = new Date(clock.now - 3_600_000 * 4).toISOString();
+    await h.callRepository.insertEnded({ id: newCallId(), roomId: room.id, callerId: alice.user.id, calleeId: bob.user.id, kind: 'voice', createdAt: earlier }, 'completed');
+    await h.db.run(
+      sql`UPDATE calls SET answered_at = ${earlier}, ended_at = ${earlierEnd}, turn_username = 'old', relay_used = 1 WHERE state = 'ended'`,
+    );
+    clock.now += 60_000;
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+
+    const refused = expectError(aliceClient, 'call:ice-servers');
+    aliceClient.emit('call:ice-servers', { callId, protectIp: true });
+    expect((await refused).code).toBe('call.relayUnavailable');
+    clock.now += 11_000;
+    const stun = waitForEvent<{ relayOnly: boolean }>(aliceClient, 'call:ice-servers-result');
+    aliceClient.emit('call:ice-servers', { callId, protectIp: false });
+    expect((await stun).relayOnly).toBe(false);
+    expect(turn.generateSpy).not.toHaveBeenCalled();
+
+    const other = waitForEvent(bobClient, 'call:ice-servers-result');
+    bobClient.emit('call:ice-servers', { callId, protectIp: true });
+    await other;
+    expect(turn.generateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends the call, records usage and marks revocation atomically when no provider exists', async () => {
+    const { h, alice, bob, room } = await setup();
+    const callId = newCallId();
+    await h.callRepository.insertIfBothFree({ id: callId, roomId: room.id, callerId: alice.user.id, calleeId: bob.user.id, kind: 'voice', createdAt: new Date(clock.now).toISOString() });
+    await h.callRepository.accept(callId, bob.user.id, 'dev', new Date(clock.now).toISOString(), new Date(clock.now - 1000).toISOString());
+    await h.callRepository.recordTurnIssued(callId, 'caller', 'u1');
+    const endedAt = new Date(clock.now + 100_000).toISOString();
+
+    const ended = await h.callRepository.end(callId, 'accepted', 'completed', endedAt, { markRevoked: true });
+    const again = await h.callRepository.end(callId, 'accepted', 'completed', endedAt, { markRevoked: true });
+
+    expect(ended?.state).toBe('ended');
+    expect(again).toBeNull();
+    expect(await h.callRepository.getUsage(monthKey(clock.now))).toBe(100 * 187_500);
+    expect((await callRow(h, callId)).turnRevokedAt).toBe(endedAt);
+  });
+
+  it('keeps the previous username for the sweeper when its revocation fails on reissue', async () => {
+    const turn = fakeTurn();
+    const { h, room, aliceClient, bobClient } = await setup({ turn });
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const first = waitForEvent(aliceClient, 'call:ice-servers-result');
+    aliceClient.emit('call:ice-servers', { callId, protectIp: false });
+    await first;
+
+    turn.failRevoke = true;
+    clock.now += 11_000;
+    const second = waitForEvent(aliceClient, 'call:ice-servers-result');
+    aliceClient.emit('call:ice-servers', { callId, protectIp: false });
+    await second;
+    expect((await callRow(h, callId)).turnUsername).toBe('turn-user-2,turn-user-1');
+
+    turn.failRevoke = false;
+    const ended = waitForEvent(bobClient, 'call:ended');
+    aliceClient.emit('call:hangup', { callId });
+    await ended;
+    await settle(100);
+    expect(turn.revoked.sort()).toEqual(['turn-user-1', 'turn-user-2']);
+  });
+
+  it('only lets the bound devices signal and heartbeat, and keeps another device from taking over via sync', async () => {
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup();
+    const bobTablet = await h.connectAs(bob);
+    const aliceSecond = await h.connectAs(alice);
+    const callId = await ring(h, aliceClient, [bobClient, bobTablet], room.id);
+    await answer(aliceClient, bobClient, callId);
+
+    for (const intruder of [bobTablet, aliceSecond]) {
+      const heartbeat = expectError(intruder, 'call:heartbeat');
+      intruder.emit('call:heartbeat', { callId });
+      expect((await heartbeat).code).toBe('call.notAllowed');
+      const state = waitForEvent<{ role: string }>(intruder, 'call:state');
+      intruder.emit('call:sync', {});
+      expect(await state).toMatchObject({ callId });
+    }
+
+    const signal = waitForEvent(bobClient, 'call:signal');
+    aliceClient.emit('call:signal', { callId, to: bob.user.id, envelope: 'offer' });
+    await signal;
+    const stolen = expectError(aliceSecond, 'call:signal');
+    aliceSecond.emit('call:signal', { callId, to: bob.user.id, envelope: 'evil' });
+    expect((await stolen).code).toBe('call.notAllowed');
+
+    const tabletSignals = collectEvents(bobTablet, 'call:signal');
+    aliceClient.emit('call:signal', { callId, to: bob.user.id, envelope: 'again' });
+    await waitForEvent(bobClient, 'call:signal', (payload: { envelope: string }) => payload.envelope === 'again');
+    expect(tabletSignals).toHaveLength(0);
+  });
+
+  it('queues signals briefly for an unbound peer instead of broadcasting them, then flushes on sync', async () => {
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup();
+    const bobTablet = await h.connectAs(bob);
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    bobClient.disconnect();
+    await settle(100);
+
+    const tabletSignals = collectEvents(bobTablet, 'call:signal');
+    aliceClient.emit('call:signal', { callId, to: bob.user.id, envelope: 'queued' });
+    await settle(200);
+    expect(tabletSignals).toHaveLength(0);
+
+    const flushed = waitForEvent<{ envelope: string }>(bobTablet, 'call:signal');
+    bobTablet.emit('call:sync', {});
+    expect((await flushed).envelope).toBe('queued');
+    void alice;
+  });
+
+  it('does not announce declined-elsewhere when the decline did not end the call', async () => {
+    const { h, bob, room, aliceClient, bobClient } = await setup();
+    const bobTablet = await h.connectAs(bob);
+    const callId = await ring(h, aliceClient, [bobClient, bobTablet], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const elsewhere = collectEvents(bobTablet, 'call:declined-elsewhere');
+    const error = expectError(bobClient, 'call:decline');
+    bobClient.emit('call:decline', { callId });
+    expect((await error).code).toBe('call.invalidState');
+    await settle(100);
+    expect(elsewhere).toHaveLength(0);
+  });
+
+  it('rejects envelopes over the schema limit as too large', async () => {
+    const { aliceClient } = await setup();
+    const big = expectError(aliceClient, 'call:signal');
+    aliceClient.emit('call:signal', { callId: newCallId(), to: 'x', envelope: 'x'.repeat(16 * 1024 + 1) });
+    expect((await big).code).toBe('call.signalTooLarge');
   });
 });
