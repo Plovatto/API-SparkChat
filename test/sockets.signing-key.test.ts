@@ -1,6 +1,6 @@
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import { identityBindingMessage } from '@/modules/users/user.signing-key.js';
+import { identityBindingMessage, verifyIdentityBinding } from '@/modules/users/user.signing-key.js';
 import { startSocketHarness, waitForEvent } from './support/socket-harness.js';
 
 type Harness = Awaited<ReturnType<typeof startSocketHarness>>;
@@ -169,6 +169,17 @@ describe('e2e:publish-signing-key', () => {
 
   it('binds the signature to a fixed message format shared with the client', () => {
     expect(identityBindingMessage('user-1', 'pk').toString('utf8')).toBe('sparkchat:identity-binding:v1:user-1:pk');
+  });
+
+  it('verifies the fixed vector produced by the client implementation', () => {
+    expect(
+      verifyIdentityBinding({
+        userId: 'user-1',
+        publicKey: 'pub-key-1',
+        signingPublicKey: 'WxVi_oq1Q_DMJpBSIrYGqIMN84-KfUWmwVnqbavaJHA',
+        keySignature: 'Xcv5CvLuYmXUiiHaceCx47Z3ZiK_Hocigs6Nx-j8YLVUwR8mw5slD-DRyEt8osJflasWLbD2cXV10ub8FzF_Dw',
+      }),
+    ).toBe(true);
   });
 
   it('keeps room keys when a key change arrives with an invalid signing proof', async () => {
