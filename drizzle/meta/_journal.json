@@ -141,6 +141,13 @@
       "when": 1795091130456,
       "tag": "0019_reset_for_room_keys_v2",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1795095505090,
+      "tag": "0020_group_invite_links",
+      "breakpoints": true
     }
   ]
 }

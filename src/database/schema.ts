@@ -60,6 +60,9 @@ export const rooms = sqliteTable('rooms', {
   currentEpoch: integer('current_epoch').notNull().default(0),
   currentKeyId: text('current_key_id'),
   rotationRequired: integer('rotation_required'),
+  inviteTokenHash: text('invite_token_hash'),
+  encryptedInvite: text('encrypted_invite'),
+  inviteKeyId: text('invite_key_id'),
 });
 
 export const roomParticipants = sqliteTable(
@@ -78,6 +81,7 @@ export const roomParticipants = sqliteTable(
     deletedAt: text('deleted_at'),
     reactivatedAt: text('reactivated_at'),
     joinedAt: text('joined_at'),
+    inviteProof: text('invite_proof'),
   },
   (table) => [
     primaryKey({ columns: [table.roomId, table.userId] }),
