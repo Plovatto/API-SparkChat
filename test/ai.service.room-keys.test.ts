@@ -181,7 +181,7 @@ describe('ensureAssistantUser', () => {
   it('keeps the room generations when the assistant identity is unchanged', async () => {
     const context = await setupAssistantRoom();
 
-    await ensureAssistantUser(context.userRepository, context.identity);
+    expect(await ensureAssistantUser(context.userRepository, context.identity)).toEqual([]);
 
     expect(await context.roomKeyRepository.getState(context.room.id)).toMatchObject({ currentEpoch: 1, rotationRequired: null });
   });
@@ -190,7 +190,7 @@ describe('ensureAssistantUser', () => {
     const context = await setupAssistantRoom();
     const replacement = await createIdentity(context.assistant.id);
 
-    await ensureAssistantUser(context.userRepository, replacement);
+    expect(await ensureAssistantUser(context.userRepository, replacement)).toEqual([{ roomId: context.room.id, epoch: 2 }]);
 
     expect(await context.userRepository.findById(context.assistant.id)).toMatchObject({
       e2ePublicKey: replacement.publicKey,

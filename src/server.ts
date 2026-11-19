@@ -15,7 +15,7 @@ import {
   RoomPresenceService,
   TypingService,
 } from './modules/messages/index.js';
-import { RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
+import { notifyRoomRotations, RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
 import { LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import { SOCKET_MAX_HTTP_BUFFER_SIZE } from './sockets/socket-options.js';
@@ -78,7 +78,7 @@ const linkPreviewService = new LinkPreviewService(linkPreviewRepository, httpLin
 await linkPreviewService.purgeExpired().catch((error: unknown) => logger.warn({ err: error }, 'Link preview cache purge failed'));
 
 const assistantIdentity = await loadAssistantIdentity(env.AI_ASSISTANT_PRIVATE_KEY);
-await ensureAssistantUser(userRepository, assistantIdentity);
+const assistantRotations = await ensureAssistantUser(userRepository, assistantIdentity);
 const aiRouter = createGeminiRouter(env.GEMINI_API_KEY);
 const aiUsageLimiter = new AiUsageLimiter();
 const aiService = new AiService(
@@ -116,6 +116,8 @@ const io = new Server<
     skipMiddlewares: true,
   },
 });
+
+notifyRoomRotations(io, assistantRotations);
 
 registerSocketHandlers(io, {
   userService,

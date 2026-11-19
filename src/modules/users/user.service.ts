@@ -625,11 +625,11 @@ export class UserService {
     }
 
     const previousPublicKey = patch.e2ePublicKey === undefined ? undefined : current?.e2ePublicKey;
-    await this.repository.update(userId, patch);
-
     if (previousPublicKey && previousPublicKey !== patch.e2ePublicKey) {
-      return this.repository.markRoomsForRotation(userId);
+      return this.repository.updateIdentityRequiringRotation(userId, patch);
     }
+
+    await this.repository.update(userId, patch);
     return [];
   }
 

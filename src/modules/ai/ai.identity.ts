@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ASSISTANT_USER_ID, hashPassword, hashToken, type UserRecord, type UserRepository } from '../users/index.js';
+import { ASSISTANT_USER_ID, hashPassword, hashToken, type RoomRotationNotice, type UserRecord, type UserRepository } from '../users/index.js';
 import { deriveSigningKeyPair, getSodium, signIdentityBinding } from './ai.crypto.js';
 import { ASSISTANT_AVATAR, ASSISTANT_NICKNAME, ASSISTANT_NICKNAME_NORMALIZED, ASSISTANT_STATUS_TEXT } from './ai.model.js';
 
@@ -56,7 +56,7 @@ function needsUpdate(existing: UserRecord, identity: AssistantIdentity): boolean
   );
 }
 
-export async function ensureAssistantUser(userRepository: UserRepository, identity: AssistantIdentity): Promise<void> {
+export async function ensureAssistantUser(userRepository: UserRepository, identity: AssistantIdentity): Promise<RoomRotationNotice[]> {
   const now = new Date().toISOString();
   const existing = await userRepository.findById(identity.userId);
 
@@ -76,20 +76,25 @@ export async function ensureAssistantUser(userRepository: UserRepository, identi
       e2eSigningPublicKey: identity.signingPublicKey,
       e2eKeySignature: identity.keySignature,
     });
-    return;
+    return [];
   }
 
-  if (needsUpdate(existing, identity)) {
-    await userRepository.update(identity.userId, {
-      e2ePublicKey: identity.publicKey,
-      e2eSigningPublicKey: identity.signingPublicKey,
-      e2eKeySignature: identity.keySignature,
-      status: 'online',
-      statusText: ASSISTANT_STATUS_TEXT,
-      lastSeen: now,
-    });
-    if (existing.e2ePublicKey && existing.e2ePublicKey !== identity.publicKey) {
-      await userRepository.markRoomsForRotation(identity.userId);
-    }
+  if (!needsUpdate(existing, identity)) {
+    return [];
   }
+
+  const patch = {
+    e2ePublicKey: identity.publicKey,
+    e2eSigningPublicKey: identity.signingPublicKey,
+    e2eKeySignature: identity.keySignature,
+    status: 'online' as const,
+    statusText: ASSISTANT_STATUS_TEXT,
+    lastSeen: now,
+  };
+  if (existing.e2ePublicKey && existing.e2ePublicKey !== identity.publicKey) {
+    return userRepository.updateIdentityRequiringRotation(identity.userId, patch);
+  }
+
+  await userRepository.update(identity.userId, patch);
+  return [];
 }

@@ -270,8 +270,9 @@ describe('connection state recovery and membership', () => {
 
     await dropTransport(bobClient);
     await h.roomService.removeMember(group.id, alice.user.id, bob.user.id);
-    const sent = waitForEvent(aliceClient, 'message:new', (event: { content: string }) => event.content === fakeField('depois da remoção'));
-    aliceClient.emit('message:send', { roomId: group.id, content: fakeField('depois da remoção'), messageId: randomUUID() });
+    const rotatedKeyId = await h.establishRoomKey(group.id);
+    const sent = waitForEvent(aliceClient, 'message:new', (event: { content: string }) => event.content === fakeField('depois da remoção', rotatedKeyId));
+    aliceClient.emit('message:send', { roomId: group.id, content: fakeField('depois da remoção', rotatedKeyId), messageId: randomUUID() });
     await sent;
     const stillMember = waitForEvent(aliceClient, 'message:new', (event: { content: string }) => event.content === fakeField('na outra sala'));
     aliceClient.emit('message:send', { roomId: other.id, content: fakeField('na outra sala'), messageId: randomUUID() });
@@ -287,8 +288,8 @@ describe('connection state recovery and membership', () => {
     expect(h.io.sockets.adapter.rooms.get(group.id)?.has(bobClient.id ?? '')).toBeFalsy();
     expect(h.io.sockets.adapter.rooms.get(`user:${bob.user.id}`)?.has(bobClient.id ?? '')).toBe(true);
 
-    const later = waitForEvent(aliceClient, 'message:new', (event: { content: string }) => event.content === fakeField('ainda depois'));
-    aliceClient.emit('message:send', { roomId: group.id, content: fakeField('ainda depois'), messageId: randomUUID() });
+    const later = waitForEvent(aliceClient, 'message:new', (event: { content: string }) => event.content === fakeField('ainda depois', rotatedKeyId));
+    aliceClient.emit('message:send', { roomId: group.id, content: fakeField('ainda depois', rotatedKeyId), messageId: randomUUID() });
     await later;
     await settle(100);
 

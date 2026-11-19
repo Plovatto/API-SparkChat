@@ -49,6 +49,7 @@ export const ERROR_CATALOG = {
   'room.removeRequiresAdmin': () => 'Apenas administradores podem remover membros.',
   'room.cannotRemoveSelf': () => 'Use a opção de sair do grupo para se remover.',
   'room.notMember': () => 'Usuário não faz parte do grupo.',
+  'room.groupFull': ({ maxMembers }: { maxMembers: number }) => `Este grupo está cheio. O limite é de ${maxMembers} membros.`,
   'message.notFound': () => 'Mensagem não encontrada.',
   'message.deleteForbidden': () => 'Você não tem permissão para deletar esta mensagem.',
   'message.invalidMedia': () => 'Conteúdo de mídia inválido.',

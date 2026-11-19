@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fakeEnvelope, newKeyId } from './support/room-keys.js';
 import { collectEvents, roundTrip, settle, startSocketHarness, waitForEvent, type TestClient } from './support/socket-harness.js';
 
@@ -40,6 +40,7 @@ async function start(): Promise<Harness> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await harness?.close();
   harness = null;
 });
@@ -254,6 +255,30 @@ describe('room key rotation', () => {
 
     await expect(notice).resolves.toEqual({ roomId: group.id, epoch: 2, memberIds: [alice.user.id, bob.user.id] });
     expect(await h.roomKeyRepository.getState(group.id)).toMatchObject({ currentEpoch: 1, rotationRequired: 2 });
+  });
+
+  it('still requires and announces the rotation when the removal notice fails afterwards', async () => {
+    const h = await start();
+    const { alice, bob, carol, aliceClient, bobClient, group } = await groupWithGeneration(h);
+    vi.spyOn(h.messageService, 'createSystemMessage').mockRejectedValue(new Error('db down'));
+
+    const notice = waitForEvent(bobClient, 'e2e:rotation-required');
+    aliceClient.emit('group:remove-member', { roomId: group.id, userId: carol.user.id });
+
+    await expect(notice).resolves.toEqual({ roomId: group.id, epoch: 2, memberIds: [alice.user.id, bob.user.id] });
+    expect(await h.roomKeyRepository.getState(group.id)).toMatchObject({ rotationRequired: 2 });
+  });
+
+  it('announces the rotation to who stays even when the removed user record is gone', async () => {
+    const h = await start();
+    const { carol, aliceClient, bobClient, group } = await groupWithGeneration(h);
+    vi.spyOn(h.userService, 'getUser').mockResolvedValue(null);
+
+    const notice = waitForEvent(bobClient, 'e2e:rotation-required');
+    aliceClient.emit('group:remove-member', { roomId: group.id, userId: carol.user.id });
+
+    await expect(notice).resolves.toMatchObject({ roomId: group.id, epoch: 2 });
+    expect(carol.user.id).toBeDefined();
   });
 
   it('requires a rotation in every room of a member whose identity key changes', async () => {

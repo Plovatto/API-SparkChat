@@ -3,7 +3,7 @@ import { alias, type SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import type { Database } from '../../database/turso-client.js';
 import { roomBans, roomParticipants, rooms } from '../../database/schema.js';
 import { generateRoomCode, ROOM_CODE_LENGTH } from './room.codes.js';
-import type { RoomRecord } from './room.types.js';
+import { MAX_GROUP_MEMBERS, type RoomRecord } from './room.types.js';
 
 type RoomRow = typeof rooms.$inferSelect;
 type ParticipantRow = typeof roomParticipants.$inferSelect;
@@ -128,6 +128,11 @@ export class RoomRepository {
       select ${roomId}, ${userId}, 1, 0, ${joinedAt}
       where exists (select 1 from ${rooms} where id = ${roomId})
         and not exists (select 1 from ${roomBans} where room_id = ${roomId} and user_id = ${userId})
+        and (
+          select count(*) from ${roomParticipants} rp
+          where rp.room_id = ${roomId}
+            and not exists (select 1 from ${roomBans} b where b.room_id = rp.room_id and b.user_id = rp.user_id)
+        ) < ${MAX_GROUP_MEMBERS}
       on conflict do nothing
     `);
 
@@ -191,7 +196,18 @@ export class RoomRepository {
       ? [this.db.update(rooms).set({ roomCode: generateRoomCode() }).where(eq(rooms.id, roomId))]
       : [];
 
-    const [deleted] = await this.db.batch([deletion, clearBlocks, ...ban, ...rotate]);
+    const requireKeyRotation = this.db
+      .update(rooms)
+      .set({ rotationRequired: sql`${rooms.currentEpoch} + 1` })
+      .where(
+        and(
+          eq(rooms.id, roomId),
+          sql`${rooms.currentEpoch} > 0`,
+          sql`changes() > 0`,
+        ),
+      );
+
+    const [deleted] = await this.db.batch([deletion, requireKeyRotation, clearBlocks, ...ban, ...rotate]);
     return deleted.rowsAffected > 0;
   }
 

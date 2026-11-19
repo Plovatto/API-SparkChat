@@ -3,6 +3,8 @@ import type { UserStatus } from '../users/index.js';
 
 export type RoomType = 'private' | 'group';
 
+export const MAX_GROUP_MEMBERS = 150;
+
 export interface RoomRecord {
   id: string;
   type: RoomType;

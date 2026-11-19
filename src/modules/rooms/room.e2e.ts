@@ -98,6 +98,11 @@ export class RoomKeyRepository {
         return 'stale';
       }
 
+      const memberIds = await this.memberIds(tx, publication.roomId);
+      if (!memberIds.includes(publication.senderId)) {
+        return 'stale';
+      }
+
       const createdAt = new Date().toISOString();
       const insertAll = async () => {
         for (const key of publication.keys) {
@@ -119,8 +124,7 @@ export class RoomKeyRepository {
         if (!isNextGeneration) {
           return 'stale';
         }
-        const members = await this.memberIds(tx, publication.roomId);
-        if (!sameMembers(publication.keys.map((key) => key.userId), members)) {
+        if (!sameMembers(publication.keys.map((key) => key.userId), memberIds)) {
           return 'incomplete';
         }
         const advanced = await tx
@@ -138,7 +142,7 @@ export class RoomKeyRepository {
         return 'stale';
       }
 
-      const members = new Set(await this.memberIds(tx, publication.roomId));
+      const members = new Set(memberIds);
       const targets = publication.keys.map((key) => key.userId);
       if (new Set(targets).size !== targets.length || targets.some((userId) => !members.has(userId))) {
         return 'conflict';

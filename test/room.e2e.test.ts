@@ -1,4 +1,7 @@
+import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
+import { MAX_ROOM_KEY_BATCH } from '@/modules/rooms/room.socket.js';
+import { MAX_GROUP_MEMBERS } from '@/modules/rooms/room.types.js';
 import type { RoomKeyPublication } from '@/modules/rooms/room.e2e.js';
 import { buildRoomService } from './support/build-room-service.js';
 import { fakeEnvelope, newKeyId } from './support/room-keys.js';
@@ -212,5 +215,86 @@ describe('RoomKeyRepository lookups', () => {
     await roomService.leaveGroup(group.id, alice.id);
     expect(await roomKeyRepository.findForUser(group.id, bob.id, batch.keyId)).toMatchObject({ senderIsMember: false });
     expect(await roomKeyRepository.findForUser(group.id, bob.id, newKeyId())).toBeNull();
+  });
+});
+
+describe('RoomKeyRepository membership inside the transaction', () => {
+  it('refuses a generation or a share from someone who is no longer a member', async () => {
+    const { roomKeyRepository, roomService, userService, group, alice, bob, carol } = await groupOfThree();
+    const first = publication(group.id, alice.id, [alice.id, bob.id, carol.id]);
+    await roomKeyRepository.publish(first);
+    const dave = await createUser(userService, 'Dave');
+    await roomService.joinByCode(group.roomCode ?? '', dave.id);
+    await roomService.removeMember(group.id, alice.id, carol.id);
+
+    expect(await roomKeyRepository.publish(share(group.id, carol.id, [dave.id], 1, first.keyId))).toBe('stale');
+    expect(await roomKeyRepository.publish(publication(group.id, carol.id, [alice.id, bob.id, dave.id], 2))).toBe('stale');
+    expect(await roomKeyRepository.getState(group.id)).toMatchObject({ currentEpoch: 1, currentKeyId: first.keyId, rotationRequired: 2 });
+  });
+});
+
+describe('membership changes require a rotation atomically', () => {
+  it('flags the next epoch in the same write that removes or bans a member', async () => {
+    const { roomKeyRepository, roomService, group, alice, bob, carol } = await groupOfThree();
+    await roomKeyRepository.publish(publication(group.id, alice.id, [alice.id, bob.id, carol.id]));
+
+    const afterLeave = await roomService.leaveGroup(group.id, carol.id);
+    expect(afterLeave).toMatchObject({ currentEpoch: 1, rotationRequired: 2 });
+
+    const rotation = publication(group.id, alice.id, [alice.id, bob.id], 2);
+    await roomKeyRepository.publish(rotation);
+    const afterRemoval = await roomService.removeMember(group.id, alice.id, bob.id);
+    expect(afterRemoval).toMatchObject({ currentEpoch: 2, rotationRequired: 3 });
+  });
+
+  it('does not flag a rotation when nobody was actually removed', async () => {
+    const { roomKeyRepository, roomRepository, group, alice, bob, carol } = await groupOfThree();
+    await roomKeyRepository.publish(publication(group.id, alice.id, [alice.id, bob.id, carol.id]));
+
+    expect(await roomRepository.removeParticipant(group.id, 'not-a-member')).toBe(false);
+    expect(await roomKeyRepository.getState(group.id)).toMatchObject({ rotationRequired: null });
+  });
+
+  it('rolls back an identity key change when the rotation flag cannot be written', async () => {
+    const { roomKeyRepository, userService, userRepository, db, group, alice, bob, carol } = await groupOfThree();
+    await userService.publishE2eKeys(bob.id, { publicKey: 'bob-first' });
+    await roomKeyRepository.publish(publication(group.id, alice.id, [alice.id, bob.id, carol.id]));
+    await db.run(sql`create trigger block_rotation before update of rotation_required on rooms begin select raise(abort, 'blocked'); end`);
+
+    await expect(userService.publishE2eKeys(bob.id, { publicKey: 'bob-second' })).rejects.toThrow();
+    expect((await userRepository.findById(bob.id))?.e2ePublicKey).toBe('bob-first');
+  });
+});
+
+describe('group size limit', () => {
+  it('refuses to add a member beyond the largest group a key batch can cover', async () => {
+    const { roomService, userService, db, group } = await groupOfThree();
+    const now = new Date().toISOString();
+    for (let index = 0; index < MAX_GROUP_MEMBERS - 3; index += 1) {
+      const id = `filler-${index}`;
+      await db.run(sql`insert into users (id, nickname, nickname_normalized, avatar, password_hash, recovery_token_hash, created_at, last_seen)
+        values (${id}, ${id}, ${id}, 0, 'x', 'x', ${now}, ${now})`);
+      await db.run(sql`insert into room_participants (room_id, user_id) values (${group.id}, ${id})`);
+    }
+    expect((await roomService.getRoomById(group.id))?.participants).toHaveLength(MAX_GROUP_MEMBERS);
+    const late = await createUser(userService, 'Atrasada');
+
+    await expect(roomService.joinByCode(group.roomCode ?? '', late.id)).rejects.toMatchObject({ code: 'room.groupFull', params: { maxMembers: MAX_GROUP_MEMBERS } });
+    expect((await roomService.getRoomById(group.id))?.participants).not.toContain(late.id);
+    expect(MAX_ROOM_KEY_BATCH).toBe(MAX_GROUP_MEMBERS);
+  });
+
+  it('enforces the limit in the insert itself, even when the pre-check is bypassed', async () => {
+    const { roomRepository, userService, db, group } = await groupOfThree();
+    const now = new Date().toISOString();
+    for (let index = 0; index < MAX_GROUP_MEMBERS - 3; index += 1) {
+      const id = `filler-${index}`;
+      await db.run(sql`insert into users (id, nickname, nickname_normalized, avatar, password_hash, recovery_token_hash, created_at, last_seen)
+        values (${id}, ${id}, ${id}, 0, 'x', 'x', ${now}, ${now})`);
+      await db.run(sql`insert into room_participants (room_id, user_id) values (${group.id}, ${id})`);
+    }
+    const late = await createUser(userService, 'Atrasada');
+
+    expect(await roomRepository.addParticipant(group.id, late.id, now)).toBe(false);
   });
 });

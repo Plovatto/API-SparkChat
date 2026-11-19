@@ -11,7 +11,7 @@ import { runSocketHandler } from '../../sockets/socket-handler.js';
 import { bindSocketSession, clearSocketSession, requireSocketUserId } from '../../sockets/socket-session.js';
 import { findSocketsBoundToUser, hasVisibleUserSocket, userRoom } from '../../sockets/user-sockets.js';
 import { emitMessageUpdate, type MessageService } from '../messages/index.js';
-import type { RoomService } from '../rooms/index.js';
+import { notifyRoomRotations, type RoomService } from '../rooms/index.js';
 import { authSaltSchema, authVersionOf, clientSecretSchema } from './user.credentials.js';
 import { describeDevice } from './user.device.js';
 import { getPublicKeysPayloadSchema, publishE2eKeysPayloadSchema, publishSigningKeyPayloadSchema, wrappedPrivateKeySchema } from './user.e2e-keys.js';
@@ -728,9 +728,7 @@ async function handlePublishE2eKeys(io: AppServer, socket: AppSocket, deps: User
   try {
     const input = publishE2eKeysPayloadSchema.parse(payload);
     const rotations = await deps.userService.publishE2eKeys(userId, input);
-    for (const rotation of rotations) {
-      io.to(rotation.roomId).emit('e2e:rotation-required', rotation);
-    }
+    notifyRoomRotations(io, rotations);
   } catch (error) {
     socket.emit('error', { ...extractErrorPayload(error), event: 'e2e:publish-keys' });
   }

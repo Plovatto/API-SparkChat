@@ -16,7 +16,8 @@ import type { RoomKeyPublishMode, RoomKeyPublishOutcome, RoomKeyRepository } fro
 import { KEY_ID_PATTERN, matchesEnvelope, parseRoomKeyEnvelope } from './room.key-envelope.js';
 import type { RoomActionRateLimiter } from './room.rate-limiter.js';
 import type { RoomService } from './room.service.js';
-import type { RoomRecord } from './room.types.js';
+import { MAX_GROUP_MEMBERS, type RoomRecord } from './room.types.js';
+import { notifyRoomRotations } from './room.rotation.js';
 
 export type OnRoomCreatedHook = (context: { io: AppServer; room: RoomRecord; locale: Locale }) => void;
 export type ShouldResetInsteadOfDeleteHook = (room: RoomRecord) => boolean;
@@ -38,7 +39,7 @@ const ROOM_CODE_MAX_LENGTH = 12;
 const ROOM_CODE_INPUT_MAX_LENGTH = 64;
 const ROOM_NAME_MAX_LENGTH = 64;
 const MAX_SEALED_KEY_LENGTH = 1000;
-export const MAX_ROOM_KEY_BATCH = 150;
+export const MAX_ROOM_KEY_BATCH = MAX_GROUP_MEMBERS;
 
 const createPrivateRoomPayloadSchema = z.object({
   targetNickname: z.string().trim().min(1).max(NICKNAME_MAX_LENGTH),
@@ -124,11 +125,9 @@ const REJECTION_CODES = {
   conflict: 'e2e.roomKeyConflict',
 } as const satisfies Partial<Record<RoomKeyPublishOutcome, string>>;
 
-async function requireRotation(io: AppServer, deps: RoomSocketDeps, roomId: string): Promise<void> {
-  const rotation = await deps.roomKeyRepository.markRotationRequired(roomId);
-  if (rotation) {
-    const room = await deps.roomService.getRoomById(roomId);
-    io.to(roomId).emit('e2e:rotation-required', { ...rotation, memberIds: room?.participants ?? [] });
+function announceRotation(io: AppServer, room: RoomRecord): void {
+  if (room.rotationRequired !== undefined) {
+    notifyRoomRotations(io, [{ roomId: room.id, epoch: room.rotationRequired, memberIds: room.participants }]);
   }
 }
 
@@ -440,6 +439,7 @@ async function handleLeaveGroup(io: AppServer, socket: AppSocket, deps: RoomSock
     await socket.leave(roomId);
     await removeUserSocketsFromRoom(io, userId, roomId);
     emitToUser(io, userId).emit('group:left', { roomId });
+    announceRotation(io, updatedRoom);
 
     if (user) {
       const remaining = await roomService.buildParticipantViews(updatedRoom);
@@ -454,8 +454,6 @@ async function handleLeaveGroup(io: AppServer, socket: AppSocket, deps: RoomSock
       const systemMessage = await messageService.createSystemMessage(roomId, systemEvent('group.memberLeft', { actor: user.nickname }));
       io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
     }
-
-    await requireRotation(io, deps, roomId);
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
@@ -477,7 +475,13 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
     ]);
 
     const updatedRoom = await roomService.removeMember(roomId, actingUserId, targetUserId);
-    if (!updatedRoom || !actingUser || !targetUser) {
+    if (!updatedRoom) {
+      return;
+    }
+
+    await removeUserSocketsFromRoom(io, targetUserId, roomId);
+    announceRotation(io, updatedRoom);
+    if (!actingUser || !targetUser) {
       return;
     }
 
@@ -499,7 +503,6 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
       systemEvent('group.memberRemoved', { target: targetUser.nickname, actor: actingUser.nickname }),
     );
     io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
-    await requireRotation(io, deps, roomId);
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
