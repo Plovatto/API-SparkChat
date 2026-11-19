@@ -6,6 +6,7 @@ describe('isUploadedMediaUrl', () => {
     expect(isUploadedMediaUrl('https://cdn.test/uploads/images/abc.png')).toBe(true);
     expect(isUploadedMediaUrl('https://cdn.test/uploads/audio/abc.webm?e2e=1')).toBe(true);
     expect(isUploadedMediaUrl('https://cdn.test/uploads/files/abc.pdf')).toBe(true);
+    expect(isUploadedMediaUrl('https://cdn.test/uploads/gifs/abc.bin?e2e=1')).toBe(true);
   });
 
   it('rejects script and data urls even when the path looks like an upload', () => {
@@ -21,5 +22,7 @@ describe('isUploadedMediaUrl', () => {
   it('rejects urls outside the uploaded-media namespace', () => {
     expect(isUploadedMediaUrl('https://cdn.test/secrets.env')).toBe(false);
     expect(isUploadedMediaUrl('https://cdn.test/uploads/images/nested/abc.png')).toBe(false);
+    expect(isUploadedMediaUrl('https://cdn.test/uploads/gifsx/abc.bin')).toBe(false);
+    expect(isUploadedMediaUrl('https://cdn.test/uploads/gifs/nested/abc.bin')).toBe(false);
   });
 });

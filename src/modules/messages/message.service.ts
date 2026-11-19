@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '../../config/logger.js';
+import { isGifObjectKey } from '../../config/paths.js';
 import { AppError } from '../../lib/app-error.js';
 import { resolveObjectKey } from '../../storage/object-storage-url.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
@@ -273,7 +274,7 @@ export class MessageService {
 
     for (const url of urls) {
       const key = resolveObjectKey(url);
-      if (!key || handledKeys.has(key) || url.split('?')[0] !== this.objectStorage.publicUrl(key)) {
+      if (!key || handledKeys.has(key) || isGifObjectKey(key) || url.split('?')[0] !== this.objectStorage.publicUrl(key)) {
         continue;
       }
       try {

@@ -11,3 +11,11 @@ export function audioObjectKey(filename: string): string {
 export function fileObjectKey(filename: string): string {
   return `${uploadedMediaKeyPrefix}/files/${filename}`;
 }
+
+export function gifObjectKey(filename: string): string {
+  return `${uploadedMediaKeyPrefix}/gifs/${filename}`;
+}
+
+export function isGifObjectKey(key: string): boolean {
+  return key.startsWith(`${uploadedMediaKeyPrefix}/gifs/`);
+}

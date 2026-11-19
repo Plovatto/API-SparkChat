@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 import { uploads } from '../database/schema.js';
 import type { Database } from '../database/turso-client.js';
 
@@ -8,13 +8,25 @@ export interface UploadRecord {
   size: number;
   createdAt: string;
   messageId: string | null;
+  expiresAt: string | null;
+}
+
+export interface RegisterUploadOptions {
+  expiresAt?: string | null;
 }
 
 export class UploadRegistry {
   constructor(private readonly db: Database) {}
 
-  async register(key: string, uploaderId: string, size: number): Promise<void> {
-    await this.db.insert(uploads).values({ key, uploaderId, size, createdAt: new Date().toISOString(), messageId: null });
+  async register(key: string, uploaderId: string, size: number, options: RegisterUploadOptions = {}): Promise<void> {
+    await this.db.insert(uploads).values({
+      key,
+      uploaderId,
+      size,
+      createdAt: new Date().toISOString(),
+      messageId: null,
+      expiresAt: options.expiresAt ?? null,
+    });
   }
 
   async find(key: string): Promise<UploadRecord | null> {
@@ -30,7 +42,7 @@ export class UploadRegistry {
     const [row] = await this.db
       .select({ total: sql<number>`coalesce(sum(${uploads.size}), 0)` })
       .from(uploads)
-      .where(eq(uploads.uploaderId, uploaderId));
+      .where(and(eq(uploads.uploaderId, uploaderId), isNull(uploads.expiresAt)));
     return Number(row?.total ?? 0);
   }
 
@@ -75,5 +87,21 @@ export class UploadRegistry {
       .from(uploads)
       .where(and(isNull(uploads.messageId), lt(uploads.createdAt, cutoff)))
       .limit(limit);
+  }
+
+  findExpiredBefore(cutoff: string, limit: number): Promise<UploadRecord[]> {
+    return this.db
+      .select()
+      .from(uploads)
+      .where(and(isNotNull(uploads.expiresAt), lt(uploads.expiresAt, cutoff)))
+      .limit(limit);
+  }
+
+  async removeIfExpired(key: string, cutoff: string): Promise<boolean> {
+    const removed = await this.db
+      .delete(uploads)
+      .where(and(eq(uploads.key, key), isNotNull(uploads.expiresAt), lt(uploads.expiresAt, cutoff)))
+      .returning({ key: uploads.key });
+    return removed.length > 0;
   }
 }

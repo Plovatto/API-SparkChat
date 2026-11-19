@@ -1,6 +1,6 @@
 import { uploadedMediaKeyPrefix } from '../config/paths.js';
 
-const UPLOADED_MEDIA_KEY_PATTERN = new RegExp(`^${uploadedMediaKeyPrefix}/(?:images|audio|files)/[^/]+$`);
+const UPLOADED_MEDIA_KEY_PATTERN = new RegExp(`^${uploadedMediaKeyPrefix}/(?:images|audio|files|gifs)/[^/]+$`);
 
 export function extractPathname(url: string): string {
   try {
