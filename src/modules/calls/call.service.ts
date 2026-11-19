@@ -292,6 +292,7 @@ export class CallService {
   }
 
   async sync(actor: CallActor): Promise<void> {
+    this.io.to(actor.socketId).emit('call:config', await this.getConfig());
     this.requireEnabled();
     const call = await this.repository.findOpenForUser(actor.userId);
     const role = call ? roleOf(call, actor.userId) : null;

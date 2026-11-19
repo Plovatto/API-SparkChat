@@ -809,6 +809,26 @@ describe('server owned timers', () => {
 });
 
 describe('call sync and restart restore', () => {
+  it('always sends the config before the state on sync', async () => {
+    const { aliceClient } = await setup();
+    const order: string[] = [];
+    aliceClient.on('call:config', () => order.push('config'));
+    aliceClient.on('call:state', () => order.push('state'));
+    const config = waitForEvent(aliceClient, 'call:config');
+    const state = waitForEvent(aliceClient, 'call:state');
+    aliceClient.emit('call:sync', {});
+    expect(await config).toEqual({ enabled: true, relayAvailable: false, degrade: 'none' });
+    await state;
+    expect(order).toEqual(['config', 'state']);
+  });
+
+  it('sends the disabled config on sync when calls are off', async () => {
+    const { aliceClient } = await setup({ enabled: false });
+    const config = waitForEvent(aliceClient, 'call:config');
+    aliceClient.emit('call:sync', {});
+    expect(await config).toEqual({ enabled: false, relayAvailable: false, degrade: 'none' });
+  });
+
   it('answers null when there is no call', async () => {
     const { aliceClient } = await setup();
     const state = waitForEvent(aliceClient, 'call:state');
