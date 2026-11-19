@@ -12,6 +12,7 @@ type Account = Awaited<ReturnType<Harness['createAccount']>>;
 interface InviteView {
   encryptedInvite: string;
   keyId: string;
+  active: boolean;
 }
 
 interface RosterView {
@@ -174,7 +175,7 @@ describe('invite and roster stored with the room key generation', () => {
     });
 
     const summary = await summaryOf(aliceClient, roomId);
-    expect(summary?.invite).toEqual({ encryptedInvite: first.invite.encryptedInvite, keyId: first.keyId });
+    expect(summary?.invite).toEqual({ encryptedInvite: first.invite.encryptedInvite, keyId: first.keyId, active: true });
     expect(summary?.roster).toEqual({ encryptedRoster: first.roster, keyId: first.keyId });
     expect(summary).not.toHaveProperty('roomCode');
     expect(JSON.stringify(summary)).not.toContain(first.invite.tokenHash);
@@ -248,9 +249,12 @@ describe('invite and roster stored with the room key generation', () => {
     expect(await h.roomService.getRoomById(roomId)).toMatchObject({
       rotationRequired: 2,
       inviteTokenHash: undefined,
+      encryptedInvite: first.invite.encryptedInvite,
+      inviteKeyId: first.keyId,
       encryptedRoster: first.roster,
       rosterKeyId: first.keyId,
     });
+    expect((await summaryOf(aliceClient, roomId))?.invite).toEqual({ encryptedInvite: first.invite.encryptedInvite, keyId: first.keyId, active: false });
     await expectError(
       carolClient,
       'room:join-by-invite',
@@ -262,7 +266,7 @@ describe('invite and roster stored with the room key generation', () => {
     await publishGeneration(aliceClient, second.payload);
 
     const summary = await summaryOf(aliceClient, roomId);
-    expect(summary?.invite).toEqual({ encryptedInvite: second.invite.encryptedInvite, keyId: second.keyId });
+    expect(summary?.invite).toEqual({ encryptedInvite: second.invite.encryptedInvite, keyId: second.keyId, active: true });
     expect(summary?.roster).toEqual({ encryptedRoster: second.roster, keyId: second.keyId });
     await joinByInvite(carolClient, roomId, carol.user.id, second.invite.inviteToken);
   });
@@ -309,7 +313,7 @@ describe('joining a group by invite', () => {
 
     await expect(joinRequest).resolves.toEqual({ roomId, requesterId: bob.user.id, proof: fakeProof(bob.user.id) });
     await memberJoined;
-    expect(room.invite).toEqual({ encryptedInvite: first.invite.encryptedInvite, keyId: first.keyId });
+    expect(room.invite).toEqual({ encryptedInvite: first.invite.encryptedInvite, keyId: first.keyId, active: true });
     expect(room.inviteProofs).toEqual([{ userId: bob.user.id, proof: fakeProof(bob.user.id) }]);
     expect((await h.roomService.getRoomById(roomId))?.participants).toEqual([alice.user.id, bob.user.id]);
     expect(await h.roomService.findInviteProof(roomId, bob.user.id)).toBe(fakeProof(bob.user.id));
@@ -461,8 +465,18 @@ describe('resetting the invite link', () => {
       memberIds: [alice.user.id, bob.user.id],
       inviteProofs: [{ userId: bob.user.id, proof: fakeProof(bob.user.id) }],
     });
-    await expect(revoked).resolves.toEqual({ roomId, invite: null, roster: { encryptedRoster: first.roster, keyId: first.keyId } });
-    expect(await h.roomService.getRoomById(roomId)).toMatchObject({ rotationRequired: 2, currentEpoch: 1, inviteTokenHash: undefined });
+    await expect(revoked).resolves.toEqual({
+      roomId,
+      invite: { encryptedInvite: first.invite.encryptedInvite, keyId: first.keyId, active: false },
+      roster: { encryptedRoster: first.roster, keyId: first.keyId },
+    });
+    expect(await h.roomService.getRoomById(roomId)).toMatchObject({
+      rotationRequired: 2,
+      currentEpoch: 1,
+      inviteTokenHash: undefined,
+      encryptedInvite: first.invite.encryptedInvite,
+      inviteKeyId: first.keyId,
+    });
     await expectError(
       malloryClient,
       'room:join-by-invite',
@@ -547,7 +561,7 @@ describe('invite updates', () => {
     aliceClient.emit('e2e:publish-room-key', first.payload);
     await expect(firstUpdate).resolves.toEqual({
       roomId,
-      invite: { encryptedInvite: first.invite.encryptedInvite, keyId: first.keyId },
+      invite: { encryptedInvite: first.invite.encryptedInvite, keyId: first.keyId, active: true },
       roster: { encryptedRoster: first.roster, keyId: first.keyId },
     });
 
@@ -559,7 +573,11 @@ describe('invite updates', () => {
     const left = waitForEvent(bobClient, 'group:left');
     aliceClient.emit('group:remove-member', { roomId, userId: bob.user.id });
     await left;
-    await expect(cleared).resolves.toEqual({ roomId, invite: null, roster: { encryptedRoster: first.roster, keyId: first.keyId } });
+    await expect(cleared).resolves.toEqual({
+      roomId,
+      invite: { encryptedInvite: first.invite.encryptedInvite, keyId: first.keyId, active: false },
+      roster: { encryptedRoster: first.roster, keyId: first.keyId },
+    });
     expect(await h.roomService.getRoomById(roomId)).toMatchObject({ encryptedRoster: first.roster, rosterKeyId: first.keyId });
 
     const second = generation(roomId, alice.user.id, [alice.user.id, carol.user.id], { epoch: 2 });
@@ -567,7 +585,7 @@ describe('invite updates', () => {
     aliceClient.emit('e2e:publish-room-key', second.payload);
     await expect(secondUpdate).resolves.toEqual({
       roomId,
-      invite: { encryptedInvite: second.invite.encryptedInvite, keyId: second.keyId },
+      invite: { encryptedInvite: second.invite.encryptedInvite, keyId: second.keyId, active: true },
       roster: { encryptedRoster: second.roster, keyId: second.keyId },
     });
 
@@ -590,7 +608,11 @@ describe('invite updates', () => {
 
     const cleared = waitForEvent<InviteUpdate>(aliceClient, 'room:invite-updated');
     bobClient.emit('group:leave', { roomId });
-    await expect(cleared).resolves.toEqual({ roomId, invite: null, roster: { encryptedRoster: first.roster, keyId: first.keyId } });
+    await expect(cleared).resolves.toEqual({
+      roomId,
+      invite: { encryptedInvite: first.invite.encryptedInvite, keyId: first.keyId, active: false },
+      roster: { encryptedRoster: first.roster, keyId: first.keyId },
+    });
     await roundTrip(bobClient);
     await settle(50);
     expect(bobUpdates).toEqual([]);

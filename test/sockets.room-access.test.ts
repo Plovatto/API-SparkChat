@@ -118,7 +118,9 @@ describe('group membership enforcement', () => {
     expect(update).not.toHaveProperty('roomCode');
     expect(bobUpdates).toHaveLength(0);
     const revoked = await h.roomService.getRoomById(group.id);
-    expect(revoked).toMatchObject({ inviteTokenHash: undefined, encryptedInvite: undefined, inviteKeyId: undefined });
+    expect(revoked?.inviteTokenHash).toBeUndefined();
+    expect(revoked?.encryptedInvite).toBeDefined();
+    expect(revoked?.inviteKeyId).toBe(revoked?.currentKeyId);
 
     const rejected = waitForEvent<{ code: string }>(bobClient, 'error');
     bobClient.emit('room:join-by-invite', { roomId: group.id, inviteToken, proof: fakeProof(bob.user.id) });

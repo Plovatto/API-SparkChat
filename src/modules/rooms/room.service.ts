@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { AppError } from '../../lib/app-error.js';
 import type { MessageRecord, MessageService } from '../messages/index.js';
 import type { UserRecord, UserService } from '../users/index.js';
-import { hashInviteToken, matchesInviteToken, type InviteProofView, type RoomInviteView, type RoomRosterView } from './room.invites.js';
+import { hashInviteToken, matchesInviteToken, toInviteView, type InviteProofView, type RoomInviteView, type RoomRosterView } from './room.invites.js';
 import type { InviteResetOutcome, RoomRepository } from './room.repository.js';
 import type { RoomRotationAnnouncement } from './room.rotation.js';
 import { MAX_GROUP_MEMBERS, type RoomParticipant, type RoomRecord, type RoomSummary } from './room.types.js';
@@ -39,10 +39,10 @@ function toParticipants(room: RoomRecord, usersById: Map<string, UserRecord>): R
 }
 
 function inviteView(room: RoomRecord, viewerId: string): RoomInviteView | null {
-  if (room.type !== 'group' || !room.participants.includes(viewerId) || !room.encryptedInvite || !room.inviteKeyId) {
+  if (room.type !== 'group' || !room.participants.includes(viewerId)) {
     return null;
   }
-  return { encryptedInvite: room.encryptedInvite, keyId: room.inviteKeyId };
+  return toInviteView(room);
 }
 
 function rosterView(room: RoomRecord, viewerId: string): RoomRosterView | null {

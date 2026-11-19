@@ -216,8 +216,6 @@ export class RoomRepository {
       .set({
         rotationRequired: sql`${rooms.currentEpoch} + 1`,
         inviteTokenHash: null,
-        encryptedInvite: null,
-        inviteKeyId: null,
       })
       .where(
         and(
@@ -242,7 +240,7 @@ export class RoomRepository {
   async resetInvite(roomId: string, userId: string): Promise<InviteResetOutcome> {
     const result = await this.db.run(sql`
       update ${rooms} set rotation_required = coalesce(rotation_required, current_epoch + 1),
-        invite_token_hash = null, encrypted_invite = null, invite_key_id = null
+        invite_token_hash = null
       where id = ${roomId}
         and type = 'group'
         and current_epoch > 0

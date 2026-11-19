@@ -13,7 +13,7 @@ import { emitToUser, joinUserSocketsToRoom, removeUserSocketsFromRoom } from '..
 import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService, type MessageView } from '../messages/index.js';
 import { NICKNAME_MAX_LENGTH, type UserService } from '../users/index.js';
 import type { RoomKeyPublishMode, RoomKeyPublishOutcome, RoomKeyRepository } from './room.e2e.js';
-import { encryptedRosterSchema, joinByInvitePayloadSchema, roomInviteSchema } from './room.invites.js';
+import { encryptedRosterSchema, joinByInvitePayloadSchema, roomInviteSchema, toInviteView } from './room.invites.js';
 import { KEY_ID_PATTERN, matchesEnvelope, parseRoomKeyEnvelope } from './room.key-envelope.js';
 import type { RoomActionRateLimiter } from './room.rate-limiter.js';
 import type { RoomService } from './room.service.js';
@@ -135,7 +135,7 @@ function announceInvite(io: AppServer, room: RoomRecord): void {
   if (room.type !== 'group') {
     return;
   }
-  const invite = room.encryptedInvite && room.inviteKeyId ? { encryptedInvite: room.encryptedInvite, keyId: room.inviteKeyId } : null;
+  const invite = toInviteView(room);
   const roster = room.encryptedRoster && room.rosterKeyId ? { encryptedRoster: room.encryptedRoster, keyId: room.rosterKeyId } : null;
   for (const memberId of room.participants) {
     emitToUser(io, memberId).emit('room:invite-updated', { roomId: room.id, invite, roster });

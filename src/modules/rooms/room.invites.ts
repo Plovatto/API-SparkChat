@@ -14,6 +14,14 @@ export interface RoomInvite {
 export interface RoomInviteView {
   encryptedInvite: string;
   keyId: string;
+  active: boolean;
+}
+
+export function toInviteView(room: { encryptedInvite?: string | undefined; inviteKeyId?: string | undefined; inviteTokenHash?: string | undefined }): RoomInviteView | null {
+  if (!room.encryptedInvite || !room.inviteKeyId) {
+    return null;
+  }
+  return { encryptedInvite: room.encryptedInvite, keyId: room.inviteKeyId, active: Boolean(room.inviteTokenHash) };
 }
 
 export interface RoomRosterView {
