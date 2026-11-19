@@ -369,3 +369,99 @@ describe('invite token comparison', () => {
     expect(matchesInviteToken(token, hashInviteToken(token).slice(2))).toBe(false);
   });
 });
+
+describe('invite updates', () => {
+  interface InviteUpdate {
+    roomId: string;
+    invite: InviteView | null;
+  }
+
+  it('tells only current members when a generation stores, a reset replaces or a removal clears the invite', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const carol = await h.createAccount('Carol');
+    const mallory = await h.createAccount('Mallory');
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+    const carolClient = await h.connectAs(carol);
+    const malloryClient = await h.connectAs(mallory);
+    const malloryUpdates = collectEvents<InviteUpdate>(malloryClient, 'room:invite-updated');
+    const created = waitForEvent<{ room: Summary }>(aliceClient, 'room:created');
+    aliceClient.emit('room:create-group', { roomName: 'Amigos' });
+    const roomId = (await created).room.id;
+
+    const first = generation(roomId, alice.user.id, [alice.user.id]);
+    const firstUpdate = waitForEvent<InviteUpdate>(aliceClient, 'room:invite-updated');
+    aliceClient.emit('e2e:publish-room-key', first.payload);
+    await expect(firstUpdate).resolves.toEqual({ roomId, invite: { encryptedInvite: first.invite.encryptedInvite, keyId: first.keyId } });
+
+    await joinByInvite(bobClient, roomId, bob.user.id, first.invite.inviteToken);
+    await joinByInvite(carolClient, roomId, carol.user.id, first.invite.inviteToken);
+    const bobUpdates = collectEvents<InviteUpdate>(bobClient, 'room:invite-updated');
+
+    const renewed = fakeInvite('renewed');
+    const resetSeenByCarol = waitForEvent<InviteUpdate>(carolClient, 'room:invite-updated');
+    const resetSeenByBob = waitForEvent<InviteUpdate>(bobClient, 'room:invite-updated');
+    aliceClient.emit('room:reset-invite', { roomId, invite: { tokenHash: renewed.tokenHash, encryptedInvite: renewed.encryptedInvite, keyId: first.keyId } });
+    const expectedReset = { roomId, invite: { encryptedInvite: renewed.encryptedInvite, keyId: first.keyId } };
+    await expect(resetSeenByCarol).resolves.toEqual(expectedReset);
+    await expect(resetSeenByBob).resolves.toEqual(expectedReset);
+
+    const cleared = waitForEvent<InviteUpdate>(carolClient, 'room:invite-updated');
+    const left = waitForEvent(bobClient, 'group:left');
+    aliceClient.emit('group:remove-member', { roomId, userId: bob.user.id });
+    await left;
+    await expect(cleared).resolves.toEqual({ roomId, invite: null });
+
+    const second = generation(roomId, alice.user.id, [alice.user.id, carol.user.id], 2);
+    const secondUpdate = waitForEvent<InviteUpdate>(carolClient, 'room:invite-updated');
+    aliceClient.emit('e2e:publish-room-key', second.payload);
+    await expect(secondUpdate).resolves.toEqual({ roomId, invite: { encryptedInvite: second.invite.encryptedInvite, keyId: second.keyId } });
+
+    await roundTrip(bobClient);
+    await roundTrip(malloryClient);
+    await settle(50);
+    expect(bobUpdates).toEqual([expectedReset]);
+    expect(malloryUpdates).toEqual([]);
+  });
+
+  it('tells the remaining members when a voluntary leave clears the invite, but not who left', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+    const { roomId, first } = await createGroupWithKey(alice, aliceClient);
+    await joinByInvite(bobClient, roomId, bob.user.id, first.invite.inviteToken);
+    const bobUpdates = collectEvents<InviteUpdate>(bobClient, 'room:invite-updated');
+
+    const cleared = waitForEvent<InviteUpdate>(aliceClient, 'room:invite-updated');
+    bobClient.emit('group:leave', { roomId });
+    await expect(cleared).resolves.toEqual({ roomId, invite: null });
+    await roundTrip(bobClient);
+    await settle(50);
+    expect(bobUpdates).toEqual([]);
+  });
+
+  it('sends nothing for a refused reset or for a private room generation', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+    const { roomId, first } = await createGroupWithKey(alice, aliceClient);
+    await joinByInvite(bobClient, roomId, bob.user.id, first.invite.inviteToken);
+    const aliceUpdates = collectEvents<InviteUpdate>(aliceClient, 'room:invite-updated');
+    const renewed = fakeInvite('renewed');
+
+    await expectError(bobClient, 'room:reset-invite', { roomId, invite: { tokenHash: renewed.tokenHash, encryptedInvite: renewed.encryptedInvite, keyId: first.keyId } }, 'room.inviteResetRequiresOwner');
+    const privateRoom = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
+    const stored = waitForEvent(aliceClient, 'e2e:room-key');
+    aliceClient.emit('e2e:publish-room-key', generation(privateRoom.id, alice.user.id, [alice.user.id, bob.user.id]).payload);
+    await stored;
+    await roundTrip(aliceClient);
+    await settle(50);
+    expect(aliceUpdates).toEqual([]);
+  });
+});

@@ -121,6 +121,7 @@ registerServerEvents('rooms', [
   'e2e:key-request',
   'e2e:room-key-rejected',
   'e2e:rotation-required',
+  'room:invite-updated',
 ]);
 
 const REJECTION_CODES = {
@@ -128,6 +129,16 @@ const REJECTION_CODES = {
   incomplete: 'e2e.roomKeyIncomplete',
   conflict: 'e2e.roomKeyConflict',
 } as const satisfies Partial<Record<RoomKeyPublishOutcome, string>>;
+
+function announceInvite(io: AppServer, room: RoomRecord): void {
+  if (room.type !== 'group') {
+    return;
+  }
+  const invite = room.encryptedInvite && room.inviteKeyId ? { encryptedInvite: room.encryptedInvite, keyId: room.inviteKeyId } : null;
+  for (const memberId of room.participants) {
+    emitToUser(io, memberId).emit('room:invite-updated', { roomId: room.id, invite });
+  }
+}
 
 function announceRotation(io: AppServer, room: RoomRecord): void {
   if (room.rotationRequired !== undefined) {
@@ -168,7 +179,7 @@ export function registerRoomSocketHandlers(io: AppServer, socket: AppSocket, dep
   });
 
   socket.on('room:reset-invite', (payload) => {
-    runSocketHandler(socket, 'room:reset-invite', () => handleResetInvite(socket, deps, payload));
+    runSocketHandler(socket, 'room:reset-invite', () => handleResetInvite(io, socket, deps, payload));
   });
 
   socket.on('room:join', (payload) => {
@@ -404,7 +415,7 @@ const INVITE_RESET_ERRORS = {
   stale: 'room.inviteKeyStale',
 } as const;
 
-async function handleResetInvite(socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+async function handleResetInvite(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
   const userId = requireSocketUserId(socket);
   if (!userId) {
     return;
@@ -415,6 +426,12 @@ async function handleResetInvite(socket: AppSocket, deps: RoomSocketDeps, payloa
     const outcome = await deps.roomService.resetInvite(roomId, userId, invite);
     if (outcome !== 'reset') {
       socket.emit('error', errorPayload(INVITE_RESET_ERRORS[outcome]));
+      return;
+    }
+
+    const room = await deps.roomService.getRoomById(roomId);
+    if (room) {
+      announceInvite(io, room);
     }
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
@@ -499,6 +516,7 @@ async function handleLeaveGroup(io: AppServer, socket: AppSocket, deps: RoomSock
     await removeUserSocketsFromRoom(io, userId, roomId);
     emitToUser(io, userId).emit('group:left', { roomId });
     announceRotation(io, updatedRoom);
+    announceInvite(io, updatedRoom);
 
     if (user) {
       const remaining = await roomService.buildParticipantViews(updatedRoom);
@@ -540,6 +558,7 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
 
     await removeUserSocketsFromRoom(io, targetUserId, roomId);
     announceRotation(io, updatedRoom);
+    announceInvite(io, updatedRoom);
     if (!actingUser || !targetUser) {
       return;
     }
@@ -712,6 +731,9 @@ async function handlePublishRoomKey(
     }
 
     const updatedRoom = (await roomService.getRoomById(roomId)) ?? room;
+    if (outcome === 'generation') {
+      announceInvite(io, updatedRoom);
+    }
     deps.onRoomKeyPublished?.({ io, room: updatedRoom });
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));

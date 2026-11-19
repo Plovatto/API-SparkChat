@@ -1,4 +1,5 @@
 import type { ErrorCode } from '../../lib/error-catalog.js';
+import type { RoomInviteView } from './room.invites.js';
 import type { RoomParticipant, RoomSummary } from './room.types.js';
 
 export interface BlockStatusPayload {
@@ -51,6 +52,7 @@ export interface RoomServerToClientEvents {
   'e2e:key-request': (payload: { roomId: string; requesterId: string; proof?: string }) => void;
   'e2e:room-key-rejected': (payload: RoomKeyRejection) => void;
   'e2e:rotation-required': (payload: { roomId: string; epoch: number; memberIds?: string[] }) => void;
+  'room:invite-updated': (payload: { roomId: string; invite: RoomInviteView | null }) => void;
 }
 
 export interface RoomClientToServerEvents {
