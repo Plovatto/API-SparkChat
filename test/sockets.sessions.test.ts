@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { collectEvents, roundTrip, settle, startSocketHarness, TEST_PASSWORD, waitForDisconnect, waitForEvent, type TestClient } from './support/socket-harness.js';
+import { fakeField } from './support/room-keys.js';
 
 type Harness = Awaited<ReturnType<typeof startSocketHarness>>;
 
@@ -93,6 +95,7 @@ describe('session revocation over sockets', () => {
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
     const room = await h.roomService.createPrivateRoom(bob.user.id, alice.user.id);
+    await h.establishRoomKey(room.id);
     await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
     const bobClient = await h.connectAs(bob);
     const loggingOut = await h.connectAs(alice);
@@ -106,8 +109,8 @@ describe('session revocation over sockets', () => {
     await disconnected;
     await wentOffline;
 
-    const delivered = waitForEvent(bobClient, 'message:new', (event: { content: string }) => event.content === 'ainda aí?');
-    bobClient.emit('message:send', { roomId: room.id, content: 'ainda aí?' });
+    const delivered = waitForEvent(bobClient, 'message:new', (event: { content: string }) => event.content === fakeField('ainda aí?'));
+    bobClient.emit('message:send', { roomId: room.id, content: fakeField('ainda aí?'), messageId: randomUUID() });
     await delivered;
     await settle(100);
 
@@ -122,12 +125,13 @@ describe('connection state recovery', () => {
     const bob = await h.createAccount('Bob');
     const room = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
     await h.roomService.createPrivateRoom(bob.user.id, alice.user.id);
+    await h.establishRoomKey(room.id);
     const aliceClient = await h.connectAs(alice);
     const bobClient = await h.connectAs(bob);
     await Promise.all([joinVisibleRooms(aliceClient), joinVisibleRooms(bobClient)]);
 
-    const warmUp = waitForEvent(aliceClient, 'message:new', (event: { content: string }) => event.content === 'aquecendo');
-    bobClient.emit('message:send', { roomId: room.id, content: 'aquecendo' });
+    const warmUp = waitForEvent(aliceClient, 'message:new', (event: { content: string }) => event.content === fakeField('aquecendo'));
+    bobClient.emit('message:send', { roomId: room.id, content: fakeField('aquecendo'), messageId: randomUUID() });
     await warmUp;
 
     return { alice, bob, room, aliceClient, bobClient };
@@ -154,8 +158,8 @@ describe('connection state recovery', () => {
 
     expect(aliceClient.recovered).toBe(true);
     await roundTrip(aliceClient);
-    const delivered = waitForEvent(aliceClient, 'message:new', (event: { content: string }) => event.content === 'de volta');
-    bobClient.emit('message:send', { roomId: room.id, content: 'de volta' });
+    const delivered = waitForEvent(aliceClient, 'message:new', (event: { content: string }) => event.content === fakeField('de volta'));
+    bobClient.emit('message:send', { roomId: room.id, content: fakeField('de volta'), messageId: randomUUID() });
     await delivered;
   });
 
@@ -165,8 +169,8 @@ describe('connection state recovery', () => {
 
     await dropTransport(aliceClient);
     await h.userService.revokeSession(alice.user.id, alice.sessionId);
-    const missed = waitForEvent(bobClient, 'message:new', (event: { content: string }) => event.content === 'enquanto fora');
-    bobClient.emit('message:send', { roomId: room.id, content: 'enquanto fora' });
+    const missed = waitForEvent(bobClient, 'message:new', (event: { content: string }) => event.content === fakeField('enquanto fora'));
+    bobClient.emit('message:send', { roomId: room.id, content: fakeField('enquanto fora'), messageId: randomUUID() });
     await missed;
 
     const received = collectEvents<{ content: string }>(aliceClient, 'message:new');

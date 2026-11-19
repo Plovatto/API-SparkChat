@@ -340,6 +340,9 @@ export class RoomService {
         isBlockedBy,
         userBlocked,
         isMutuallyBlocked: isBlockedBy && userBlocked,
+        currentEpoch: room.currentEpoch ?? 0,
+        currentKeyId: room.currentKeyId ?? null,
+        rotationRequiredEpoch: room.rotationRequired ?? null,
       };
     });
   }

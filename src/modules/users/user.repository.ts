@@ -1,6 +1,6 @@
-import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
-import { roomKeys, users } from '../../database/schema.js';
+import { roomParticipants, rooms, users } from '../../database/schema.js';
 import type { UserRecord } from './user.types.js';
 
 const MAX_IN_CLAUSE_IDS = 500;
@@ -107,8 +107,14 @@ export class UserRepository {
     return user;
   }
 
-  async deleteRoomKeys(userId: string): Promise<void> {
-    await this.db.delete(roomKeys).where(eq(roomKeys.userId, userId));
+  async markRoomsForRotation(userId: string): Promise<{ roomId: string; epoch: number }[]> {
+    const memberRooms = this.db.select({ roomId: roomParticipants.roomId }).from(roomParticipants).where(eq(roomParticipants.userId, userId));
+    const rows = await this.db
+      .update(rooms)
+      .set({ rotationRequired: sql`${rooms.currentEpoch} + 1` })
+      .where(and(inArray(rooms.id, memberRooms), gt(rooms.currentEpoch, 0)))
+      .returning({ roomId: rooms.id, epoch: rooms.rotationRequired });
+    return rows.flatMap((row) => (row.epoch ? [{ roomId: row.roomId, epoch: row.epoch }] : []));
   }
 
   async update(id: string, patch: Partial<UserRecord>): Promise<UserRecord | null> {

@@ -42,6 +42,7 @@ export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
     'user:block': roomAction,
     'user:unblock': roomAction,
     'e2e:publish-room-key': keyExchange,
+    'e2e:share-room-key': keyExchange,
     'e2e:request-room-key': keyExchange,
     'e2e:get-room-keys': keyExchange,
     'e2e:get-public-keys': keyExchange,

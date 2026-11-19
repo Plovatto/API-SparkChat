@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { collectEvents, settle, startSocketHarness, TEST_PASSWORD, waitForEvent, type TestClient } from './support/socket-harness.js';
+import { fakeEnvelope, fakeField, newKeyId } from './support/room-keys.js';
 
 type Harness = Awaited<ReturnType<typeof startSocketHarness>>;
 
@@ -113,17 +115,18 @@ describe('multi-device delivery', () => {
     ]);
     admin.emit('group:remove-member', { roomId: group.id, userId: bob.user.id });
     await leftNotices;
+    await h.establishRoomKey(group.id);
 
     const bobMessages = [...collectEvents(bobA, 'message:new'), ...collectEvents(bobB, 'message:new')];
-    const delivered = waitForEvent(admin, 'message:new', (event: { content: string }) => event.content === 'depois da remoção');
-    admin.emit('message:send', { roomId: group.id, content: 'depois da remoção' });
+    const delivered = waitForEvent(admin, 'message:new', (event: { content: string }) => event.content === fakeField('depois da remoção'));
+    admin.emit('message:send', { roomId: group.id, content: fakeField('depois da remoção'), messageId: randomUUID() });
     await delivered;
     await settle(100);
 
     expect(bobMessages).toHaveLength(0);
   });
 
-  it('pushes sealed room keys to every device of the recipient and to the other devices of the publisher', async () => {
+  it('pushes sealed room keys to every device of the recipient and of the publisher', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
@@ -132,24 +135,29 @@ describe('multi-device delivery', () => {
     const aliceB = await h.connectAs(alice);
     const bobA = await h.connectAs(bob);
     const bobB = await h.connectAs(bob);
-    const echoedToPublisher = collectEvents(aliceA, 'e2e:room-key');
+    const echoedToPublisher = collectEvents<{ sealedKey: string }>(aliceA, 'e2e:room-key');
+    const keyId = newKeyId();
+    const sealedAlice = fakeEnvelope({ roomId: room.id, keyId, epoch: 1, senderId: alice.user.id, recipientId: alice.user.id });
+    const sealedBob = fakeEnvelope({ roomId: room.id, keyId, epoch: 1, senderId: alice.user.id, recipientId: bob.user.id });
 
     const delivered = Promise.all([
-      waitForEvent(bobA, 'e2e:room-key', (event: { sealedKey: string }) => event.sealedKey === 'sealed-bob'),
-      waitForEvent(bobB, 'e2e:room-key', (event: { sealedKey: string }) => event.sealedKey === 'sealed-bob'),
-      waitForEvent(aliceB, 'e2e:room-key', (event: { sealedKey: string }) => event.sealedKey === 'sealed-alice'),
+      waitForEvent(bobA, 'e2e:room-key', (event: { sealedKey: string }) => event.sealedKey === sealedBob),
+      waitForEvent(bobB, 'e2e:room-key', (event: { sealedKey: string }) => event.sealedKey === sealedBob),
+      waitForEvent(aliceB, 'e2e:room-key', (event: { sealedKey: string }) => event.sealedKey === sealedAlice),
     ]);
     aliceA.emit('e2e:publish-room-key', {
       roomId: room.id,
+      keyId,
+      epoch: 1,
       keys: [
-        { userId: alice.user.id, sealedKey: 'sealed-alice' },
-        { userId: bob.user.id, sealedKey: 'sealed-bob' },
+        { userId: alice.user.id, sealedKey: sealedAlice },
+        { userId: bob.user.id, sealedKey: sealedBob },
       ],
     });
     await delivered;
     await settle(50);
 
-    expect(echoedToPublisher).toHaveLength(0);
+    expect(echoedToPublisher.map((event) => event.sealedKey)).toEqual([sealedAlice]);
   });
 
   it('syncs chat settings to the other devices of the same user only', async () => {
@@ -173,6 +181,7 @@ describe('multi-device delivery', () => {
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
     const room = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
+    await h.establishRoomKey(room.id);
     const aliceA = await h.connectAs(alice);
     const bobA = await h.connectAs(bob);
     const bobB = await h.connectAs(bob);
@@ -182,14 +191,14 @@ describe('multi-device delivery', () => {
       waitForEvent(bobA, 'room:new', (event: { room: { id: string } }) => event.room.id === room.id),
       waitForEvent(bobB, 'room:new', (event: { room: { id: string } }) => event.room.id === room.id),
     ]);
-    aliceA.emit('message:send', { roomId: room.id, content: 'primeira' });
+    aliceA.emit('message:send', { roomId: room.id, content: fakeField('primeira'), messageId: randomUUID() });
     await announced;
 
     const followUps = Promise.all([
-      waitForEvent(bobA, 'message:new', (event: { content: string }) => event.content === 'segunda'),
-      waitForEvent(bobB, 'message:new', (event: { content: string }) => event.content === 'segunda'),
+      waitForEvent(bobA, 'message:new', (event: { content: string }) => event.content === fakeField('segunda')),
+      waitForEvent(bobB, 'message:new', (event: { content: string }) => event.content === fakeField('segunda')),
     ]);
-    aliceA.emit('message:send', { roomId: room.id, content: 'segunda' });
+    aliceA.emit('message:send', { roomId: room.id, content: fakeField('segunda'), messageId: randomUUID() });
     await followUps;
   });
 

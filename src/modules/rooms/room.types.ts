@@ -17,6 +17,9 @@ export interface RoomRecord {
   deletedAt: Record<string, string>;
   reactivatedAt?: Record<string, string> | undefined;
   joinedAt?: Record<string, string> | undefined;
+  currentEpoch?: number | undefined;
+  currentKeyId?: string | undefined;
+  rotationRequired?: number | undefined;
 }
 
 export interface RoomParticipant {
@@ -44,4 +47,7 @@ export interface RoomSummary {
   isBlockedBy: boolean;
   userBlocked: boolean;
   isMutuallyBlocked: boolean;
+  currentEpoch: number;
+  currentKeyId: string | null;
+  rotationRequiredEpoch: number | null;
 }

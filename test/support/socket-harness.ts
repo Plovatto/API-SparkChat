@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { Server } from 'socket.io';
 import { io as connectClient, type Socket as ClientSocket } from 'socket.io-client';
 import { getSodium } from '@/modules/ai/ai.crypto.js';
+import { buildAssistantIdentity } from '@/modules/ai/ai.identity.js';
 import { AiRouter } from '@/modules/ai/ai.provider.js';
 import { AiService } from '@/modules/ai/ai.service.js';
 import { AiUsageLimiter } from '@/modules/ai/ai.usage-limiter.js';
@@ -14,6 +15,7 @@ import { registerSocketHandlers } from '@/sockets/index.js';
 import { SOCKET_MAX_HTTP_BUFFER_SIZE } from '@/sockets/socket-options.js';
 import type { SocketEventBudgets } from '@/sockets/socket-rate-limit.js';
 import { buildRoomService } from './build-room-service.js';
+import { establishFakeGeneration, newKeyId, TEST_KEY_ID } from './room-keys.js';
 
 export const TEST_PASSWORD = 'correct-horse-battery-staple';
 
@@ -32,7 +34,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
   const sodium = await getSodium();
   const keyPair = sodium.crypto_box_keypair();
   const aiService = new AiService(
-    { userId: 'assistant-not-in-tests', publicKey: sodium.to_base64(keyPair.publicKey), publicKeyBytes: keyPair.publicKey, privateKey: keyPair.privateKey },
+    await buildAssistantIdentity('assistant-not-in-tests', keyPair.privateKey),
     services.roomKeyRepository,
     services.messageService,
     new TypingService(),
@@ -40,6 +42,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     new AiRouter([{ generateReply: () => Promise.resolve('ok') }]),
     new AiUsageLimiter(),
     services.objectStorage,
+    services.userService,
   );
 
   const httpServer = createServer();
@@ -101,6 +104,16 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     return client;
   }
 
+  async function establishRoomKey(roomId: string): Promise<string> {
+    const room = await services.roomService.getRoomById(roomId);
+    if (!room?.participants[0]) {
+      throw new Error('room without participants');
+    }
+    const epoch = (room.currentEpoch ?? 0) + 1;
+    const keyId = epoch === 1 ? TEST_KEY_ID : newKeyId();
+    return establishFakeGeneration(services.roomKeyRepository, roomId, room.participants[0], room.participants, keyId, epoch);
+  }
+
   async function close(): Promise<void> {
     for (const client of clients) {
       client.disconnect();
@@ -110,7 +123,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     });
   }
 
-  return { ...services, io, sessionRevocations, typingService, recordingService, presenceService, connect, connectAs, createAccount, resume, close };
+  return { ...services, io, sessionRevocations, typingService, recordingService, presenceService, connect, connectAs, createAccount, resume, establishRoomKey, close };
 }
 
 export function waitForEvent<T = unknown>(

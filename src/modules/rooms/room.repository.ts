@@ -43,6 +43,9 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
     deletedAt,
     reactivatedAt,
     joinedAt,
+    currentEpoch: room.currentEpoch,
+    currentKeyId: room.currentKeyId ?? undefined,
+    rotationRequired: room.rotationRequired ?? undefined,
   };
 }
 
