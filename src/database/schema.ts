@@ -26,6 +26,8 @@ export const users = sqliteTable('users', {
   themeColorTheme: text('theme_color_theme'),
   chatSettings: text('chat_settings', { mode: 'json' }).$type<UserChatSettings>(),
   e2ePublicKey: text('e2e_public_key'),
+  e2eSigningPublicKey: text('e2e_signing_public_key'),
+  e2eKeySignature: text('e2e_key_signature'),
   e2eEncryptedPrivateKeyByPassword: text('e2e_encrypted_private_key_by_password'),
   e2eEncryptedPrivateKeyByRecovery: text('e2e_encrypted_private_key_by_recovery'),
   authSalt: text('auth_salt'),
