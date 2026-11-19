@@ -31,6 +31,8 @@ const envSchema = z.object({
   R2_PUBLIC_BASE_URL: z.string().url(),
   CLOUDFLARE_TURN_KEY_ID: optionalSecret,
   CLOUDFLARE_TURN_API_TOKEN: optionalSecret,
+  KLIPY_API_KEY: optionalSecret,
+  GIF_PROVIDER: z.preprocess((value) => (value === '' ? undefined : value), z.enum(['klipy', 'fake']).default('klipy')),
 }).refine((value) => Boolean(value.CLOUDFLARE_TURN_KEY_ID) === Boolean(value.CLOUDFLARE_TURN_API_TOKEN), {
   message: 'CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN must be set together',
   path: ['CLOUDFLARE_TURN_API_TOKEN'],

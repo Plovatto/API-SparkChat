@@ -1,4 +1,4 @@
-const SENSITIVE_QUERY_PREFIXES = ['/api/link-preview'];
+const SENSITIVE_QUERY_PREFIXES = ['/api/link-preview', '/api/gifs'];
 
 interface LoggedRequest {
   url?: string;

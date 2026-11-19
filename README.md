@@ -17,6 +17,7 @@ API backend do SparkChat, desenvolvida com Node.js, TypeScript, Express e Socket
 - Comunicação em tempo real com Socket.IO
 - Recuperação de sessão do socket em reconexões, preservando autenticação e salas
 - Upload de imagens, áudios e arquivos no Cloudflare R2, com verificação de assinatura de bytes
+- Galeria de GIFs (KLIPY) com proxy de miniaturas e GIFs enviados criptografados que expiram em 30 dias
 - Limite de armazenamento aplicado no próprio serviço, independente do provedor
 - Configuração centralizada por variáveis de ambiente
 - Tratamento de rotas não encontradas e erros da aplicação
@@ -109,11 +110,15 @@ R2_BUCKET_NAME=
 R2_PUBLIC_BASE_URL=
 CLOUDFLARE_TURN_KEY_ID=
 CLOUDFLARE_TURN_API_TOKEN=
+KLIPY_API_KEY=
+GIF_PROVIDER=
 ```
 
 `R2_*` configura o armazenamento de arquivos enviados (imagem, áudio, arquivo) no Cloudflare R2, usado no lugar de disco local para funcionar em hospedagens sem disco persistente.
 
 `CLOUDFLARE_TURN_KEY_ID` e `CLOUDFLARE_TURN_API_TOKEN` (opcionais, sempre juntas) habilitam credenciais TURN do Cloudflare Realtime para as chamadas de voz e vídeo; sem elas, as chamadas usam só STUN e a retransmissão fica indisponível.
+
+`KLIPY_API_KEY` (opcional) liga a galeria de GIFs usando a API do KLIPY; sem ela a galeria fica desligada (`GET /api/gifs/status` responde `enabled: false`). `GIF_PROVIDER` aceita `klipy` (padrão) ou `fake`, um provedor falso e determinístico para testes e E2E locais que nunca é aceito com `NODE_ENV=production` (a API não inicia).
 
 `PASSWORD_SCRYPT_COST` é o custo do scrypt usado nos hashes de senha (potência de 2, padrão `65536`, máximo `131072`). Cada login usa cerca de 128 × o valor em bytes de memória (64 MB no padrão); aumente só se a hospedagem tiver memória sobrando para logins simultâneos.
 
@@ -177,6 +182,7 @@ src/
 ├── middleware/        # Autenticação, rate limit, wrapper async e tratamento de erros HTTP
 ├── modules/
 │   ├── ai/            # Assistente SparkAI (identidade E2E, provider Gemini, limites e resposta)
+│   ├── gifs/          # Galeria de GIFs (provedor KLIPY, provedor falso, proxy de miniaturas)
 │   ├── link-preview/  # Preview de links (fetch com proteção SSRF, cache e proxy de imagem)
 │   ├── messages/      # Mensagens, uploads, presença, digitação e gravação
 │   ├── rooms/         # Salas privadas e grupos, chaves E2E de sala

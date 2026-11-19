@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { createGifRouter, type GifProvider } from '../modules/gifs/index.js';
 import { createLinkPreviewRouter, type LinkPreviewService } from '../modules/link-preview/index.js';
 import { createMessageRouter } from '../modules/messages/index.js';
 import { createUserRouter, type LoginRateLimiter, type SessionRevocationNotifier, type UserService } from '../modules/users/index.js';
@@ -14,6 +15,7 @@ export interface ApiRouterDeps {
   objectStorage: ObjectStorage;
   storageQuota: StorageQuota;
   uploadRegistry: UploadRegistry;
+  gifProvider?: GifProvider | null;
 }
 
 export function createApiRouter(deps: ApiRouterDeps): Router {
@@ -22,6 +24,7 @@ export function createApiRouter(deps: ApiRouterDeps): Router {
   router.use('/users', createUserRouter(deps.userService, deps.loginRateLimiter, deps.sessionRevocations));
   router.use('/messages', createMessageRouter(deps.userService, deps.objectStorage, deps.storageQuota, deps.uploadRegistry));
   router.use('/link-preview', createLinkPreviewRouter(deps.userService, deps.linkPreviewService));
+  router.use('/gifs', createGifRouter(deps.userService, deps.gifProvider ?? null));
 
   return router;
 }

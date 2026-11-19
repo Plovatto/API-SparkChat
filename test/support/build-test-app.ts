@@ -1,4 +1,5 @@
 import { createApp } from '@/app.js';
+import type { GifProvider } from '@/modules/gifs/index.js';
 import { LinkPreviewRepository, LinkPreviewService, type LinkPreviewFetcher } from '@/modules/link-preview/index.js';
 import { LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from '@/modules/users/index.js';
 import { InMemoryObjectStorage, type ObjectStorage } from '@/storage/object-storage.js';
@@ -13,7 +14,12 @@ const noopLinkPreviewFetcher: LinkPreviewFetcher = {
 };
 
 export async function buildTestApp(
-  options: { linkPreviewFetcher?: LinkPreviewFetcher; objectStorage?: ObjectStorage; storageQuota?: StorageQuota } = {},
+  options: {
+    linkPreviewFetcher?: LinkPreviewFetcher;
+    objectStorage?: ObjectStorage;
+    storageQuota?: StorageQuota;
+    gifProvider?: GifProvider | null;
+  } = {},
 ) {
   const db = await createTestDb();
   const userRepository = new UserRepository(db);
@@ -31,7 +37,16 @@ export async function buildTestApp(
   const storageUsageRepository = new StorageUsageRepository(db);
   const storageQuota = options.storageQuota ?? new StorageQuota(storageUsageRepository);
   const uploadRegistry = new UploadRegistry(db);
-  const app = createApp({ userService, loginRateLimiter, sessionRevocations, linkPreviewService, objectStorage, storageQuota, uploadRegistry });
+  const app = createApp({
+    userService,
+    loginRateLimiter,
+    sessionRevocations,
+    linkPreviewService,
+    objectStorage,
+    storageQuota,
+    uploadRegistry,
+    gifProvider: options.gifProvider ?? null,
+  });
 
   return {
     app,
