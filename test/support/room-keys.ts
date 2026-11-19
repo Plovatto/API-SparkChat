@@ -76,6 +76,10 @@ export function fakeRoster(keyId: string): string {
   return createHash('sha256').update(`roster:${keyId}`).digest('base64url');
 }
 
+export function fakeName(keyId: string, label = 'Amigos'): string {
+  return createHash('sha256').update(`name:${label}:${keyId}`).digest('base64url');
+}
+
 export async function establishFakeGeneration(
   repository: RoomKeyRepository,
   roomId: string,
@@ -93,6 +97,7 @@ export async function establishFakeGeneration(
     keys: memberIds.map((userId) => ({ userId, sealedKey: fakeEnvelope({ roomId, keyId, epoch, senderId, recipientId: userId }) })),
     invite: fakeInvite(`${roomId}:${keyId}`),
     roster: fakeRoster(keyId),
+    name: fakeName(keyId),
   });
   if (outcome !== 'generation') {
     throw new Error(`generation not stored: ${outcome}`);

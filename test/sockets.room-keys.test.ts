@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fakeEnvelope, fakeInvite, fakeRoster, newKeyId } from './support/room-keys.js';
+import { fakeEnvelope, fakeInvite, fakeName, fakeRoster, newKeyId } from './support/room-keys.js';
 import { fakeProof, seedInvite } from './support/invites.js';
 import { collectEvents, roundTrip, settle, startSocketHarness, waitForEvent, type TestClient } from './support/socket-harness.js';
 
@@ -72,6 +72,7 @@ function batch(roomId: string, senderId: string, recipients: string[], epoch = 1
     keys: recipients.map((userId) => ({ userId, sealedKey: fakeEnvelope({ roomId, keyId, epoch, senderId, recipientId: userId }) })),
     invite: { tokenHash: fakeInvite(keyId).tokenHash, encryptedInvite: fakeInvite(keyId).encryptedInvite },
     roster: fakeRoster(keyId),
+    name: fakeName(keyId),
   };
 }
 
@@ -106,12 +107,13 @@ describe('publishing a room key generation', () => {
       epoch: 1,
       senderId: alice.user.id,
       sealedKey: published.keys[0]?.sealedKey,
+      roster: published.roster,
     });
     await roundTrip(bobClient);
     await roundTrip(carolClient);
     await settle(50);
     expect(bobDeliveries).toEqual([
-      { roomId: group.id, keyId: published.keyId, epoch: 1, senderId: alice.user.id, sealedKey: published.keys[1]?.sealedKey },
+      { roomId: group.id, keyId: published.keyId, epoch: 1, senderId: alice.user.id, sealedKey: published.keys[1]?.sealedKey, roster: published.roster },
     ]);
     expect(carolDeliveries.map((delivery) => delivery.sealedKey)).toEqual([published.keys[2]?.sealedKey]);
     expect(await h.roomKeyRepository.getState(group.id)).toEqual({ currentEpoch: 1, currentKeyId: published.keyId, rotationRequired: null });
@@ -299,7 +301,7 @@ describe('room key rotation', () => {
     const { alice, bob, aliceClient, bobClient, group } = await groupWithGeneration(h);
     const privateRoom = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
     await h.establishRoomKey(privateRoom.id);
-    const untouched = await h.roomService.createGroupRoom('Outro', alice.user.id);
+    const untouched = await h.roomService.createGroupRoom(alice.user.id);
     await h.establishRoomKey(untouched.id);
     await h.userService.publishE2eKeys(bob.user.id, { publicKey: 'bob-first-key' });
     await listRooms(aliceClient);

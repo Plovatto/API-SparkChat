@@ -217,7 +217,7 @@ describe('group membership enforcement', () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
-    const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
+    const group = await h.roomService.createGroupRoom(alice.user.id);
     await seedInvite(h.db, group.id);
     const bobClient = await h.connectAs(bob);
     const errors = collectEvents<{ code: string }>(bobClient, 'error');
@@ -256,7 +256,7 @@ describe('group membership enforcement', () => {
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
     const carol = await h.createAccount('Carol');
-    const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
+    const group = await h.roomService.createGroupRoom(alice.user.id);
     await h.joinGroup(group.id, bob.user.id);
     await h.joinGroup(group.id, carol.user.id);
     await h.roomRepository.updateParticipant(group.id, alice.user.id, { blockedByUserId: bob.user.id });
