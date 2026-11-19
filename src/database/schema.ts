@@ -32,6 +32,9 @@ export const users = sqliteTable('users', {
   e2eEncryptedPrivateKeyByRecovery: text('e2e_encrypted_private_key_by_recovery'),
   authSalt: text('auth_salt'),
   authVersion: integer('auth_version').$type<AuthVersion>().notNull().default(1),
+  encryptedAvatar: text('encrypted_avatar'),
+  avatarUploadKey: text('avatar_upload_key'),
+  profileKeyVersion: integer('profile_key_version').notNull().default(1),
 });
 
 export const sessions = sqliteTable(
@@ -67,6 +70,9 @@ export const rooms = sqliteTable('rooms', {
   rosterKeyId: text('roster_key_id'),
   encryptedName: text('encrypted_name'),
   nameKeyId: text('name_key_id'),
+  encryptedAvatar: text('encrypted_avatar'),
+  avatarKeyId: text('avatar_key_id'),
+  avatarUploadKey: text('avatar_upload_key'),
 });
 
 export const roomParticipants = sqliteTable(
@@ -86,6 +92,8 @@ export const roomParticipants = sqliteTable(
     reactivatedAt: text('reactivated_at'),
     joinedAt: text('joined_at'),
     inviteProof: text('invite_proof'),
+    profileKeyEnvelope: text('profile_key_envelope'),
+    profileKeyKeyId: text('profile_key_key_id'),
   },
   (table) => [
     primaryKey({ columns: [table.roomId, table.userId] }),
@@ -176,11 +184,13 @@ export const uploads = sqliteTable(
     createdAt: text('created_at').notNull(),
     messageId: text('message_id'),
     expiresAt: text('expires_at'),
+    avatarOwner: text('avatar_owner'),
   },
   (table) => [
     index('uploads_uploader_id_idx').on(table.uploaderId),
     index('uploads_message_id_created_at_idx').on(table.messageId, table.createdAt),
     index('uploads_expires_at_idx').on(table.expiresAt),
+    index('uploads_avatar_owner_idx').on(table.avatarOwner),
   ],
 );
 
