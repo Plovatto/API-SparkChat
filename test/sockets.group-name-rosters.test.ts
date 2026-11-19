@@ -1,6 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { roomRosters, rooms } from '@/database/schema.js';
+import { limitRosterBytes, MAX_ROSTER_BYTES_PER_RESPONSE } from '@/modules/rooms/room.e2e.js';
+import { DEFAULT_SOCKET_EVENT_BUDGETS } from '@/sockets/socket-rate-limit.js';
 import { fakeProof, seedInvite } from './support/invites.js';
 import { fakeEnvelope, fakeInvite, fakeName, fakeRoster, newKeyId } from './support/room-keys.js';
 import { collectEvents, roundTrip, settle, startSocketHarness, waitForEvent, type TestClient } from './support/socket-harness.js';
@@ -486,5 +488,114 @@ describe('fetching only some room key generations', () => {
       event: 'e2e:get-room-keys',
     });
     expect(await getRoomKeys(aliceClient, { roomIds: [group.id], keyIds: { [group.id]: tooMany.slice(0, 50) } })).toEqual([]);
+  });
+});
+
+describe('who may rename a group', () => {
+  it('refuses a member who joined after the current generation until a rotation includes them', async () => {
+    const h = await start();
+    const { alice, aliceClient, bobClient, group, members } = await groupOfTwo(h);
+    const first = generation(group.id, alice.user.id, members);
+    await publishToMembers([aliceClient, bobClient], first);
+    const carol = await h.createAccount('Carol');
+    const carolClient = await h.connectAs(carol);
+    const { inviteToken } = await seedInvite(h.db, group.id, 'carol');
+    const joined = waitForEvent(carolClient, 'room:joined');
+    carolClient.emit('room:join-by-invite', { roomId: group.id, inviteToken, proof: fakeProof(carol.user.id) });
+    await joined;
+    const { invite: _invite, roster: _roster, name: _name, ...share } = generation(group.id, alice.user.id, [carol.user.id], { keyId: first.keyId });
+    const shared = waitForEvent(carolClient, 'e2e:room-key');
+    aliceClient.emit('e2e:share-room-key', share);
+    await shared;
+
+    await expectError(carolClient, 'room:rename', { roomId: group.id, name: fakeName(first.keyId, 'Recém chegada'), keyId: first.keyId }, {
+      code: 'e2e.renameRequiresRoster',
+      event: 'room:rename',
+    });
+    expect(await storedRoom(h, group.id)).toMatchObject({ encryptedName: first.name });
+
+    const everyone = [...members, carol.user.id];
+    const rotated = waitForEvent<NameUpdate>(carolClient, 'room:name-updated');
+    const second = await rotate(h, aliceClient, alice, group.id, everyone, 2);
+    await rotated;
+    const renamed = fakeName(second.keyId, 'Agora pode');
+    const update = waitForEvent<NameUpdate>(carolClient, 'room:name-updated');
+    carolClient.emit('room:rename', { roomId: group.id, name: renamed, keyId: second.keyId });
+    await expect(update).resolves.toEqual({ roomId: group.id, encryptedName: renamed, keyId: second.keyId });
+  });
+
+  it('has its own tight event budget and drops renames over it', async () => {
+    expect(DEFAULT_SOCKET_EVENT_BUDGETS.events['room:rename']).toEqual({ capacity: 10, refillPerSecond: 0.2 });
+
+    harness = await startSocketHarness({
+      socketEventBudgets: { events: { 'room:rename': { capacity: 1, refillPerSecond: 0.001 } }, fallback: { capacity: 100, refillPerSecond: 100 } },
+    });
+    const h = harness;
+    const alice = await h.createAccount('Alice');
+    const aliceClient = await h.connectAs(alice);
+    const group = await createGroup(aliceClient);
+    const first = generation(group.id, alice.user.id, [alice.user.id]);
+    await publish(aliceClient, first);
+    const errors = collectEvents<ErrorEvent>(aliceClient, 'error');
+    const update = waitForEvent<NameUpdate>(aliceClient, 'room:name-updated');
+
+    aliceClient.emit('room:rename', { roomId: group.id, name: fakeName(first.keyId, 'Um'), keyId: first.keyId });
+    aliceClient.emit('room:rename', { roomId: group.id, name: fakeName(first.keyId, 'Dois'), keyId: first.keyId });
+    await update;
+    await roundTrip(aliceClient);
+    await settle(50);
+
+    expect(errors).toEqual([expect.objectContaining({ code: 'rateLimit.socket', event: 'room:rename' })]);
+    expect(await storedRoom(h, group.id)).toMatchObject({ encryptedName: fakeName(first.keyId, 'Um') });
+  });
+});
+
+describe('roster budget per room keys response', () => {
+  function stored(roomId: string, epoch: number, roster?: string) {
+    return { roomId, keyId: `k${epoch}`, epoch, senderId: 'alice', sealedKey: `sealed-${epoch}`, ...(roster === undefined ? {} : { roster }) };
+  }
+
+  it('keeps the newest generations within the byte budget and flags the rest as truncated', () => {
+    const keys = [stored('g', 1, 'a'.repeat(40)), stored('g', 2, 'b'.repeat(40)), stored('g', 3, 'c'.repeat(40)), stored('p', 1)];
+
+    expect(limitRosterBytes(keys, 100)).toEqual({ keys: [keys[1], keys[2], keys[3]], truncated: true });
+    expect(limitRosterBytes(keys, 120)).toEqual({ keys, truncated: false });
+  });
+
+  it('sends the same roster only once per room', () => {
+    const keys = [stored('g', 1, 'same'), stored('g', 2, 'same'), stored('h', 1, 'same')];
+
+    const { keys: limited, truncated } = limitRosterBytes(keys, 8);
+
+    expect(truncated).toBe(false);
+    expect(limited).toEqual([stored('g', 1), stored('g', 2, 'same'), stored('h', 1, 'same')]);
+  });
+
+  it('caps a real response at 256 KB of rosters and serves the older generations by key id', async () => {
+    expect(MAX_ROSTER_BYTES_PER_RESPONSE).toBe(256 * 1024);
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const aliceClient = await h.connectAs(alice);
+    const group = await createGroup(aliceClient);
+    const bigRoster = (epoch: number) => String(epoch).padEnd(32 * 1024, 'r');
+    const published = [generation(group.id, alice.user.id, [alice.user.id], { roster: bigRoster(1) })];
+    await publish(aliceClient, published[0] as ReturnType<typeof generation>);
+    for (let epoch = 2; epoch <= 9; epoch += 1) {
+      await h.roomKeyRepository.markRotationRequired(group.id);
+      const next = generation(group.id, alice.user.id, [alice.user.id], { epoch, roster: bigRoster(epoch) });
+      await publish(aliceClient, next);
+      published.push(next);
+    }
+
+    const listed = waitForEvent<{ keys: Delivery[]; truncated?: boolean }>(aliceClient, 'e2e:room-keys');
+    aliceClient.emit('e2e:get-room-keys', { roomIds: [group.id] });
+    const response = await listed;
+
+    expect(response.truncated).toBe(true);
+    expect(response.keys.map((key) => key.epoch)).toEqual([2, 3, 4, 5, 6, 7, 8, 9]);
+    const oldest = published[0] as ReturnType<typeof generation>;
+    expect(await getRoomKeys(aliceClient, { roomIds: [group.id], keyIds: { [group.id]: [oldest.keyId] } })).toEqual([
+      expect.objectContaining({ epoch: 1, roster: oldest.roster }),
+    ]);
   });
 });

@@ -31,7 +31,7 @@ export interface RoomKeyPublication {
   name?: string | undefined;
 }
 
-export type RoomNameUpdateOutcome = 'updated' | 'stale' | 'notFound';
+export type RoomNameUpdateOutcome = 'updated' | 'stale' | 'notInRoster' | 'notFound';
 
 export type RoomKeyPublishOutcome = 'generation' | 'share' | 'stale' | 'incomplete' | 'conflict';
 
@@ -50,6 +50,47 @@ export interface RoomKeyWithSender extends StoredRoomKey {
   senderPublicKey: string | null;
   senderSigningPublicKey: string | null;
   senderIsMember: boolean;
+}
+
+export const MAX_ROSTER_BYTES_PER_RESPONSE = 256 * 1024;
+
+export interface RosterBudgetResult {
+  keys: StoredRoomKey[];
+  truncated: boolean;
+}
+
+export function limitRosterBytes(keys: StoredRoomKey[], maxBytes: number = MAX_ROSTER_BYTES_PER_RESPONSE): RosterBudgetResult {
+  const kept = new Set<StoredRoomKey>();
+  const sent = new Set<string>();
+  const replacements = new Map<StoredRoomKey, StoredRoomKey>();
+  let used = 0;
+  let truncated = false;
+  for (const key of [...keys].sort((a, b) => b.epoch - a.epoch)) {
+    if (!key.roster) {
+      kept.add(key);
+      continue;
+    }
+    const marker = `${key.roomId}
+${key.roster}`;
+    if (sent.has(marker)) {
+      const { roster: _roster, ...withoutRoster } = key;
+      replacements.set(key, withoutRoster);
+      kept.add(key);
+      continue;
+    }
+    const size = Buffer.byteLength(key.roster, 'utf8');
+    if (used + size > maxBytes) {
+      truncated = true;
+      continue;
+    }
+    used += size;
+    sent.add(marker);
+    kept.add(key);
+  }
+  return {
+    keys: keys.filter((key) => kept.has(key)).map((key) => replacements.get(key) ?? key),
+    truncated,
+  };
 }
 
 type Executor = Pick<Database, 'select' | 'update' | 'insert'>;
@@ -204,15 +245,26 @@ export class RoomKeyRepository {
       update ${rooms} set encrypted_name = ${encryptedName}, name_key_id = ${keyId}
       where id = ${roomId} and type = 'group' and current_key_id = ${keyId}
         and ${this.memberCondition(roomId, sql`(${userId})`)} = 1
+        and ${this.inCurrentRosterCondition(roomId, userId, keyId)}
     `);
     if (result.rowsAffected === 1) {
       return 'updated';
     }
     const [[room], memberIds] = await Promise.all([
-      this.db.select({ type: rooms.type }).from(rooms).where(eq(rooms.id, roomId)),
+      this.db.select({ type: rooms.type, currentKeyId: rooms.currentKeyId }).from(rooms).where(eq(rooms.id, roomId)),
       this.memberIds(this.db, roomId),
     ]);
-    return room?.type === 'group' && memberIds.includes(userId) ? 'stale' : 'notFound';
+    if (room?.type !== 'group' || !memberIds.includes(userId)) {
+      return 'notFound';
+    }
+    return room.currentKeyId === keyId ? 'notInRoster' : 'stale';
+  }
+
+  private inCurrentRosterCondition(roomId: string, userId: string, keyId: string): SQL {
+    return sql`exists (select 1 from ${roomParticipants} p
+      join ${roomRosters} r on r.room_id = p.room_id and r.key_id = ${keyId}
+      where p.room_id = ${roomId} and p.user_id = ${userId}
+        and p.joined_at is not null and p.joined_at <= r.created_at)`;
   }
 
   async findRoster(roomId: string, keyId: string): Promise<string | null> {

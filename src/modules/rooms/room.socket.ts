@@ -12,7 +12,7 @@ import { requireSocketUserId } from '../../sockets/socket-session.js';
 import { emitToUser, joinUserSocketsToRoom, removeUserSocketsFromRoom } from '../../sockets/user-sockets.js';
 import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService, type MessageView } from '../messages/index.js';
 import { NICKNAME_MAX_LENGTH, type UserService } from '../users/index.js';
-import type { RoomKeyPublishMode, RoomKeyPublishOutcome, RoomKeyRepository } from './room.e2e.js';
+import { limitRosterBytes, type RoomKeyPublishMode, type RoomKeyPublishOutcome, type RoomKeyRepository } from './room.e2e.js';
 import { encryptedNameSchema, encryptedRosterSchema, joinByInvitePayloadSchema, roomInviteSchema, toInviteView } from './room.invites.js';
 import { KEY_ID_PATTERN, matchesEnvelope, parseRoomKeyEnvelope } from './room.key-envelope.js';
 import type { RoomActionRateLimiter } from './room.rate-limiter.js';
@@ -503,6 +503,10 @@ async function handleRenameRoom(io: AppServer, socket: AppSocket, deps: RoomSock
       socket.emit('error', { ...errorPayload('e2e.nameKeyStale'), event: 'room:rename' });
       return;
     }
+    if (outcome === 'notInRoster') {
+      socket.emit('error', { ...errorPayload('e2e.renameRequiresRoster'), event: 'room:rename' });
+      return;
+    }
 
     const room = await deps.roomService.getRoomById(roomId);
     if (room) {
@@ -864,9 +868,9 @@ async function handleGetRoomKeys(socket: AppSocket, deps: RoomSocketDeps, payloa
 
   try {
     const { roomIds, keyIds } = getRoomKeysPayloadSchema.parse(payload);
-    const keys = await deps.roomKeyRepository.findForParticipantInRooms(roomIds, userId, keyIds);
+    const { keys, truncated } = limitRosterBytes(await deps.roomKeyRepository.findForParticipantInRooms(roomIds, userId, keyIds));
 
-    socket.emit('e2e:room-keys', { keys });
+    socket.emit('e2e:room-keys', truncated ? { keys, truncated } : { keys });
   } catch (error) {
     socket.emit('error', { ...extractErrorPayload(error), event: 'e2e:get-room-keys' });
   }

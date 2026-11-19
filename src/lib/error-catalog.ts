@@ -65,6 +65,7 @@ export const ERROR_CATALOG = {
   'e2e.rosterRequired': () => 'A nova chave de um grupo precisa vir junto com a lista verificada de membros.',
   'e2e.nameRequired': () => 'A nova chave de um grupo precisa vir junto com o nome do grupo criptografado.',
   'e2e.nameKeyStale': () => 'O nome do grupo precisa ser criptografado com a chave atual da sala.',
+  'e2e.renameRequiresRoster': () => 'Só quem está na lista verificada de membros da chave atual pode renomear o grupo. Aguarde a próxima troca de chave.',
   'e2e.inviteRequired': () => 'A nova chave de um grupo precisa vir junto com o novo convite do grupo.',
   'e2e.roomKeyConflict': () => 'Não foi possível compartilhar a chave da sala: algum destinatário já a tem ou não é membro.',
   'upload.missingFile': ({ kind }: { kind: UploadKind }) => UPLOAD_MISSING_FILE_MESSAGES[kind],
