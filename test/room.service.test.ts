@@ -39,10 +39,10 @@ describe('RoomService', () => {
     const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
 
-    const room = await roomService.createGroupRoom('Amigos', alice.id);
+    const room = await roomService.createGroupRoom(alice.id);
 
     expect(room.type).toBe('group');
-    expect(room.name).toBe('Amigos');
+    expect(room).not.toHaveProperty('name');
     expect(room.roomCode).toBeUndefined();
     expect(room.participants).toEqual([alice.id]);
     expect(room.admins).toEqual([alice.id]);
@@ -91,7 +91,7 @@ describe('RoomService', () => {
     const { roomService, messageService, userService, joinGroup } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
     await joinGroup(group.id, bob.id);
 
     await messageService.sendMessage({ roomId: group.id, senderId: alice.id, content: '@Bob confere isso', mentionedUserIds: [bob.id] });
@@ -109,7 +109,7 @@ describe('RoomService', () => {
     const { roomService, userService, joinGroup } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
 
     const firstJoin = await joinGroup(group.id, bob.id);
     const secondJoin = await joinGroup(group.id, bob.id);
@@ -143,7 +143,7 @@ describe('RoomService', () => {
     const { roomService, userService, joinGroup } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
     await joinGroup(group.id, bob.id);
 
     const updated = await roomService.leaveGroup(group.id, bob.id);
@@ -156,7 +156,7 @@ describe('RoomService', () => {
     const { roomService, userService, joinGroup } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
     await joinGroup(group.id, bob.id);
     await roomService.promoteAdmin(group.id, alice.id, bob.id);
 
@@ -169,7 +169,7 @@ describe('RoomService', () => {
     const { roomService, userService, joinGroup } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
     await joinGroup(group.id, bob.id);
 
     const updated = await roomService.promoteAdmin(group.id, alice.id, bob.id);
@@ -182,7 +182,7 @@ describe('RoomService', () => {
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const carol = await createUser(userService, 'Carol');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
     await joinGroup(group.id, bob.id);
     await joinGroup(group.id, carol.id);
 
@@ -193,7 +193,7 @@ describe('RoomService', () => {
     const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const outsider = await createUser(userService, 'Outsider');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
 
     await expect(roomService.promoteAdmin(group.id, alice.id, outsider.id)).rejects.toMatchObject({ code: 'room.notMember', message: 'Usuário não faz parte do grupo.' });
   });
@@ -202,7 +202,7 @@ describe('RoomService', () => {
     const { roomService, userService, joinGroup } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
     await joinGroup(group.id, bob.id);
 
     const updated = await roomService.removeMember(group.id, alice.id, bob.id);
@@ -217,7 +217,7 @@ describe('RoomService', () => {
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
     const carol = await createUser(userService, 'Carol');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
     await joinGroup(group.id, bob.id);
     await joinGroup(group.id, carol.id);
 
@@ -227,7 +227,7 @@ describe('RoomService', () => {
   it('rejects an admin trying to remove themselves', async () => {
     const { roomService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
 
     await expect(roomService.removeMember(group.id, alice.id, alice.id)).rejects.toMatchObject({ code: 'room.cannotRemoveSelf', message: 'Use a opção de sair do grupo para se remover.' });
   });
@@ -236,7 +236,7 @@ describe('RoomService', () => {
     const { roomService, userService, joinGroup } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
     const { room: groupWithBob } = await joinGroup(group.id, bob.id);
 
     const summary = await roomService.buildSummary(groupWithBob, alice.id);
@@ -287,7 +287,7 @@ describe('RoomService', () => {
     const bob = await createUser(userService, 'Bob');
     const outsider = await createUser(userService, 'Outsider');
     const room = await roomService.createPrivateRoom(alice.id, bob.id);
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
 
     expect(await roomService.deleteForUser(room.id, outsider.id)).toBeNull();
     expect(await roomService.leaveGroup(group.id, outsider.id)).toBeNull();
@@ -417,7 +417,7 @@ describe('RoomService.filterMessagesForUser', () => {
     const { roomService, messageService, messageRepository, userService, joinGroup } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
 
     const sent1 = await messageService.sendMessage({ roomId: group.id, senderId: alice.id, content: 'antes de Bob entrar' });
     const before = await messageRepository.update(sent1.id, { timestamp: '2026-01-01T00:00:00.000Z' });
@@ -440,7 +440,7 @@ describe('RoomService.filterMessagesForUser', () => {
     const { roomService, messageService, messageRepository, userService, joinGroup } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');
     const bob = await createUser(userService, 'Bob');
-    const group = await roomService.createGroupRoom('Amigos', alice.id);
+    const group = await roomService.createGroupRoom(alice.id);
     await joinGroup(group.id, bob.id);
 
     const sent = await messageService.sendMessage({ roomId: group.id, senderId: alice.id, content: 'meio' });

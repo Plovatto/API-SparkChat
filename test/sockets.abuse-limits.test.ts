@@ -133,17 +133,6 @@ describe('per-socket event budgets', () => {
 });
 
 describe('room input limits', () => {
-  it('rejects group names longer than 64 characters', async () => {
-    const h = await start();
-    const alice = await h.createAccount('Alice');
-    const client = await h.connectAs(alice);
-
-    const error = waitForEvent<ErrorEvent>(client, 'error');
-    client.emit('room:create-group', { roomName: 'x'.repeat(65) });
-
-    await expect(error).resolves.toMatchObject({ code: 'validation.invalidPayload' });
-  });
-
   it('rejects oversized nicknames in room:create-private', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
@@ -186,7 +175,7 @@ describe('membership-gated socket paths and bans', () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
-    const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
+    const group = await h.roomService.createGroupRoom(alice.user.id);
     await h.joinGroup(group.id, bob.user.id);
     await h.roomService.removeMember(group.id, alice.user.id, bob.user.id);
     await h.db.insert(roomParticipants).values({ roomId: group.id, userId: bob.user.id, isVisible: true });

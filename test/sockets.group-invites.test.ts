@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { roomParticipants, rooms } from '@/database/schema.js';
 import { hashInviteToken, matchesInviteToken } from '@/modules/rooms/room.invites.js';
 import { fakeProof } from './support/invites.js';
-import { fakeEnvelope, fakeInvite, fakeRoster, newKeyId } from './support/room-keys.js';
+import { fakeEnvelope, fakeInvite, fakeName, fakeRoster, newKeyId } from './support/room-keys.js';
 import { collectEvents, roundTrip, settle, startSocketHarness, waitForEvent, type TestClient } from './support/socket-harness.js';
 
 type Harness = Awaited<ReturnType<typeof startSocketHarness>>;
@@ -58,12 +58,14 @@ interface GenerationOptions {
   keyId?: string;
   withInvite?: boolean;
   withRoster?: boolean;
+  withName?: boolean;
 }
 
 function generation(roomId: string, senderId: string, recipients: string[], options: GenerationOptions = {}) {
-  const { epoch = 1, keyId = newKeyId(), withInvite = true, withRoster = true } = options;
+  const { epoch = 1, keyId = newKeyId(), withInvite = true, withRoster = true, withName = true } = options;
   const invite = fakeInvite(keyId);
   const roster = fakeRoster(keyId);
+  const name = fakeName(keyId);
   return {
     payload: {
       roomId,
@@ -72,9 +74,11 @@ function generation(roomId: string, senderId: string, recipients: string[], opti
       keys: recipients.map((userId) => ({ userId, sealedKey: fakeEnvelope({ roomId, keyId, epoch, senderId, recipientId: userId }) })),
       ...(withInvite ? { invite: { tokenHash: invite.tokenHash, encryptedInvite: invite.encryptedInvite } } : {}),
       ...(withRoster ? { roster } : {}),
+      ...(withName ? { name } : {}),
     },
     invite,
     roster,
+    name,
     keyId,
   };
 }
@@ -91,7 +95,7 @@ async function summaryOf(client: TestClient, roomId: string): Promise<Summary | 
 
 async function createGroupWithKey(owner: Account, ownerClient: TestClient) {
   const created = waitForEvent<{ room: Summary }>(ownerClient, 'room:created');
-  ownerClient.emit('room:create-group', { roomName: 'Amigos' });
+  ownerClient.emit('room:create-group', {});
   const { room } = await created;
   const first = generation(room.id, owner.user.id, [owner.user.id]);
   const stored = waitForEvent(ownerClient, 'e2e:room-key');
@@ -123,7 +127,7 @@ describe('invite and roster stored with the room key generation', () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const aliceClient = await h.connectAs(alice);
-    const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
+    const group = await h.roomService.createGroupRoom(alice.user.id);
 
     const noInvite = waitForEvent<ErrorEvent>(aliceClient, 'e2e:room-key-rejected');
     aliceClient.emit('e2e:publish-room-key', generation(group.id, alice.user.id, [alice.user.id], { withInvite: false }).payload);
@@ -140,7 +144,7 @@ describe('invite and roster stored with the room key generation', () => {
   it('refuses a group batch without a roster even when it reaches the repository directly', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
-    const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
+    const group = await h.roomService.createGroupRoom(alice.user.id);
     const keyId = newKeyId();
 
     const outcome = await h.roomKeyRepository.publish({
@@ -192,7 +196,7 @@ describe('invite and roster stored with the room key generation', () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const aliceClient = await h.connectAs(alice);
-    const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
+    const group = await h.roomService.createGroupRoom(alice.user.id);
     const winner = generation(group.id, alice.user.id, [alice.user.id]);
     const loser = generation(group.id, alice.user.id, [alice.user.id]);
 
@@ -214,7 +218,7 @@ describe('invite and roster stored with the room key generation', () => {
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
     const aliceClient = await h.connectAs(alice);
-    const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
+    const group = await h.roomService.createGroupRoom(alice.user.id);
     await h.joinGroup(group.id, bob.user.id);
     await h.db.update(rooms).set({ inviteTokenHash: null }).where(eq(rooms.id, group.id));
 
@@ -288,7 +292,7 @@ describe('invite and roster stored with the room key generation', () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const aliceClient = await h.connectAs(alice);
-    const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
+    const group = await h.roomService.createGroupRoom(alice.user.id);
     const first = generation(group.id, alice.user.id, [alice.user.id]);
 
     await expectError(aliceClient, 'e2e:publish-room-key', { ...first.payload, invite: { tokenHash: 'NOT-HEX', encryptedInvite: 'x' } }, { code: 'validation.invalidPayload' });
@@ -526,7 +530,7 @@ describe('resetting the invite link', () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
     const aliceClient = await h.connectAs(alice);
-    const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
+    const group = await h.roomService.createGroupRoom(alice.user.id);
     const rotations = collectEvents(aliceClient, 'e2e:rotation-required');
     const errors = collectEvents(aliceClient, 'error');
 

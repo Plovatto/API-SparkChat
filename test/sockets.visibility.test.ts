@@ -31,7 +31,7 @@ async function groupWithLateJoiner(h: Harness, options: { carolOffline?: boolean
   const alice = await h.createAccount('Alice');
   const carol = await h.createAccount('Carol');
   const mallory = await h.createAccount('Mallory');
-  const group = await h.roomService.createGroupRoom('Amigos', alice.user.id);
+  const group = await h.roomService.createGroupRoom(alice.user.id);
   await h.joinGroup(group.id, carol.user.id);
   if (options.carolOffline) {
     await h.userService.setStatus(carol.user.id, 'offline');

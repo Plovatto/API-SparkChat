@@ -65,6 +65,8 @@ export const rooms = sqliteTable('rooms', {
   inviteKeyId: text('invite_key_id'),
   encryptedRoster: text('encrypted_roster'),
   rosterKeyId: text('roster_key_id'),
+  encryptedName: text('encrypted_name'),
+  nameKeyId: text('name_key_id'),
 });
 
 export const roomParticipants = sqliteTable(
@@ -125,6 +127,19 @@ export const roomKeys = sqliteTable(
     primaryKey({ columns: [table.roomId, table.userId, table.keyId] }),
     index('room_keys_user_id_idx').on(table.userId),
   ],
+);
+
+export const roomRosters = sqliteTable(
+  'room_rosters',
+  {
+    roomId: text('room_id')
+      .notNull()
+      .references(() => rooms.id, { onDelete: 'cascade' }),
+    keyId: text('key_id').notNull(),
+    encryptedRoster: text('encrypted_roster').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.roomId, table.keyId] })],
 );
 
 export const messages = sqliteTable(

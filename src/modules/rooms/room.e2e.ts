@@ -1,6 +1,6 @@
-import { and, asc, eq, gt, inArray, notExists, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, notExists, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
-import { roomBans, roomKeys, roomParticipants, rooms, users } from '../../database/schema.js';
+import { roomBans, roomKeys, roomParticipants, roomRosters, rooms, users } from '../../database/schema.js';
 import type { RoomInvite } from './room.invites.js';
 
 export interface StoredRoomKey {
@@ -9,6 +9,7 @@ export interface StoredRoomKey {
   epoch: number;
   senderId: string;
   sealedKey: string;
+  roster?: string;
 }
 
 export interface RoomKeyWrite {
@@ -27,7 +28,10 @@ export interface RoomKeyPublication {
   keys: RoomKeyWrite[];
   invite?: RoomInvite | undefined;
   roster?: string | undefined;
+  name?: string | undefined;
 }
+
+export type RoomNameUpdateOutcome = 'updated' | 'stale' | 'notInRoster' | 'notFound';
 
 export type RoomKeyPublishOutcome = 'generation' | 'share' | 'stale' | 'incomplete' | 'conflict';
 
@@ -46,6 +50,47 @@ export interface RoomKeyWithSender extends StoredRoomKey {
   senderPublicKey: string | null;
   senderSigningPublicKey: string | null;
   senderIsMember: boolean;
+}
+
+export const MAX_ROSTER_BYTES_PER_RESPONSE = 256 * 1024;
+
+export interface RosterBudgetResult {
+  keys: StoredRoomKey[];
+  truncated: boolean;
+}
+
+export function limitRosterBytes(keys: StoredRoomKey[], maxBytes: number = MAX_ROSTER_BYTES_PER_RESPONSE): RosterBudgetResult {
+  const kept = new Set<StoredRoomKey>();
+  const sent = new Set<string>();
+  const replacements = new Map<StoredRoomKey, StoredRoomKey>();
+  let used = 0;
+  let truncated = false;
+  for (const key of [...keys].sort((a, b) => b.epoch - a.epoch)) {
+    if (!key.roster) {
+      kept.add(key);
+      continue;
+    }
+    const marker = `${key.roomId}
+${key.roster}`;
+    if (sent.has(marker)) {
+      const { roster: _roster, ...withoutRoster } = key;
+      replacements.set(key, withoutRoster);
+      kept.add(key);
+      continue;
+    }
+    const size = Buffer.byteLength(key.roster, 'utf8');
+    if (used + size > maxBytes) {
+      truncated = true;
+      continue;
+    }
+    used += size;
+    sent.add(marker);
+    kept.add(key);
+  }
+  return {
+    keys: keys.filter((key) => kept.has(key)).map((key) => replacements.get(key) ?? key),
+    truncated,
+  };
 }
 
 type Executor = Pick<Database, 'select' | 'update' | 'insert'>;
@@ -110,7 +155,7 @@ export class RoomKeyRepository {
   }
 
   private async storeGeneration(publication: RoomKeyPublication): Promise<boolean> {
-    const { roomId, keyId, epoch, senderId, keys, invite, roster } = publication;
+    const { roomId, keyId, epoch, senderId, keys, invite, roster, name } = publication;
     const targetIds = sql`(${sql.join(
       keys.map((key) => sql`${key.userId}`),
       sql`, `,
@@ -124,10 +169,14 @@ export class RoomKeyRepository {
       ? sql`, encrypted_roster = case when type = 'group' then ${roster} end,
           roster_key_id = case when type = 'group' then ${keyId} end`
       : sql``;
+    const nameColumns = name
+      ? sql`, encrypted_name = case when type = 'group' then ${name} end,
+          name_key_id = case when type = 'group' then ${keyId} end`
+      : sql``;
     const advance = this.db.run(sql`
-      update ${rooms} set current_epoch = ${epoch}, current_key_id = ${keyId}, rotation_required = null${inviteColumns}${rosterColumns}
+      update ${rooms} set current_epoch = ${epoch}, current_key_id = ${keyId}, rotation_required = null${inviteColumns}${rosterColumns}${nameColumns}
       where id = ${roomId}
-        and (type <> 'group' or ${invite && roster ? 1 : 0} = 1)
+        and (type <> 'group' or ${invite && roster && name ? 1 : 0} = 1)
         and current_epoch = ${epoch - 1}
         and (current_epoch = 0 or rotation_required = ${epoch})
         and ${this.memberCondition(roomId, sql`(${senderId})`)} = 1
@@ -142,7 +191,16 @@ export class RoomKeyRepository {
       where changes() = 1
     `);
 
-    const [advanced] = await this.db.batch([advance, insert]);
+    const storeRoster = this.db.run(sql`
+      insert into ${roomRosters} (room_id, key_id, encrypted_roster, created_at)
+      select ${roomId}, ${keyId}, ${roster ?? null}, ${new Date().toISOString()}
+      where ${roster ? 1 : 0} = 1
+        and exists (select 1 from ${rooms} where id = ${roomId} and type = 'group' and current_epoch = ${epoch}
+          and current_key_id = ${keyId} and roster_key_id = ${keyId} and encrypted_roster = ${roster ?? null})
+      on conflict do nothing
+    `);
+
+    const [advanced] = await this.db.batch([advance, insert, storeRoster]);
     return advanced.rowsAffected === 1;
   }
 
@@ -182,6 +240,41 @@ export class RoomKeyRepository {
     return sameMembers(publication.keys.map((key) => key.userId), memberIds) ? 'stale' : 'incomplete';
   }
 
+  async updateName(roomId: string, userId: string, keyId: string, encryptedName: string): Promise<RoomNameUpdateOutcome> {
+    const result = await this.db.run(sql`
+      update ${rooms} set encrypted_name = ${encryptedName}, name_key_id = ${keyId}
+      where id = ${roomId} and type = 'group' and current_key_id = ${keyId}
+        and ${this.memberCondition(roomId, sql`(${userId})`)} = 1
+        and ${this.inCurrentRosterCondition(roomId, userId, keyId)}
+    `);
+    if (result.rowsAffected === 1) {
+      return 'updated';
+    }
+    const [[room], memberIds] = await Promise.all([
+      this.db.select({ type: rooms.type, currentKeyId: rooms.currentKeyId }).from(rooms).where(eq(rooms.id, roomId)),
+      this.memberIds(this.db, roomId),
+    ]);
+    if (room?.type !== 'group' || !memberIds.includes(userId)) {
+      return 'notFound';
+    }
+    return room.currentKeyId === keyId ? 'notInRoster' : 'stale';
+  }
+
+  private inCurrentRosterCondition(roomId: string, userId: string, keyId: string): SQL {
+    return sql`exists (select 1 from ${roomParticipants} p
+      join ${roomRosters} r on r.room_id = p.room_id and r.key_id = ${keyId}
+      where p.room_id = ${roomId} and p.user_id = ${userId}
+        and p.joined_at is not null and p.joined_at <= r.created_at)`;
+  }
+
+  async findRoster(roomId: string, keyId: string): Promise<string | null> {
+    const [row] = await this.db
+      .select({ encryptedRoster: roomRosters.encryptedRoster })
+      .from(roomRosters)
+      .where(and(eq(roomRosters.roomId, roomId), eq(roomRosters.keyId, keyId)));
+    return row?.encryptedRoster ?? null;
+  }
+
   async markRotationRequired(roomId: string): Promise<RoomRotation | null> {
     const [row] = await this.db
       .update(rooms)
@@ -215,8 +308,21 @@ export class RoomKeyRepository {
     return row ? { ...row, senderIsMember: Boolean(row.senderIsMember) } : null;
   }
 
-  async findForParticipantInRooms(roomIds: string[], userId: string): Promise<StoredRoomKey[]> {
+  async findForParticipantInRooms(roomIds: string[], userId: string, keyIds: Record<string, string[]> = {}): Promise<StoredRoomKey[]> {
     if (roomIds.length === 0) {
+      return [];
+    }
+
+    const filtered = roomIds.filter((roomId) => Object.hasOwn(keyIds, roomId));
+    const unfiltered = roomIds.filter((roomId) => !Object.hasOwn(keyIds, roomId));
+    const scopes: SQL[] = filtered.flatMap((roomId) => {
+      const ids = keyIds[roomId] ?? [];
+      return ids.length > 0 ? [and(eq(roomKeys.roomId, roomId), inArray(roomKeys.keyId, ids)) as SQL] : [];
+    });
+    if (unfiltered.length > 0) {
+      scopes.push(inArray(roomKeys.roomId, unfiltered));
+    }
+    if (scopes.length === 0) {
       return [];
     }
 
@@ -227,13 +333,17 @@ export class RoomKeyRepository {
         epoch: roomKeys.epoch,
         senderId: roomKeys.senderId,
         sealedKey: roomKeys.sealedKey,
+        roster: roomRosters.encryptedRoster,
       })
       .from(roomKeys)
       .innerJoin(roomParticipants, and(eq(roomParticipants.roomId, roomKeys.roomId), eq(roomParticipants.userId, roomKeys.userId)))
-      .where(and(eq(roomKeys.userId, userId), inArray(roomKeys.roomId, roomIds), this.notBanned(this.db)))
+      .leftJoin(roomRosters, and(eq(roomRosters.roomId, roomKeys.roomId), eq(roomRosters.keyId, roomKeys.keyId)))
+      .where(and(eq(roomKeys.userId, userId), or(...scopes), this.notBanned(this.db)))
       .orderBy(asc(roomKeys.epoch));
 
     const order = new Map(roomIds.map((roomId, index) => [roomId, index]));
-    return rows.sort((a, b) => (order.get(a.roomId) ?? 0) - (order.get(b.roomId) ?? 0) || a.epoch - b.epoch);
+    return rows
+      .map(({ roster, ...key }) => (roster ? { ...key, roster } : key))
+      .sort((a, b) => (order.get(a.roomId) ?? 0) - (order.get(b.roomId) ?? 0) || a.epoch - b.epoch);
   }
 }

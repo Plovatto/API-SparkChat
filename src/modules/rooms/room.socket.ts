@@ -12,8 +12,8 @@ import { requireSocketUserId } from '../../sockets/socket-session.js';
 import { emitToUser, joinUserSocketsToRoom, removeUserSocketsFromRoom } from '../../sockets/user-sockets.js';
 import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService, type MessageView } from '../messages/index.js';
 import { NICKNAME_MAX_LENGTH, type UserService } from '../users/index.js';
-import type { RoomKeyPublishMode, RoomKeyPublishOutcome, RoomKeyRepository } from './room.e2e.js';
-import { encryptedRosterSchema, joinByInvitePayloadSchema, roomInviteSchema, toInviteView } from './room.invites.js';
+import { limitRosterBytes, type RoomKeyPublishMode, type RoomKeyPublishOutcome, type RoomKeyRepository } from './room.e2e.js';
+import { encryptedNameSchema, encryptedRosterSchema, joinByInvitePayloadSchema, roomInviteSchema, toInviteView } from './room.invites.js';
 import { KEY_ID_PATTERN, matchesEnvelope, parseRoomKeyEnvelope } from './room.key-envelope.js';
 import type { RoomActionRateLimiter } from './room.rate-limiter.js';
 import type { RoomService } from './room.service.js';
@@ -38,7 +38,6 @@ export interface RoomSocketDeps {
 const ROOM_CODE_MIN_LENGTH = 8;
 const ROOM_CODE_MAX_LENGTH = 12;
 const ROOM_CODE_INPUT_MAX_LENGTH = 64;
-const ROOM_NAME_MAX_LENGTH = 64;
 const MAX_SEALED_KEY_LENGTH = 1000;
 export const MAX_ROOM_KEY_BATCH = MAX_GROUP_MEMBERS;
 
@@ -46,9 +45,9 @@ const createPrivateRoomPayloadSchema = z.object({
   targetNickname: z.string().trim().min(1).max(NICKNAME_MAX_LENGTH),
 });
 
-const createGroupRoomPayloadSchema = z.object({
-  roomName: z.string().trim().min(1).max(ROOM_NAME_MAX_LENGTH),
-});
+const createGroupRoomPayloadSchema = z.object({});
+
+export const MAX_KEY_IDS_PER_ROOM = 50;
 
 const joinByCodePayloadSchema = z.object({
   roomCode: z.string().trim().min(1).max(ROOM_CODE_INPUT_MAX_LENGTH),
@@ -79,10 +78,21 @@ const publishRoomKeyPayloadSchema = z.object({
     .max(MAX_ROOM_KEY_BATCH),
   invite: roomInviteSchema.optional(),
   roster: encryptedRosterSchema.optional(),
+  name: encryptedNameSchema.optional(),
 });
 
 const getRoomKeysPayloadSchema = z.object({
   roomIds: z.array(z.string().trim().min(1)).min(1).max(E2E_LOOKUP_MAX_ITEMS),
+  keyIds: z
+    .record(z.string().trim().min(1), z.array(z.string().regex(KEY_ID_PATTERN)).min(1).max(MAX_KEY_IDS_PER_ROOM))
+    .refine((keyIds) => Object.keys(keyIds).length <= E2E_LOOKUP_MAX_ITEMS)
+    .optional(),
+});
+
+const renameRoomPayloadSchema = z.object({
+  roomId: z.string().trim().min(1),
+  name: encryptedNameSchema,
+  keyId: z.string().regex(KEY_ID_PATTERN),
 });
 
 registerClientEvents('rooms', {
@@ -91,6 +101,7 @@ registerClientEvents('rooms', {
   'room:join-by-code': joinByCodePayloadSchema,
   'room:join-by-invite': joinByInvitePayloadSchema,
   'room:reset-invite': roomIdPayloadSchema,
+  'room:rename': renameRoomPayloadSchema,
   'room:join': roomIdPayloadSchema,
   'room:delete': roomIdPayloadSchema,
   'rooms:get': null,
@@ -123,6 +134,7 @@ registerServerEvents('rooms', [
   'e2e:room-key-rejected',
   'e2e:rotation-required',
   'room:invite-updated',
+  'room:name-updated',
 ]);
 
 const REJECTION_CODES = {
@@ -140,6 +152,26 @@ function announceInvite(io: AppServer, room: RoomRecord): void {
   for (const memberId of room.participants) {
     emitToUser(io, memberId).emit('room:invite-updated', { roomId: room.id, invite, roster });
   }
+}
+
+function announceName(io: AppServer, room: RoomRecord): void {
+  if (room.type !== 'group' || !room.encryptedName || !room.nameKeyId) {
+    return;
+  }
+  for (const memberId of room.participants) {
+    emitToUser(io, memberId).emit('room:name-updated', { roomId: room.id, encryptedName: room.encryptedName, keyId: room.nameKeyId });
+  }
+}
+
+function exceedsKeyIdLimit(payload: unknown): boolean {
+  if (typeof payload !== 'object' || payload === null) {
+    return false;
+  }
+  const keyIds = (payload as Record<string, unknown>).keyIds;
+  if (typeof keyIds !== 'object' || keyIds === null) {
+    return false;
+  }
+  return Object.values(keyIds).some((ids) => Array.isArray(ids) && ids.length > MAX_KEY_IDS_PER_ROOM);
 }
 
 async function announceRotation(io: AppServer, deps: RoomSocketDeps, room: RoomRecord): Promise<void> {
@@ -189,6 +221,10 @@ export function registerRoomSocketHandlers(io: AppServer, socket: AppSocket, dep
 
   socket.on('room:reset-invite', (payload) => {
     runSocketHandler(socket, 'room:reset-invite', () => handleResetInvite(io, socket, deps, payload));
+  });
+
+  socket.on('room:rename', (payload) => {
+    runSocketHandler(socket, 'room:rename', () => handleRenameRoom(io, socket, deps, payload));
   });
 
   socket.on('room:join', (payload) => {
@@ -285,13 +321,13 @@ async function handleCreateGroupRoom(io: AppServer, socket: AppSocket, deps: Roo
   const { roomService, userService, messageService } = deps;
 
   try {
-    const { roomName } = createGroupRoomPayloadSchema.parse(payload);
+    createGroupRoomPayloadSchema.parse(payload ?? {});
     if (!deps.rateLimiter.tryCreateGroup(userId)) {
       socket.emit('error', errorPayload('rateLimit.roomCreate'));
       return;
     }
 
-    const room = await roomService.createGroupRoom(roomName, userId);
+    const room = await roomService.createGroupRoom(userId);
     await socket.join(room.id);
     await joinUserSocketsToRoom(io, userId, room.id);
 
@@ -447,6 +483,37 @@ async function handleResetInvite(io: AppServer, socket: AppSocket, deps: RoomSoc
     }
   } catch (error) {
     socket.emit('error', eventError('room:reset-invite', error));
+  }
+}
+
+async function handleRenameRoom(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
+  if (!userId) {
+    return;
+  }
+
+  try {
+    const { roomId, name, keyId } = renameRoomPayloadSchema.parse(payload);
+    const outcome = await deps.roomKeyRepository.updateName(roomId, userId, keyId, name);
+    if (outcome === 'notFound') {
+      socket.emit('error', { ...errorPayload('room.notFound'), event: 'room:rename' });
+      return;
+    }
+    if (outcome === 'stale') {
+      socket.emit('error', { ...errorPayload('e2e.nameKeyStale'), event: 'room:rename' });
+      return;
+    }
+    if (outcome === 'notInRoster') {
+      socket.emit('error', { ...errorPayload('e2e.renameRequiresRoster'), event: 'room:rename' });
+      return;
+    }
+
+    const room = await deps.roomService.getRoomById(roomId);
+    if (room) {
+      announceName(io, room);
+    }
+  } catch (error) {
+    socket.emit('error', eventError('room:rename', error));
   }
 }
 
@@ -695,7 +762,7 @@ async function handlePublishRoomKey(
   const { roomService, roomKeyRepository } = deps;
 
   try {
-    const { roomId, keyId, epoch, keys, invite, roster } = publishRoomKeyPayloadSchema.parse(payload);
+    const { roomId, keyId, epoch, keys, invite, roster, name } = publishRoomKeyPayloadSchema.parse(payload);
     const room = await roomService.getRoomById(roomId);
     if (!room || !roomService.isParticipant(room, actingUserId)) {
       return;
@@ -706,7 +773,8 @@ async function handlePublishRoomKey(
         | (typeof REJECTION_CODES)[keyof typeof REJECTION_CODES]
         | 'e2e.invalidRoomKeyEnvelope'
         | 'e2e.inviteRequired'
-        | 'e2e.rosterRequired',
+        | 'e2e.rosterRequired'
+        | 'e2e.nameRequired',
     ) => {
       const state = await roomKeyRepository.getState(roomId);
       socket.emit('e2e:room-key-rejected', {
@@ -739,6 +807,10 @@ async function handlePublishRoomKey(
       await reject('e2e.rosterRequired');
       return;
     }
+    if (groupGeneration && !name) {
+      await reject('e2e.nameRequired');
+      return;
+    }
 
     const outcome = await roomKeyRepository.publish({
       mode,
@@ -749,19 +821,29 @@ async function handlePublishRoomKey(
       keys,
       invite: groupGeneration ? invite : undefined,
       roster: groupGeneration ? roster : undefined,
+      name: groupGeneration ? name : undefined,
     });
     if (outcome !== 'generation' && outcome !== 'share') {
       await reject(REJECTION_CODES[outcome]);
       return;
     }
 
+    const deliveredRoster = groupGeneration ? roster : room.type === 'group' ? await roomKeyRepository.findRoster(roomId, keyId) : null;
     for (const key of keys) {
-      emitToUser(io, key.userId).emit('e2e:room-key', { roomId, keyId, epoch, senderId: actingUserId, sealedKey: key.sealedKey });
+      emitToUser(io, key.userId).emit('e2e:room-key', {
+        roomId,
+        keyId,
+        epoch,
+        senderId: actingUserId,
+        sealedKey: key.sealedKey,
+        ...(deliveredRoster ? { roster: deliveredRoster } : {}),
+      });
     }
 
     const updatedRoom = (await roomService.getRoomById(roomId)) ?? room;
     if (outcome === 'generation') {
       announceInvite(io, updatedRoom);
+      announceName(io, updatedRoom);
     }
     deps.onRoomKeyPublished?.({ io, room: updatedRoom });
   } catch (error) {
@@ -779,12 +861,16 @@ async function handleGetRoomKeys(socket: AppSocket, deps: RoomSocketDeps, payloa
     socket.emit('error', lookupTooLargePayload('e2e:get-room-keys'));
     return;
   }
+  if (exceedsKeyIdLimit(payload)) {
+    socket.emit('error', lookupTooLargePayload('e2e:get-room-keys', MAX_KEY_IDS_PER_ROOM));
+    return;
+  }
 
   try {
-    const { roomIds } = getRoomKeysPayloadSchema.parse(payload);
-    const keys = await deps.roomKeyRepository.findForParticipantInRooms(roomIds, userId);
+    const { roomIds, keyIds } = getRoomKeysPayloadSchema.parse(payload);
+    const { keys, truncated } = limitRosterBytes(await deps.roomKeyRepository.findForParticipantInRooms(roomIds, userId, keyIds));
 
-    socket.emit('e2e:room-keys', { keys });
+    socket.emit('e2e:room-keys', truncated ? { keys, truncated } : { keys });
   } catch (error) {
     socket.emit('error', { ...extractErrorPayload(error), event: 'e2e:get-room-keys' });
   }

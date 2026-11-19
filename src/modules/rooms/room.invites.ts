@@ -5,6 +5,7 @@ export const INVITE_TOKEN_HASH_PATTERN = /^[0-9a-f]{64}$/;
 const INVITE_SECRET_VALUE_PATTERN = /^[A-Za-z0-9_\-+/]{16,128}={0,2}$/;
 const MAX_ENCRYPTED_INVITE_LENGTH = 1024;
 export const MAX_ENCRYPTED_ROSTER_LENGTH = 32 * 1024;
+export const MAX_ENCRYPTED_NAME_LENGTH = 2 * 1024;
 
 export interface RoomInvite {
   tokenHash: string;
@@ -29,6 +30,11 @@ export interface RoomRosterView {
   keyId: string;
 }
 
+export interface RoomNameView {
+  encryptedName: string;
+  keyId: string;
+}
+
 export interface InviteProofView {
   userId: string;
   proof: string;
@@ -42,6 +48,8 @@ export const roomInviteSchema = z.object({
 });
 
 export const encryptedRosterSchema = z.string().trim().min(1).max(MAX_ENCRYPTED_ROSTER_LENGTH);
+
+export const encryptedNameSchema = z.string().trim().min(1).max(MAX_ENCRYPTED_NAME_LENGTH);
 
 export const joinByInvitePayloadSchema = z.object({
   roomId: z.string().trim().min(1),

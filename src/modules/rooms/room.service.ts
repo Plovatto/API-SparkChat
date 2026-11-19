@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { AppError } from '../../lib/app-error.js';
 import type { MessageRecord, MessageService } from '../messages/index.js';
 import type { UserRecord, UserService } from '../users/index.js';
-import { hashInviteToken, matchesInviteToken, toInviteView, type InviteProofView, type RoomInviteView, type RoomRosterView } from './room.invites.js';
+import { hashInviteToken, matchesInviteToken, toInviteView, type InviteProofView, type RoomInviteView, type RoomNameView, type RoomRosterView } from './room.invites.js';
 import type { InviteResetOutcome, RoomRepository } from './room.repository.js';
 import type { RoomRotationAnnouncement } from './room.rotation.js';
 import { MAX_GROUP_MEMBERS, type RoomParticipant, type RoomRecord, type RoomSummary } from './room.types.js';
@@ -43,6 +43,13 @@ function inviteView(room: RoomRecord, viewerId: string): RoomInviteView | null {
     return null;
   }
   return toInviteView(room);
+}
+
+function nameView(room: RoomRecord, viewerId: string): RoomNameView | null {
+  if (room.type !== 'group' || !room.participants.includes(viewerId) || !room.encryptedName || !room.nameKeyId) {
+    return null;
+  }
+  return { encryptedName: room.encryptedName, keyId: room.nameKeyId };
 }
 
 function rosterView(room: RoomRecord, viewerId: string): RoomRosterView | null {
@@ -90,12 +97,11 @@ export class RoomService {
     return this.repository.insert(room);
   }
 
-  async createGroupRoom(name: string, creatorId: string): Promise<RoomRecord> {
+  async createGroupRoom(creatorId: string): Promise<RoomRecord> {
     const now = new Date().toISOString();
     const room: RoomRecord = {
       id: randomUUID(),
       type: 'group',
-      name,
       participants: [creatorId],
       admins: [creatorId],
       createdBy: creatorId,
@@ -399,7 +405,6 @@ export class RoomService {
       return {
         id: room.id,
         type: room.type,
-        name: room.name,
         createdBy: creator?.nickname,
         creatorId: room.createdBy,
         participants: toParticipants(room, usersById),
@@ -415,6 +420,7 @@ export class RoomService {
         rotationRequiredEpoch: room.rotationRequired ?? null,
         invite: inviteView(room, viewerId),
         roster: rosterView(room, viewerId),
+        encryptedName: nameView(room, viewerId),
         inviteProofs: inviteProofsView(room, viewerId),
       };
     });

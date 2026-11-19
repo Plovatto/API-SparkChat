@@ -1,6 +1,6 @@
 import type { MessageView } from '../messages/index.js';
 import type { UserStatus } from '../users/index.js';
-import type { InviteProofView, RoomInviteView, RoomRosterView } from './room.invites.js';
+import type { InviteProofView, RoomInviteView, RoomNameView, RoomRosterView } from './room.invites.js';
 
 export type RoomType = 'private' | 'group';
 
@@ -9,7 +9,6 @@ export const MAX_GROUP_MEMBERS = 150;
 export interface RoomRecord {
   id: string;
   type: RoomType;
-  name?: string | undefined;
   roomCode?: string | undefined;
   participants: string[];
   admins: string[];
@@ -28,6 +27,8 @@ export interface RoomRecord {
   inviteKeyId?: string | undefined;
   encryptedRoster?: string | undefined;
   rosterKeyId?: string | undefined;
+  encryptedName?: string | undefined;
+  nameKeyId?: string | undefined;
   inviteProofs?: Record<string, string> | undefined;
 }
 
@@ -44,7 +45,6 @@ export interface RoomParticipant {
 export interface RoomSummary {
   id: string;
   type: RoomType;
-  name?: string | undefined;
   createdBy?: string | undefined;
   creatorId?: string | undefined;
   participants: RoomParticipant[];
@@ -60,5 +60,6 @@ export interface RoomSummary {
   rotationRequiredEpoch: number | null;
   invite: RoomInviteView | null;
   roster: RoomRosterView | null;
+  encryptedName: RoomNameView | null;
   inviteProofs: InviteProofView[];
 }

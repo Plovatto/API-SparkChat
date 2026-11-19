@@ -36,7 +36,6 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
   return {
     id: room.id,
     type: room.type,
-    name: room.name ?? undefined,
     roomCode: room.roomCode ?? undefined,
     participants: participants.map((participant) => participant.userId),
     admins: participants.filter((participant) => participant.isAdmin).map((participant) => participant.userId),
@@ -55,6 +54,8 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
     inviteKeyId: room.inviteKeyId ?? undefined,
     encryptedRoster: room.encryptedRoster ?? undefined,
     rosterKeyId: room.rosterKeyId ?? undefined,
+    encryptedName: room.encryptedName ?? undefined,
+    nameKeyId: room.nameKeyId ?? undefined,
     inviteProofs,
   };
 }
@@ -113,7 +114,6 @@ export class RoomRepository {
     const roomInsert = this.db.insert(rooms).values({
       id: room.id,
       type: room.type,
-      name: room.name,
       roomCode: room.roomCode,
       createdBy: room.createdBy,
       createdAt: room.createdAt,

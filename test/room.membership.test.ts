@@ -15,7 +15,7 @@ async function createUser(services: Services, nickname: string) {
 async function groupWithMember(services: Services) {
   const alice = await createUser(services, 'Alice');
   const bob = await createUser(services, 'Bob');
-  const group = await services.roomService.createGroupRoom('Amigos', alice.id);
+  const group = await services.roomService.createGroupRoom(alice.id);
   await services.joinGroup(group.id, bob.id);
   await services.roomService.promoteAdmin(group.id, alice.id, bob.id);
   return { alice, bob, group };
@@ -104,8 +104,8 @@ describe('group room codes', () => {
     const services = await buildRoomService();
     const { roomService, roomRepository, db } = services;
     const alice = await createUser(services, 'Alice');
-    const legacy = await roomService.createGroupRoom('Antigo', alice.id);
-    const modern = await roomService.createGroupRoom('Novo', alice.id);
+    const legacy = await roomService.createGroupRoom(alice.id);
+    const modern = await roomService.createGroupRoom(alice.id);
     await db.update(rooms).set({ roomCode: 'ABCD1234XY' }).where(eq(rooms.id, legacy.id));
 
     const first = await roomService.normalizeMembershipsAndRoomCodes();

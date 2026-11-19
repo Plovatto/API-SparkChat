@@ -4,7 +4,7 @@ import { MAX_ROOM_KEY_BATCH } from '@/modules/rooms/room.socket.js';
 import { MAX_GROUP_MEMBERS } from '@/modules/rooms/room.types.js';
 import type { RoomKeyPublication } from '@/modules/rooms/room.e2e.js';
 import { buildRoomService } from './support/build-room-service.js';
-import { fakeEnvelope, fakeInvite, fakeRoster, newKeyId } from './support/room-keys.js';
+import { fakeEnvelope, fakeInvite, fakeName, fakeRoster, newKeyId } from './support/room-keys.js';
 import { TEST_V2_SIGNUP } from './support/test-constants.js';
 
 type Services = Awaited<ReturnType<typeof buildRoomService>>;
@@ -28,6 +28,7 @@ function publication(roomId: string, senderId: string, recipients: string[], epo
     keys: recipients.map((userId) => ({ userId, sealedKey: fakeEnvelope({ roomId, keyId, epoch, senderId, recipientId: userId }) })),
     invite: fakeInvite(keyId),
     roster: fakeRoster(keyId),
+    name: fakeName(keyId),
   };
 }
 
@@ -40,7 +41,7 @@ async function groupOfThree() {
   const alice = await createUser(services.userService, 'Alice');
   const bob = await createUser(services.userService, 'Bob');
   const carol = await createUser(services.userService, 'Carol');
-  const group = await services.roomService.createGroupRoom('Amigos', alice.id);
+  const group = await services.roomService.createGroupRoom(alice.id);
   await services.joinGroup(group.id, bob.id);
   await services.joinGroup(group.id, carol.id);
   return { ...services, alice, bob, carol, group };
@@ -62,7 +63,7 @@ describe('RoomKeyRepository generations', () => {
     expect(await roomKeyRepository.getState(group.id)).toEqual({ currentEpoch: 1, currentKeyId: batch.keyId, rotationRequired: null });
     expect(await roomService.getRoomById(group.id)).toMatchObject({ currentEpoch: 1, currentKeyId: batch.keyId });
     expect(await roomKeyRepository.findForParticipantInRooms([group.id], bob.id)).toEqual([
-      { roomId: group.id, keyId: batch.keyId, epoch: 1, senderId: alice.id, sealedKey: batch.keys[1]?.sealedKey },
+      { roomId: group.id, keyId: batch.keyId, epoch: 1, senderId: alice.id, sealedKey: batch.keys[1]?.sealedKey, roster: batch.roster },
     ]);
   });
 
