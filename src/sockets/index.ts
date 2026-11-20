@@ -29,7 +29,8 @@ import {
 } from '../modules/users/index.js';
 import type { AppServer, AppSocket } from './events.js';
 import { guardSessionRecovery, rejectRevokedRecovery } from './session-recovery.js';
-import { applySocketRateLimit, DEFAULT_SOCKET_EVENT_BUDGETS, type SocketEventBudgets } from './socket-rate-limit.js';
+import { admitSocketConnection, DEFAULT_SOCKET_CONNECTION_LIMITS, enforceUserSocketCap, SocketConnectionTracker, type SocketConnectionLimits } from './connection-limits.js';
+import { applySocketRateLimit, DEFAULT_SOCKET_EVENT_BUDGETS, UserEventLimiters, type SocketEventBudgets } from './socket-rate-limit.js';
 import { handshakeAuthSchema, resolveHandshakeLocale } from './socket-locale.js';
 
 registerClientEvents('connection', {
@@ -53,6 +54,7 @@ export interface SocketDeps {
   pushService: PushService;
   avatarService: AvatarService;
   socketEventBudgets?: SocketEventBudgets;
+  socketConnectionLimits?: SocketConnectionLimits;
 }
 
 function logHookFailure(hook: string) {
@@ -74,7 +76,16 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
     disconnectRevokedSession(io, revoked);
   });
 
+  const eventBudgets = deps.socketEventBudgets ?? DEFAULT_SOCKET_EVENT_BUDGETS;
+  const connectionLimits = deps.socketConnectionLimits ?? DEFAULT_SOCKET_CONNECTION_LIMITS;
+  const userEventLimiters = new UserEventLimiters(eventBudgets);
+  const connectionTracker = new SocketConnectionTracker(connectionLimits.maxPerIp);
+
   io.on('connection', (socket: AppSocket) => {
+    if (!admitSocketConnection(socket, connectionTracker, connectionLimits)) {
+      return;
+    }
+
     socket.data.locale = resolveHandshakeLocale(socket.handshake.auth);
     logger.info({ socketId: socket.id, recovered: socket.recovered }, 'Client connected');
 
@@ -82,7 +93,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       return;
     }
 
-    applySocketRateLimit(socket, deps.socketEventBudgets ?? DEFAULT_SOCKET_EVENT_BUDGETS);
+    applySocketRateLimit(socket, eventBudgets, Date.now, userEventLimiters);
 
     const activityServices = {
       typingService: deps.typingService,
@@ -98,7 +109,8 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       onSessionReleased: ({ socket: released, userId }) => {
         releaseSocketActivity(io, released, activityServices, userId);
       },
-      onAuthenticated: ({ socket: authenticated }) => {
+      onAuthenticated: ({ socket: authenticated, userId }) => {
+        enforceUserSocketCap(io, userId, connectionLimits.maxPerUser);
         deps.callService
           .getConfig()
           .then((config) => authenticated.emit('call:config', config))
