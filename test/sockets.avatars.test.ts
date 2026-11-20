@@ -82,6 +82,7 @@ async function setup() {
   await joined;
   const keyId = await h.establishRoomKey(groupId);
   await h.roomService.createPrivateRoom(alice.user.id, carol.user.id);
+  await h.roomService.createPrivateRoom(carol.user.id, alice.user.id);
 
   return { h, alice, bob, carol, mallory, aliceClient, aliceSecond, bobClient, carolClient, malloryClient, groupId, keyId };
 }

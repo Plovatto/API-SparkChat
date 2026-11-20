@@ -2,6 +2,10 @@ const MAX_JOIN_ATTEMPTS = 10;
 const JOIN_ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
 const MAX_GROUP_CREATIONS = 10;
 const GROUP_CREATION_WINDOW_MS = 60 * 60 * 1000;
+const MAX_PRIVATE_ROOM_CREATIONS = 30;
+const PRIVATE_ROOM_CREATION_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_PRIVATE_LOOKUP_MISSES = 10;
+const PRIVATE_LOOKUP_MISS_WINDOW_MS = 10 * 60 * 1000;
 export const KEY_REQUEST_INTERVAL_MS = 30 * 1000;
 export const INVITE_RESET_INTERVAL_MS = 30 * 1000;
 const MAX_TRACKED_ENTRIES = 10_000;
@@ -20,6 +24,8 @@ function pruneExpired(entries: Map<string, number>, now: number): void {
 export class RoomActionRateLimiter {
   private readonly joinAttempts = new Map<string, number[]>();
   private readonly groupCreations = new Map<string, number[]>();
+  private readonly privateRoomCreations = new Map<string, number[]>();
+  private readonly privateLookupMisses = new Map<string, number[]>();
   private readonly keyRequestCooldowns = new Map<string, number>();
   private readonly inviteResetCooldowns = new Map<string, number>();
 
@@ -46,6 +52,33 @@ export class RoomActionRateLimiter {
     }
     recent.push(now);
     this.groupCreations.set(userId, recent);
+    return true;
+  }
+
+  tryCreatePrivateRoom(userId: string): boolean {
+    return this.tryWindow(this.privateRoomCreations, userId, MAX_PRIVATE_ROOM_CREATIONS, PRIVATE_ROOM_CREATION_WINDOW_MS);
+  }
+
+  tryPrivateLookupMiss(userId: string): boolean {
+    return this.tryWindow(this.privateLookupMisses, userId, MAX_PRIVATE_LOOKUP_MISSES, PRIVATE_LOOKUP_MISS_WINDOW_MS);
+  }
+
+  private tryWindow(entries: Map<string, number[]>, key: string, max: number, windowMs: number): boolean {
+    const now = this.now();
+    if (entries.size >= MAX_TRACKED_ENTRIES) {
+      for (const [entryKey, timestamps] of entries) {
+        if (!timestamps.some((timestamp) => timestamp > now - windowMs)) {
+          entries.delete(entryKey);
+        }
+      }
+    }
+    const recent = (entries.get(key) ?? []).filter((timestamp) => timestamp > now - windowMs);
+    if (recent.length >= max) {
+      entries.set(key, recent);
+      return false;
+    }
+    recent.push(now);
+    entries.set(key, recent);
     return true;
   }
 

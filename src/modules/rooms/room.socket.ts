@@ -285,6 +285,10 @@ async function handleCreatePrivateRoom(io: AppServer, socket: AppSocket, deps: R
 
     const targetUser = await userService.getUserByNickname(targetNickname);
     if (!targetUser) {
+      if (!deps.rateLimiter.tryPrivateLookupMiss(userId)) {
+        socket.emit('error', errorPayload('rateLimit.privateRoomCreate'));
+        return;
+      }
       socket.emit('error', errorPayload('user.notFound'));
       return;
     }
@@ -295,6 +299,10 @@ async function handleCreatePrivateRoom(io: AppServer, socket: AppSocket, deps: R
     }
 
     const existingRoom = await roomService.findPrivateRoomBetween(userId, targetUser.id);
+    if (!existingRoom && !deps.rateLimiter.tryCreatePrivateRoom(userId)) {
+      socket.emit('error', errorPayload('rateLimit.privateRoomCreate'));
+      return;
+    }
     const room = await roomService.createPrivateRoom(userId, targetUser.id);
     await socket.join(room.id);
     await Promise.all([joinUserSocketsToRoom(io, userId, room.id), joinUserSocketsToRoom(io, targetUser.id, room.id)]);

@@ -34,3 +34,28 @@ describe('RoomActionRateLimiter', () => {
     expect(limiter.tryKeyRequest('alice', 'room-1')).toBe(true);
   });
 });
+
+describe('private room creation limits', () => {
+  it('caps new private rooms per user per day and frees the budget afterwards', () => {
+    let now = 1_000_000;
+    const limiter = new RoomActionRateLimiter(() => now);
+
+    for (let index = 0; index < 30; index += 1) {
+      expect(limiter.tryCreatePrivateRoom('a')).toBe(true);
+    }
+    expect(limiter.tryCreatePrivateRoom('a')).toBe(false);
+    expect(limiter.tryCreatePrivateRoom('b')).toBe(true);
+
+    now += 24 * 60 * 60 * 1000 + 1;
+    expect(limiter.tryCreatePrivateRoom('a')).toBe(true);
+  });
+
+  it('caps unknown nickname lookups per user', () => {
+    const limiter = new RoomActionRateLimiter();
+
+    for (let index = 0; index < 10; index += 1) {
+      expect(limiter.tryPrivateLookupMiss('a')).toBe(true);
+    }
+    expect(limiter.tryPrivateLookupMiss('a')).toBe(false);
+  });
+});
