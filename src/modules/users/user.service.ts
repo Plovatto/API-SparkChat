@@ -583,6 +583,8 @@ export class UserService {
       statusText: user.statusText,
       theme: user.theme ?? DEFAULT_THEME,
       chatSettings: user.chatSettings ?? null,
+      encryptedAvatar: user.encryptedAvatar ?? null,
+      profileKeyVersion: user.profileKeyVersion ?? 1,
     };
   }
 

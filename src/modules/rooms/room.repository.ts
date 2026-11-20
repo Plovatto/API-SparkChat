@@ -3,7 +3,7 @@ import { alias, type SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import type { Database } from '../../database/turso-client.js';
 import { roomBans, roomParticipants, rooms } from '../../database/schema.js';
 import type { InviteProofView } from './room.invites.js';
-import { MAX_GROUP_MEMBERS, type RoomRecord } from './room.types.js';
+import { MAX_GROUP_MEMBERS, type ProfileKeyEnvelopeView, type RoomRecord } from './room.types.js';
 
 type RoomRow = typeof rooms.$inferSelect;
 type ParticipantRow = typeof roomParticipants.$inferSelect;
@@ -14,6 +14,7 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
   const reactivatedAt: Record<string, string> = {};
   const joinedAt: Record<string, string> = {};
   const inviteProofs: Record<string, string> = {};
+  const profileKeyEnvelopes: Record<string, ProfileKeyEnvelopeView> = {};
 
   for (const participant of participants) {
     if (participant.blockedByUserId) {
@@ -30,6 +31,9 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
     }
     if (participant.inviteProof) {
       inviteProofs[participant.userId] = participant.inviteProof;
+    }
+    if (participant.profileKeyEnvelope && participant.profileKeyKeyId) {
+      profileKeyEnvelopes[participant.userId] = { envelope: participant.profileKeyEnvelope, keyId: participant.profileKeyKeyId };
     }
   }
 
@@ -57,6 +61,9 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
     encryptedName: room.encryptedName ?? undefined,
     nameKeyId: room.nameKeyId ?? undefined,
     inviteProofs,
+    encryptedAvatar: room.encryptedAvatar ?? undefined,
+    avatarKeyId: room.avatarKeyId ?? undefined,
+    profileKeyEnvelopes,
   };
 }
 

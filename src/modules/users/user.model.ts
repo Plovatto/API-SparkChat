@@ -91,6 +91,8 @@ export const publicUserSchema = z
     statusText: z.string().nullable().openapi({ example: 'no trampo' }),
     theme: userThemeSchema,
     chatSettings: userChatSettingsSchema.nullable(),
+    encryptedAvatar: z.string().nullable().openapi({ description: 'Ponteiro da foto de perfil cifrado com a chave de perfil; null sem foto' }),
+    profileKeyVersion: z.number().int().openapi({ example: 1, description: 'Versão atual da chave de perfil' }),
   })
   .openapi('PublicUser');
 

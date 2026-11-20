@@ -30,6 +30,19 @@ export interface RoomRecord {
   encryptedName?: string | undefined;
   nameKeyId?: string | undefined;
   inviteProofs?: Record<string, string> | undefined;
+  encryptedAvatar?: string | undefined;
+  avatarKeyId?: string | undefined;
+  profileKeyEnvelopes?: Record<string, ProfileKeyEnvelopeView> | undefined;
+}
+
+export interface ProfileKeyEnvelopeView {
+  envelope: string;
+  keyId: string;
+}
+
+export interface RoomAvatarView {
+  encryptedAvatar: string;
+  keyId: string;
 }
 
 export interface RoomParticipant {
@@ -40,6 +53,9 @@ export interface RoomParticipant {
   statusText: string | null;
   lastSeen: string;
   isAdmin: boolean;
+  encryptedAvatar: string | null;
+  profileKeyVersion: number;
+  profileKeyEnvelope: ProfileKeyEnvelopeView | null;
 }
 
 export interface RoomSummary {
@@ -61,5 +77,6 @@ export interface RoomSummary {
   invite: RoomInviteView | null;
   roster: RoomRosterView | null;
   encryptedName: RoomNameView | null;
+  encryptedAvatar: RoomAvatarView | null;
   inviteProofs: InviteProofView[];
 }
