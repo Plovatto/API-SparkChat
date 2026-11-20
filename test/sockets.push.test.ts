@@ -386,8 +386,8 @@ describe('message pushes', () => {
     expect(sent).toEqual([]);
   });
 
-  it('pushes only the room id to an offline recipient, collapsed per room', async () => {
-    const { h, room, aliceClient, bobClient, bobSub, sent } = await messageSetup();
+  it('pushes only ids and the end-to-end ciphertext to an offline recipient, collapsed per room', async () => {
+    const { h, alice, room, aliceClient, bobClient, bobSub, sent } = await messageSetup();
     bobClient.disconnect();
     await settle(50);
     await send(aliceClient, room.id, 'segredo absoluto', 'm1');
@@ -395,7 +395,9 @@ describe('message pushes', () => {
 
     expect(sent).toHaveLength(1);
     expect(sent[0]?.endpoint).toBe(bobSub.endpoint);
-    expect(sent[0]?.payload).toEqual({ t: 'msg', roomId: room.id });
+    expect(sent[0]?.payload).toMatchObject({ t: 'msg', roomId: room.id, m: { s: alice.user.id, k: 'text', c: fakeField('segredo absoluto') } });
+    expect(Object.keys(sent[0]?.payload ?? {}).sort()).toEqual(['m', 'roomId', 't']);
+    expect(Buffer.byteLength(sent[0]?.raw ?? '')).toBeLessThanOrEqual(3000);
     expect(sent[0]?.options).toEqual({ TTL: 86_400, urgency: 'high', topic: pushTopic('room', room.id) });
     expect(sent[0]?.raw).not.toMatch(/segredo|Alice/);
 

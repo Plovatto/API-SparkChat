@@ -5,13 +5,17 @@ import { isAllowedPushEndpoint, normalizeAuthSecret, normalizeP256dh } from './p
 import type { PushRateLimiter } from './push.rate-limiter.js';
 import type { PushRepository } from './push.repository.js';
 import {
+  ENCRYPTED_FIELD_PREFIX,
   MAX_CONCURRENT_SENDS,
+  MAX_PUSH_PAYLOAD_BYTES,
   MAX_QUEUED_SENDS,
   MAX_USER_AGENT_LENGTH,
   PushDeliveryError,
   type PushCallEndReason,
   type PushConfig,
+  type PushMessagePreview,
   type PushPayload,
+  type PushPreviewKind,
   type PushSender,
   type PushSendOptions,
   type PushSessionTimes,
@@ -53,6 +57,28 @@ export interface NewMessagePush {
   roomId: string;
   senderId: string;
   recipientIds: readonly string[];
+  message?: { id: string; type: string; content: string };
+}
+
+const PREVIEW_KINDS: ReadonlySet<string> = new Set<PushPreviewKind>(['text', 'image', 'audio', 'file']);
+
+function payloadBytes(payload: PushPayload): number {
+  return Buffer.byteLength(JSON.stringify(payload), 'utf8');
+}
+
+export function buildMessagePushPayload(input: NewMessagePush): PushPayload {
+  const base: PushPayload = { t: 'msg', roomId: input.roomId };
+  const message = input.message;
+  if (!message || !PREVIEW_KINDS.has(message.type)) {
+    return base;
+  }
+  const preview: PushMessagePreview = { id: message.id, s: input.senderId, k: message.type as PushPreviewKind };
+  const withContent: PushPayload = { ...base, m: message.type === 'text' && message.content.startsWith(ENCRYPTED_FIELD_PREFIX) ? { ...preview, c: message.content } : preview };
+  if (payloadBytes(withContent) <= MAX_PUSH_PAYLOAD_BYTES) {
+    return withContent;
+  }
+  const withoutContent: PushPayload = { ...base, m: preview };
+  return payloadBytes(withoutContent) <= MAX_PUSH_PAYLOAD_BYTES ? withoutContent : base;
 }
 
 export function pushTopic(scope: 'call' | 'room', id: string): string {
@@ -159,12 +185,13 @@ export class PushService {
       return;
     }
     const topic = pushTopic('room', input.roomId);
+    const payload = buildMessagePushPayload(input);
     for (const userId of new Set(input.recipientIds)) {
       if (userId === input.senderId || this.hasVisibleClient(userId) || !this.limiter.tryMessage(userId, input.roomId)) {
         continue;
       }
       this.enqueue(`${userId}:${topic}`, () =>
-        this.deliver(userId, { t: 'msg', roomId: input.roomId }, { TTL: MESSAGE_TTL_SECONDS, urgency: 'high', topic }),
+        this.deliver(userId, payload, { TTL: MESSAGE_TTL_SECONDS, urgency: 'high', topic }),
       );
     }
   }
