@@ -12,6 +12,7 @@ import { MAX_GOSSIP_ENVELOPE_LENGTH, MAX_PROOF_ITEMS, type TransparencyService }
 export interface TransparencySocketDeps {
   transparencyService: TransparencyService;
   getContactIds: (userId: string) => Promise<string[]>;
+  getSharedRoomUserIds: (userId: string) => Promise<string[]>;
 }
 
 const requestIdSchema = z.string().min(1).max(64).optional();
@@ -22,7 +23,6 @@ const sizeSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
 const getHeadSchema = z.object({ requestId: requestIdSchema }).optional();
 const getProofsSchema = z.object({
   requestId: requestIdSchema,
-  treeSize: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   items: z
     .array(
       z.object({
@@ -74,9 +74,10 @@ export function registerTransparencySocketHandlers(socket: AppSocket, deps: Tran
   });
 
   socket.on('kt:get-proofs', (payload) => {
-    handle('kt:get-proofs', async () => {
+    handle('kt:get-proofs', async (userId) => {
       const input = getProofsSchema.parse(payload);
-      const { head, proofs } = await transparencyService.proofs(input.items, input.treeSize);
+      const entitled = new Set([...(await deps.getSharedRoomUserIds(userId)), userId]);
+      const { head, proofs } = await transparencyService.proofs(input.items, entitled);
       socket.emit('kt:proofs', { ...(input.requestId ? { requestId: input.requestId } : {}), head, proofs });
     });
   });

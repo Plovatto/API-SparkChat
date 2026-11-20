@@ -33,9 +33,22 @@ export interface AuditEntry extends InclusionResult {
 
 const MAX_APPEND_ATTEMPTS = 4;
 const MAX_NODE_PLAN = 4096;
+const MAX_KEY_BYTES = 255;
 
 function toBase64Url(hashes: Buffer[]): string[] {
   return hashes.map((hash) => hash.toString('base64url'));
+}
+
+function isUniqueConflict(error: unknown): boolean {
+  const code = typeof (error as { code?: unknown } | null)?.code === 'string' ? (error as { code: string }).code : '';
+  const message = error instanceof Error ? error.message : '';
+  return /unique|primary key|constraint/i.test(`${code} ${message}`);
+}
+
+function isValidSnapshot(snapshot: KeySnapshot): boolean {
+  const identity = Buffer.byteLength(snapshot.publicKey, 'utf8');
+  const signing = Buffer.byteLength(snapshot.signingPublicKey ?? '', 'utf8');
+  return identity > 0 && identity <= MAX_KEY_BYTES && signing <= MAX_KEY_BYTES;
 }
 
 export class TransparencyLog {
@@ -73,11 +86,14 @@ export class TransparencyLog {
     return this.repository.size();
   }
 
-  async head(atSize?: number): Promise<SignedTreeHead> {
-    const current = await this.repository.size();
-    const size = atSize !== undefined && atSize >= 0 && atSize <= current ? atSize : current;
-    const root = await this.compute((source) => rootHash(source, size));
+  async head(): Promise<SignedTreeHead> {
+    const size = await this.repository.size();
+    const root = await this.rootAt(size);
     return this.signer.sign(size, root, this.now());
+  }
+
+  rootAt(size: number): Promise<Buffer> {
+    return this.compute((source) => rootHash(source, size));
   }
 
   async record(snapshot: KeySnapshot): Promise<boolean> {
@@ -93,7 +109,7 @@ export class TransparencyLog {
         try {
           return await this.appendOnce(snapshots);
         } catch (error) {
-          if (attempt >= MAX_APPEND_ATTEMPTS) {
+          if (!isUniqueConflict(error) || attempt >= MAX_APPEND_ATTEMPTS) {
             throw error;
           }
           logger.warn({ attempt }, 'Key transparency append collided, retrying');
@@ -121,6 +137,10 @@ export class TransparencyLog {
       const leafId = leafIdOf(snapshot.userId);
       const leafKey = leafId.toString('base64url');
       const signingKey = snapshot.signingPublicKey ?? '';
+      if (!isValidSnapshot(snapshot)) {
+        logger.warn({ leafId: leafKey }, 'Key transparency skipped an invalid key snapshot');
+        continue;
+      }
       let latest = latestVersions.get(leafKey);
       if (!latest) {
         const stored = await this.repository.latestLeaf(leafKey);

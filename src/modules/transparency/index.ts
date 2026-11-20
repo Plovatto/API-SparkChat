@@ -6,3 +6,4 @@ export { TransparencyService, type KeyDirectory } from './transparency.service.j
 export { resolveHeadSigner } from './transparency.signing-key.js';
 export { TreeHeadSigner, verifySignedTreeHead, type SignedTreeHead } from './transparency.signer.js';
 export { buildWitnessTargets, WitnessPublisher } from './transparency.witness.js';
+export { setupTransparency } from './transparency.setup.js';

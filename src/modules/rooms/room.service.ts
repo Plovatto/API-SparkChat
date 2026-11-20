@@ -295,6 +295,10 @@ export class RoomService {
     return contactIds.includes(userId) ? contactIds : [...contactIds, userId];
   }
 
+  getSharedRoomUserIds(userId: string): Promise<string[]> {
+    return this.repository.findSharedRoomUserIds(userId);
+  }
+
   findParticipatingRoomIds(userId: string, roomIds: string[]): Promise<Set<string>> {
     return this.repository.findParticipatingRoomIds(userId, roomIds);
   }

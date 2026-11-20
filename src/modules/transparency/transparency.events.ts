@@ -6,7 +6,6 @@ export interface TransparencyClientToServerEvents {
   'kt:get-head': (payload?: { requestId?: string }) => void;
   'kt:get-proofs': (payload: {
     requestId?: string;
-    treeSize?: number;
     items: { userId: string; publicKey: string; signingPublicKey?: string }[];
   }) => void;
   'kt:get-consistency': (payload: { requestId?: string; first: number; second: number }) => void;

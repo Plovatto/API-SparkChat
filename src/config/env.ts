@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { z } from 'zod';
+import { validateKeyTransparencyEnv } from './key-transparency-env.js';
 import { validateWebPushEnv } from './web-push-env.js';
 
 const optionalSecret = z.preprocess((value) => (value === '' ? undefined : value), z.string().min(1).optional());
@@ -8,8 +9,6 @@ const booleanFlag = z.preprocess(
   (value) => (typeof value === 'string' ? ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase()) : value),
   z.boolean().default(false),
 );
-
-const optionalHttpsUrl = z.preprocess((value) => (value === '' ? undefined : value), z.string().url().startsWith('https://').optional());
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -46,44 +45,24 @@ const envSchema = z.object({
   KLIPY_API_KEY: optionalSecret,
   KEY_TRANSPARENCY_ENABLED: booleanFlag,
   KT_LOG_SIGNING_KEY: optionalSecret,
-  KT_WITNESS_INTERVAL_SECONDS: z.preprocess(
-    (value) => (value === '' ? undefined : value),
-    z.coerce.number().int().min(30).max(86_400).default(300),
-  ),
-  KT_WITNESS_GITHUB_REPOSITORY: z.preprocess(
-    (value) => (value === '' ? undefined : value),
-    z
-      .string()
-      .regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}$/)
-      .optional(),
-  ),
-  KT_WITNESS_GITHUB_PATH: z.preprocess(
-    (value) => (value === '' ? undefined : value),
-    z
-      .string()
-      .regex(/^[A-Za-z0-9_][A-Za-z0-9_.-]*(\/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$/)
-      .max(200)
-      .refine((path) => !path.split('/').includes('..'))
-      .optional(),
-  ),
-  KT_WITNESS_GITHUB_BRANCH: z.preprocess((value) => (value === '' ? undefined : value), z.string().regex(/^[A-Za-z0-9_./-]{1,100}$/).optional()),
+  KT_WITNESS_INTERVAL_SECONDS: optionalSecret,
+  KT_WITNESS_GITHUB_REPOSITORY: optionalSecret,
+  KT_WITNESS_GITHUB_PATH: optionalSecret,
+  KT_WITNESS_GITHUB_BRANCH: optionalSecret,
   KT_WITNESS_GITHUB_TOKEN: optionalSecret,
-  KT_WITNESS_WEBHOOK_URL: optionalHttpsUrl,
+  KT_WITNESS_WEBHOOK_URL: optionalSecret,
   KT_WITNESS_WEBHOOK_TOKEN: optionalSecret,
   GIF_PROVIDER: z.preprocess((value) => (value === '' ? undefined : value), z.enum(['klipy', 'fake']).default('klipy')),
 }).refine((value) => Boolean(value.CLOUDFLARE_TURN_KEY_ID) === Boolean(value.CLOUDFLARE_TURN_API_TOKEN), {
   message: 'CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN must be set together',
   path: ['CLOUDFLARE_TURN_API_TOKEN'],
-}).refine((value) => Boolean(value.KT_WITNESS_GITHUB_REPOSITORY) === Boolean(value.KT_WITNESS_GITHUB_TOKEN), {
-  message: 'KT_WITNESS_GITHUB_REPOSITORY and KT_WITNESS_GITHUB_TOKEN must be set together',
-  path: ['KT_WITNESS_GITHUB_TOKEN'],
-}).refine((value) => !value.KEY_TRANSPARENCY_ENABLED || value.NODE_ENV !== 'production' || Boolean(value.KT_LOG_SIGNING_KEY), {
-  message: 'KT_LOG_SIGNING_KEY is required when KEY_TRANSPARENCY_ENABLED is true in production',
-  path: ['KT_LOG_SIGNING_KEY'],
 }).superRefine((value, ctx) => {
   const issue = validateWebPushEnv(value);
   if (issue) {
     ctx.addIssue({ code: 'custom', message: issue.message, path: [issue.path] });
+  }
+  for (const keyTransparencyIssue of validateKeyTransparencyEnv(value, process.env.NODE_ENV)) {
+    ctx.addIssue({ code: 'custom', message: keyTransparencyIssue.message, path: [keyTransparencyIssue.path] });
   }
 });
 

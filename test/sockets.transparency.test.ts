@@ -8,6 +8,8 @@ import { startSocketHarness, waitForEvent, type TestClient } from './support/soc
 
 type Harness = Awaited<ReturnType<typeof startSocketHarness>>;
 
+const pk = (name: string) => name.padEnd(43, 'x');
+
 let harness: Harness | null = null;
 
 afterEach(async () => {
@@ -86,7 +88,7 @@ describe('key transparency sockets', () => {
       harness = await startSocketHarness();
       const account = await harness.createAccount('Alice');
       const client = await harness.connectAs(account);
-      await publishKeys(client, account.user.id, 'pub-alice');
+      await publishKeys(client, account.user.id, pk('pub-alice'));
       const { TransparencyRepository } = await import('@/modules/transparency/index.js');
       expect(await new TransparencyRepository(harness.db).size()).toBe(0);
     });
@@ -122,10 +124,10 @@ describe('key transparency sockets', () => {
       harness = await startSocketHarness({ transparency: true });
       const account = await harness.createAccount('Alice');
       const client = await harness.connectAs(account);
-      const signing = await publishKeys(client, account.user.id, 'pub-alice');
+      const signing = await publishKeys(client, account.user.id, pk('pub-alice'));
       const logKey = harness.transparency?.signer.publicKey as string;
 
-      const entry = { userId: account.user.id, publicKey: 'pub-alice', signingPublicKey: signing.signingPublicKey };
+      const entry = { userId: account.user.id, publicKey: pk('pub-alice'), signingPublicKey: signing.signingPublicKey };
       const payload = await nextProofs(client, [entry]);
 
       expect(checkInclusion(logKey, payload, entry)).toBe(true);
@@ -136,9 +138,9 @@ describe('key transparency sockets', () => {
       harness = await startSocketHarness({ transparency: true });
       const account = await harness.createAccount('Alice');
       const client = await harness.connectAs(account);
-      client.emit('e2e:publish-keys', { publicKey: 'pub-alice' });
+      client.emit('e2e:publish-keys', { publicKey: pk('pub-alice') });
       await new Promise((resolve) => setTimeout(resolve, 120));
-      const signing = signingIdentity(account.user.id, 'pub-alice');
+      const signing = signingIdentity(account.user.id, pk('pub-alice'));
       client.emit('e2e:publish-signing-key', signing);
       await new Promise((resolve) => setTimeout(resolve, 120));
 
@@ -150,8 +152,8 @@ describe('key transparency sockets', () => {
       const result = await audit;
 
       expect(result.entries.map((entry) => [entry.version, entry.publicKey, entry.signingPublicKey])).toEqual([
-        [1, 'pub-alice', null],
-        [2, 'pub-alice', signing.signingPublicKey],
+        [1, pk('pub-alice'), null],
+        [2, pk('pub-alice'), signing.signingPublicKey],
       ]);
       expect(verifySignedTreeHead(result.head, harness.transparency?.signer.publicKey as string)).toBe(true);
       for (const entry of result.entries) {
@@ -166,7 +168,7 @@ describe('key transparency sockets', () => {
       harness = await startSocketHarness({ transparency: true });
       const account = await harness.createAccount('Alice');
       const client = await harness.connectAs(account);
-      const signing = await publishKeys(client, account.user.id, 'pub-alice');
+      const signing = await publishKeys(client, account.user.id, pk('pub-alice'));
       client.emit('e2e:publish-signing-key', signing);
       await new Promise((resolve) => setTimeout(resolve, 120));
       expect(await harness.transparency?.log.size()).toBe(1);
@@ -176,17 +178,17 @@ describe('key transparency sockets', () => {
       harness = await startSocketHarness({ transparency: true });
       const account = await harness.createAccount('Alice');
       const client = await harness.connectAs(account);
-      const signing = await publishKeys(client, account.user.id, 'pub-alice');
+      const signing = await publishKeys(client, account.user.id, pk('pub-alice'));
 
       const tampered = await nextProofs(client, [
-        { userId: account.user.id, publicKey: 'pub-mallory', signingPublicKey: signing.signingPublicKey },
+        { userId: account.user.id, publicKey: pk('pub-mallory'), signingPublicKey: signing.signingPublicKey },
       ]);
       expect(tampered.proofs).toEqual([{ userId: account.user.id, found: false }]);
 
-      const noSigning = await nextProofs(client, [{ userId: account.user.id, publicKey: 'pub-alice' }]);
+      const noSigning = await nextProofs(client, [{ userId: account.user.id, publicKey: pk('pub-alice') }]);
       expect(noSigning.proofs).toEqual([{ userId: account.user.id, found: false }]);
 
-      const unknown = await nextProofs(client, [{ userId: 'someone-else', publicKey: 'pub-alice', signingPublicKey: signing.signingPublicKey }]);
+      const unknown = await nextProofs(client, [{ userId: 'someone-else', publicKey: pk('pub-alice'), signingPublicKey: signing.signingPublicKey }]);
       expect(unknown.proofs).toEqual([{ userId: 'someone-else', found: false }]);
     });
 
@@ -196,57 +198,90 @@ describe('key transparency sockets', () => {
       const other = await harness.createAccount('Bob');
       const clientA = await harness.connectAs(account);
       const clientB = await harness.connectAs(other);
-      const signingA = await publishKeys(clientA, account.user.id, 'pub-alice');
-      const signingB = await publishKeys(clientB, other.user.id, 'pub-bob');
+      await harness.roomService.createPrivateRoom(account.user.id, other.user.id);
+      const signingA = await publishKeys(clientA, account.user.id, pk('pub-alice'));
+      const signingB = await publishKeys(clientB, other.user.id, pk('pub-bob'));
       const logKey = harness.transparency?.signer.publicKey as string;
-      const entryA = { userId: account.user.id, publicKey: 'pub-alice', signingPublicKey: signingA.signingPublicKey };
-      const entryB = { userId: other.user.id, publicKey: 'pub-bob', signingPublicKey: signingB.signingPublicKey };
+      const entryA = { userId: account.user.id, publicKey: pk('pub-alice'), signingPublicKey: signingA.signingPublicKey };
+      const entryB = { userId: other.user.id, publicKey: pk('pub-bob'), signingPublicKey: signingB.signingPublicKey };
 
       const payload = await nextProofs(clientA, [entryA, entryB]);
       expect(checkInclusion(logKey, payload, entryA)).toBe(true);
       expect(checkInclusion(logKey, payload, entryB)).toBe(true);
-      expect(checkInclusion(logKey, payload, { ...entryA, publicKey: 'pub-bob' })).toBe(false);
+      expect(checkInclusion(logKey, payload, { ...entryA, publicKey: pk('pub-bob') })).toBe(false);
       expect(checkInclusion(logKey, { ...payload, head: { ...payload.head, root: Buffer.alloc(32).toString('base64url') } }, entryA)).toBe(false);
       expect(checkInclusion(logKey, { ...payload, head: { ...payload.head, size: payload.head.size + 1 } }, entryA)).toBe(false);
       const otherLog = (await import('@/modules/transparency/transparency.signer.js')).TreeHeadSigner.ephemeral().publicKey;
       expect(checkInclusion(otherLog, payload, entryA)).toBe(false);
     });
 
-    it('proves inclusion at an earlier tree size and does not find later entries there', async () => {
+    it('only answers inclusion requests about the caller and the users sharing a room with the caller', async () => {
+      harness = await startSocketHarness({ transparency: true });
+      const alice = await harness.createAccount('Alice');
+      const bob = await harness.createAccount('Bob');
+      const carol = await harness.createAccount('Carol');
+      const clientA = await harness.connectAs(alice);
+      const clientB = await harness.connectAs(bob);
+      const clientC = await harness.connectAs(carol);
+      const signingA = await publishKeys(clientA, alice.user.id, pk('pub-alice'));
+      const signingB = await publishKeys(clientB, bob.user.id, pk('pub-bob'));
+      const signingC = await publishKeys(clientC, carol.user.id, pk('pub-carol'));
+      const logKey = harness.transparency?.signer.publicKey as string;
+      const entryA = { userId: alice.user.id, publicKey: pk('pub-alice'), signingPublicKey: signingA.signingPublicKey };
+      const entryB = { userId: bob.user.id, publicKey: pk('pub-bob'), signingPublicKey: signingB.signingPublicKey };
+      const entryC = { userId: carol.user.id, publicKey: pk('pub-carol'), signingPublicKey: signingC.signingPublicKey };
+
+      const stranger = await nextProofs(clientA, [entryA, entryB, entryC]);
+      expect(checkInclusion(logKey, stranger, entryA)).toBe(true);
+      expect(stranger.proofs.find((proof) => proof.userId === bob.user.id)).toEqual({ userId: bob.user.id, found: false });
+      expect(stranger.proofs.find((proof) => proof.userId === carol.user.id)).toEqual({ userId: carol.user.id, found: false });
+
+      await harness.roomService.createPrivateRoom(alice.user.id, bob.user.id);
+      const sharing = await nextProofs(clientA, [entryA, entryB, entryC]);
+      expect(checkInclusion(logKey, sharing, entryB)).toBe(true);
+      expect(sharing.proofs.find((proof) => proof.userId === carol.user.id)).toEqual({ userId: carol.user.id, found: false });
+    });
+
+    it('does not repair entries for users the caller is not entitled to', async () => {
       harness = await startSocketHarness({ transparency: true });
       const alice = await harness.createAccount('Alice');
       const bob = await harness.createAccount('Bob');
       const clientA = await harness.connectAs(alice);
-      const clientB = await harness.connectAs(bob);
-      const signingA = await publishKeys(clientA, alice.user.id, 'pub-alice');
-      const signingB = await publishKeys(clientB, bob.user.id, 'pub-bob');
-      const logKey = harness.transparency?.signer.publicKey as string;
-      const entryA = { userId: alice.user.id, publicKey: 'pub-alice', signingPublicKey: signingA.signingPublicKey };
-      const entryB = { userId: bob.user.id, publicKey: 'pub-bob', signingPublicKey: signingB.signingPublicKey };
+      const signing = signingIdentity(bob.user.id, pk('pub-bob-direct'));
+      await harness.userRepository.update(bob.user.id, { e2ePublicKey: pk('pub-bob-direct'), e2eSigningPublicKey: signing.signingPublicKey, e2eKeySignature: signing.keySignature });
 
-      const reply = waitForEvent<ProofsPayload>(clientA, 'kt:proofs');
-      clientA.emit('kt:get-proofs', { treeSize: 1, items: [entryA, entryB] });
-      const payload = await reply;
+      const result = await nextProofs(clientA, [{ userId: bob.user.id, publicKey: pk('pub-bob-direct'), signingPublicKey: signing.signingPublicKey }]);
+      expect(result.proofs[0]).toMatchObject({ found: false });
+      expect(await harness.transparency?.log.size()).toBe(0);
+    });
 
-      expect(payload.head.size).toBe(1);
-      expect(checkInclusion(logKey, payload, entryA)).toBe(true);
-      expect(payload.proofs.find((proof) => proof.userId === bob.user.id)).toMatchObject({ found: false });
+    it('refuses a public key that is not 32 bytes of base64url, including multibyte text', async () => {
+      harness = await startSocketHarness({ transparency: true });
+      const account = await harness.createAccount('Alice');
+      const client = await harness.connectAs(account);
+      for (const publicKey of ['é'.repeat(150), 'a'.repeat(44), 'a'.repeat(42), `${'a'.repeat(42)}+`, '']) {
+        const error = waitForEvent<{ event?: string }>(client, 'error');
+        client.emit('e2e:publish-keys', { publicKey });
+        expect(await error).toMatchObject({ event: 'e2e:publish-keys' });
+      }
+      expect((await harness.userRepository.findById(account.user.id))?.e2ePublicKey).toBeFalsy();
+      expect(await harness.transparency?.log.size()).toBe(0);
     });
 
     it('repairs a missing entry on demand only when it matches the stored keys', async () => {
       harness = await startSocketHarness({ transparency: true });
       const account = await harness.createAccount('Alice');
       const client = await harness.connectAs(account);
-      const signing = signingIdentity(account.user.id, 'pub-direct');
+      const signing = signingIdentity(account.user.id, pk('pub-direct'));
       await harness.userRepository.update(account.user.id, {
-        e2ePublicKey: 'pub-direct',
+        e2ePublicKey: pk('pub-direct'),
         e2eSigningPublicKey: signing.signingPublicKey,
         e2eKeySignature: signing.keySignature,
       });
       const logKey = harness.transparency?.signer.publicKey as string;
-      const entry = { userId: account.user.id, publicKey: 'pub-direct', signingPublicKey: signing.signingPublicKey };
+      const entry = { userId: account.user.id, publicKey: pk('pub-direct'), signingPublicKey: signing.signingPublicKey };
 
-      const forged = await nextProofs(client, [{ ...entry, publicKey: 'pub-forged' }]);
+      const forged = await nextProofs(client, [{ ...entry, publicKey: pk('pub-forged') }]);
       expect(forged.proofs[0]).toMatchObject({ found: false });
       expect(await harness.transparency?.log.size()).toBe(0);
 
@@ -263,14 +298,14 @@ describe('key transparency sockets', () => {
         clients.push({ id: account.user.id, client });
       }
       const first = clients[0] as { id: string; client: TestClient };
-      await publishKeys(first.client, first.id, 'pub-0');
+      await publishKeys(first.client, first.id, pk('pub-0'));
       const earlier = await new Promise<{ head: SignedTreeHead }>((resolve) => {
         first.client.once('kt:head', resolve);
         first.client.emit('kt:get-head');
       });
       for (let i = 1; i < clients.length; i += 1) {
         const item = clients[i] as { id: string; client: TestClient };
-        await publishKeys(item.client, item.id, `pub-${i}`);
+        await publishKeys(item.client, item.id, pk(`pub-${i}`));
       }
       const later = await new Promise<{ head: SignedTreeHead }>((resolve) => {
         first.client.once('kt:head', resolve);
@@ -306,12 +341,12 @@ describe('key transparency sockets', () => {
       const bob = await harness.createAccount('Bob');
       const clientA = await harness.connectAs(alice);
       const clientB = await harness.connectAs(bob);
-      await publishKeys(clientA, alice.user.id, 'pub-alice');
-      await publishKeys(clientB, bob.user.id, 'pub-bob');
+      await publishKeys(clientA, alice.user.id, pk('pub-alice'));
+      await publishKeys(clientB, bob.user.id, pk('pub-bob'));
 
       const audit = waitForEvent<{ entries: { publicKey: string }[] }>(clientA, 'kt:audit');
       clientA.emit('kt:audit', { fromVersion: 1, userId: bob.user.id });
-      expect((await audit).entries.map((entry) => entry.publicKey)).toEqual(['pub-alice']);
+      expect((await audit).entries.map((entry) => entry.publicKey)).toEqual([pk('pub-alice')]);
     });
 
     it('rejects oversized and malformed requests', async () => {
@@ -380,14 +415,18 @@ describe('key transparency sockets', () => {
       const h = harness;
       const accounts = await Promise.all(Array.from({ length: 12 }, (_, i) => h.createAccount(`Racer${String.fromCharCode(65 + i)}`)));
       const clients = await Promise.all(accounts.map((account) => h.connectAs(account)));
-      await Promise.all(clients.map((client, i) => publishKeys(client, (accounts[i] as (typeof accounts)[number]).user.id, `pub-${i}`)));
+      const group = await h.roomService.createGroupRoom((accounts[0] as (typeof accounts)[number]).user.id);
+      for (const account of accounts.slice(1)) {
+        await h.joinGroup(group.id, account.user.id);
+      }
+      await Promise.all(clients.map((client, i) => publishKeys(client, (accounts[i] as (typeof accounts)[number]).user.id, pk(`pub-${i}`))));
       expect(await harness.transparency?.log.size()).toBe(12);
       const head = await harness.transparency?.log.head();
       const client = clients[0] as TestClient;
       const items = await Promise.all(
         accounts.map(async (account, i) => {
           const user = await harness?.userRepository.findById((account).user.id);
-          return { userId: (account).user.id, publicKey: `pub-${i}`, signingPublicKey: user?.e2eSigningPublicKey as string };
+          return { userId: (account).user.id, publicKey: pk(`pub-${i}`), signingPublicKey: user?.e2eSigningPublicKey as string };
         }),
       );
       const payload = await nextProofs(client, items);

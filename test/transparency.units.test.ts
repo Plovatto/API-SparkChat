@@ -6,6 +6,7 @@ import * as schema from '@/database/schema.js';
 import { encodeLeaf, leafHashOf, leafIdOf } from '@/modules/transparency/transparency.leaf.js';
 import { MemoryNodeSource, rootHash, verifyConsistency, verifyInclusion } from '@/modules/transparency/transparency.merkle.js';
 import { generateSigningSeed, headSigningBytes, parseSigningSeed, TreeHeadSigner, verifySignedTreeHead } from '@/modules/transparency/transparency.signer.js';
+import { witnessIntervalSeconds } from '@/config/key-transparency-env.js';
 import { resolveHeadSigner } from '@/modules/transparency/transparency.signing-key.js';
 import { TransparencyLog, TransparencyRepository } from '@/modules/transparency/index.js';
 import { buildWitnessTargets, GithubWitnessTarget, WebhookWitnessTarget, WitnessPublisher, witnessBody } from '@/modules/transparency/transparency.witness.js';
@@ -112,24 +113,26 @@ async function memoryRepository() {
 describe('log signing key resolution', () => {
   it('uses the configured key', async () => {
     const seed = generateSigningSeed();
-    const signer = await resolveHeadSigner({ NODE_ENV: 'production', KT_LOG_SIGNING_KEY: seed }, await memoryRepository());
+    const signer = await resolveHeadSigner({ nodeEnv: 'production', KT_LOG_SIGNING_KEY: seed }, await memoryRepository());
     expect(signer.publicKey).toBe(new TreeHeadSigner(parseSigningSeed(seed)).publicKey);
   });
 
-  it('refuses to invent a key in production', async () => {
-    await expect(resolveHeadSigner({ NODE_ENV: 'production' }, await memoryRepository())).rejects.toThrow(/KT_LOG_SIGNING_KEY/);
+  it.each(['production', undefined, 'staging'])('refuses to invent or persist a key when NODE_ENV is %s', async (nodeEnv) => {
+    const repo = await memoryRepository();
+    await expect(resolveHeadSigner({ nodeEnv }, repo)).rejects.toThrow(/KT_LOG_SIGNING_KEY/);
+    expect(await repo.getMeta('dev_signing_seed')).toBeNull();
   });
 
   it('generates a key once and persists it in development', async () => {
     const repo = await memoryRepository();
-    const first = await resolveHeadSigner({ NODE_ENV: 'development' }, repo);
-    const second = await resolveHeadSigner({ NODE_ENV: 'development' }, repo);
+    const first = await resolveHeadSigner({ nodeEnv: 'development' }, repo);
+    const second = await resolveHeadSigner({ nodeEnv: 'development' }, repo);
     expect(second.publicKey).toBe(first.publicKey);
   });
 
   it('keeps the test key in memory only', async () => {
     const repo = await memoryRepository();
-    await resolveHeadSigner({ NODE_ENV: 'test' }, repo);
+    await resolveHeadSigner({ nodeEnv: 'test' }, repo);
     expect(await repo.getMeta('dev_signing_seed')).toBeNull();
   });
 });
@@ -170,8 +173,8 @@ describe('persistent log', () => {
     }
     for (const first of [1, 5, 8, 16, 22]) {
       const proof = await log.consistency(first, 23);
-      const firstHead = await log.head(first);
-      expect(verifyConsistency(first, 23, bytes(firstHead.root), bytes(head.root), ((proof === 'beyond' ? null : proof) ?? []).map(bytes))).toBe(true);
+      const firstRoot = await log.rootAt(first);
+      expect(verifyConsistency(first, 23, firstRoot, bytes(head.root), ((proof === 'beyond' ? null : proof) ?? []).map(bytes))).toBe(true);
     }
   });
 
@@ -337,7 +340,7 @@ describe('environment', () => {
 
   async function load(overrides: Record<string, string>) {
     vi.resetModules();
-    for (const key of ['KEY_TRANSPARENCY_ENABLED', 'KT_LOG_SIGNING_KEY', 'KT_WITNESS_GITHUB_REPOSITORY', 'KT_WITNESS_GITHUB_TOKEN', 'KT_WITNESS_WEBHOOK_URL']) {
+    for (const key of ['KEY_TRANSPARENCY_ENABLED', 'KT_LOG_SIGNING_KEY', 'KT_WITNESS_GITHUB_REPOSITORY', 'KT_WITNESS_GITHUB_TOKEN', 'KT_WITNESS_WEBHOOK_URL', 'KT_WITNESS_INTERVAL_SECONDS']) {
       vi.stubEnv(key, '');
     }
     for (const [key, value] of Object.entries({ ...required, ...overrides })) {
@@ -358,20 +361,52 @@ describe('environment', () => {
     expect((await load({ NODE_ENV: 'development', KEY_TRANSPARENCY_ENABLED: value })).KEY_TRANSPARENCY_ENABLED).toBe(false);
   });
 
-  it('requires the log signing key in production when enabled', async () => {
+  it('requires the log signing key outside development and test, including when NODE_ENV is unset', async () => {
     const quiet = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await expect(load({ NODE_ENV: 'production', KEY_TRANSPARENCY_ENABLED: 'true' })).rejects.toThrow();
     quiet.mockRestore();
     expect((await load({ NODE_ENV: 'production', KEY_TRANSPARENCY_ENABLED: 'true', KT_LOG_SIGNING_KEY: generateSigningSeed() })).KEY_TRANSPARENCY_ENABLED).toBe(true);
+    expect((await load({ NODE_ENV: 'development', KEY_TRANSPARENCY_ENABLED: 'true' })).KEY_TRANSPARENCY_ENABLED).toBe(true);
+    vi.resetModules();
+    for (const [key, value] of Object.entries({ ...required, KEY_TRANSPARENCY_ENABLED: 'true' })) {
+      vi.stubEnv(key, value);
+    }
+    vi.stubEnv('NODE_ENV', undefined);
+    delete process.env.NODE_ENV;
+    const loud = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(import('@/config/env.js')).rejects.toThrow();
+    loud.mockRestore();
   });
 
-  it('requires the GitHub repository and token together and https webhooks', async () => {
+  it('fails with a clear message when the log signing key is malformed', async () => {
     const quiet = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    await expect(load({ KT_WITNESS_GITHUB_REPOSITORY: 'o/r' })).rejects.toThrow();
-    await expect(load({ KT_WITNESS_WEBHOOK_URL: 'http://insecure.test/hook' })).rejects.toThrow();
-    await expect(load({ KT_WITNESS_GITHUB_REPOSITORY: '../etc', KT_WITNESS_GITHUB_TOKEN: 't' })).rejects.toThrow();
+    await expect(load({ NODE_ENV: 'development', KEY_TRANSPARENCY_ENABLED: 'true', KT_LOG_SIGNING_KEY: 'not-a-key' })).rejects.toThrow();
+    const reported = JSON.stringify(quiet.mock.calls);
     quiet.mockRestore();
-    const env = await load({ KT_WITNESS_GITHUB_REPOSITORY: 'o/r', KT_WITNESS_GITHUB_TOKEN: 't' });
-    expect(env.KT_WITNESS_INTERVAL_SECONDS).toBe(300);
+    expect(reported).toContain('KT_LOG_SIGNING_KEY must be 32 random bytes encoded as base64url');
+  });
+
+  it('ignores every witness and key setting while the feature is off', async () => {
+    const env = await load({
+      NODE_ENV: 'production',
+      KT_LOG_SIGNING_KEY: 'garbage',
+      KT_WITNESS_GITHUB_REPOSITORY: '../etc',
+      KT_WITNESS_WEBHOOK_URL: 'http://insecure.test/hook',
+      KT_WITNESS_INTERVAL_SECONDS: 'abc',
+    });
+    expect(env.KEY_TRANSPARENCY_ENABLED).toBe(false);
+  });
+
+  it('validates the witness settings when the feature is on', async () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const base = { NODE_ENV: 'development', KEY_TRANSPARENCY_ENABLED: 'true' };
+    await expect(load({ ...base, KT_WITNESS_GITHUB_REPOSITORY: 'o/r' })).rejects.toThrow();
+    await expect(load({ ...base, KT_WITNESS_WEBHOOK_URL: 'http://insecure.test/hook' })).rejects.toThrow();
+    await expect(load({ ...base, KT_WITNESS_GITHUB_REPOSITORY: '../etc', KT_WITNESS_GITHUB_TOKEN: 't' })).rejects.toThrow();
+    await expect(load({ ...base, KT_WITNESS_INTERVAL_SECONDS: '5' })).rejects.toThrow();
+    quiet.mockRestore();
+    const env = await load({ ...base, KT_WITNESS_GITHUB_REPOSITORY: 'o/r', KT_WITNESS_GITHUB_TOKEN: 't' });
+    expect(witnessIntervalSeconds(env.KT_WITNESS_INTERVAL_SECONDS)).toBe(300);
+    expect(witnessIntervalSeconds('60')).toBe(60);
   });
 });

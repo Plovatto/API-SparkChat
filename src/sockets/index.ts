@@ -171,6 +171,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       registerTransparencySocketHandlers(socket, {
         transparencyService: deps.transparencyService,
         getContactIds: (userId) => deps.roomService.getContactIds(userId),
+        getSharedRoomUserIds: (userId) => deps.roomService.getSharedRoomUserIds(userId),
       });
     }
 
