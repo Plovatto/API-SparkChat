@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
-import { roomParticipants, rooms, uploads, users } from '@/database/schema.js';
+import { roomBans, roomParticipants, rooms, uploads, users } from '@/database/schema.js';
+import { ExpiredUploadSweeper } from '@/storage/expired-upload-sweeper.js';
+import { resolveAvatarObjectKey, resolveObjectKey } from '@/storage/object-storage-url.js';
 import { ORPHAN_UPLOAD_MAX_AGE_MS, OrphanUploadSweeper } from '@/storage/orphan-upload-sweeper.js';
 import { buildRoomService } from './support/build-room-service.js';
 import { establishFakeGeneration, newKeyId } from './support/room-keys.js';
@@ -176,6 +178,95 @@ describe('user avatars', () => {
     expect(await services.storageUsageRepository.getBytesUsed()).toBe(0);
     await expect(userColumns(services, alice.id)).resolves.toEqual({ encryptedAvatar: null, avatarUploadKey: null, profileKeyVersion: 2 });
     await expect(services.avatarService.clearUserAvatar(alice.id)).resolves.toMatchObject({ encryptedAvatar: null });
+  });
+});
+
+describe('avatars and gifs stay apart', () => {
+  it('never accepts a gif upload or an expiring upload as a photo', async () => {
+    const services = await buildRoomService();
+    const alice = await createUser(services, 'Alice');
+    const gifKey = `uploads/gifs/${randomUUID()}.bin`;
+    await services.objectStorage.putObject(gifKey, Buffer.from('gif'), { contentType: 'application/octet-stream' });
+    await services.uploadRegistry.register(gifKey, alice.id, 3, { expiresAt: new Date(Date.now() + 60_000).toISOString() });
+    const forgedKey = avatarKey();
+    await services.objectStorage.putObject(forgedKey, Buffer.from('ava'), { contentType: 'application/octet-stream' });
+    await services.uploadRegistry.register(forgedKey, alice.id, 3, { expiresAt: new Date(Date.now() + 60_000).toISOString() });
+
+    for (const key of [gifKey, forgedKey]) {
+      const url = `${services.objectStorage.publicUrl(key)}?e2e=1`;
+      await expect(services.avatarService.setUserAvatar(alice.id, { url, encryptedAvatar: POINTER, profileKeyVersion: 1 })).rejects.toMatchObject({
+        code: 'user.avatarUploadInvalid',
+      });
+      await expect(services.uploadRegistry.find(key)).resolves.toMatchObject({ avatarOwner: null });
+    }
+    expect(resolveAvatarObjectKey(services.objectStorage.publicUrl(gifKey))).toBeNull();
+    expect(resolveObjectKey(services.objectStorage.publicUrl(forgedKey))).toBeNull();
+  });
+
+  it('never lets a gif message claim a photo upload', async () => {
+    const services = await buildRoomService();
+    const alice = await createUser(services, 'Alice');
+    const { key, url } = await storeAvatar(services, alice.id);
+
+    await expect(services.messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: url, type: 'image' })).rejects.toMatchObject({
+      code: 'message.invalidMedia',
+    });
+    await expect(services.uploadRegistry.find(key)).resolves.toMatchObject({ messageId: null });
+  });
+
+  it('never lets the expired upload sweeper remove a photo in use, and still counts photos in the user quota', async () => {
+    const services = await buildRoomService();
+    const alice = await createUser(services, 'Alice');
+    const { key, url } = await storeAvatar(services, alice.id, 25);
+    await services.avatarService.setUserAvatar(alice.id, { url, encryptedAvatar: POINTER, profileKeyVersion: 1 });
+    expect(await services.uploadRegistry.totalBytesFor(alice.id)).toBe(25);
+    await services.db.update(uploads).set({ expiresAt: new Date(Date.now() - 60_000).toISOString() }).where(eq(uploads.key, key));
+
+    await expect(new ExpiredUploadSweeper(services.uploadRegistry, services.objectStorage, services.storageQuota).sweep()).resolves.toBe(0);
+
+    await expect(services.uploadRegistry.find(key)).resolves.not.toBeNull();
+    await expect(services.objectStorage.getObject(key)).resolves.not.toBeNull();
+  });
+});
+
+describe('concurrent photo changes', () => {
+  it('two concurrent set-avatar calls leave exactly one photo stored and the quota consistent', async () => {
+    const services = await buildRoomService();
+    const alice = await createUser(services, 'Alice');
+    const first = await storeAvatar(services, alice.id, 30);
+    const second = await storeAvatar(services, alice.id, 50);
+
+    const results = await Promise.allSettled([
+      services.avatarService.setUserAvatar(alice.id, { url: first.url, encryptedAvatar: 'first', profileKeyVersion: 1 }),
+      services.avatarService.setUserAvatar(alice.id, { url: second.url, encryptedAvatar: 'second', profileKeyVersion: 1 }),
+    ]);
+
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled']);
+    const stored = await userColumns(services, alice.id);
+    const kept = stored?.avatarUploadKey === first.key ? first : second;
+    const dropped = kept === first ? second : first;
+    expect(stored?.encryptedAvatar).toBe(kept === first ? 'first' : 'second');
+    await expect(services.uploadRegistry.find(kept.key)).resolves.toMatchObject({ avatarOwner: `user:${alice.id}` });
+    await expect(services.objectStorage.getObject(kept.key)).resolves.not.toBeNull();
+    await expect(services.uploadRegistry.find(dropped.key)).resolves.toBeNull();
+    await expect(services.objectStorage.getObject(dropped.key)).resolves.toBeNull();
+    expect(await services.storageUsageRepository.getBytesUsed()).toBe(kept === first ? 30 : 50);
+    expect(await services.uploadRegistry.totalBytesFor(alice.id)).toBe(kept === first ? 30 : 50);
+  });
+
+  it('two concurrent set-avatar calls with the same upload keep it', async () => {
+    const services = await buildRoomService();
+    const alice = await createUser(services, 'Alice');
+    const { key, url } = await storeAvatar(services, alice.id, 30);
+
+    await Promise.all([
+      services.avatarService.setUserAvatar(alice.id, { url, encryptedAvatar: 'a', profileKeyVersion: 1 }),
+      services.avatarService.setUserAvatar(alice.id, { url, encryptedAvatar: 'b', profileKeyVersion: 1 }),
+    ]);
+
+    await expect(userColumns(services, alice.id)).resolves.toMatchObject({ avatarUploadKey: key });
+    await expect(services.objectStorage.getObject(key)).resolves.not.toBeNull();
+    expect(await services.storageUsageRepository.getBytesUsed()).toBe(30);
   });
 });
 
@@ -387,6 +478,48 @@ describe('profile key envelopes', () => {
     await services.joinGroup(roomId, bob.id);
 
     await expect(envelopes(services, roomId)).resolves.toMatchObject({ [bob.id]: null });
+  });
+
+  it('publishing the same envelope again writes and announces nothing', async () => {
+    const services = await buildRoomService();
+    const alice = await createUser(services, 'Alice');
+    const bob = await createUser(services, 'Bob');
+    const { roomId, keyId } = await groupWith(services, alice.id, [bob.id]);
+    await services.avatarService.publishProfileKey(alice.id, { roomId, keyId, envelope: 'env-a' });
+
+    await expect(services.avatarService.publishProfileKey(alice.id, { roomId, keyId, envelope: 'env-a' })).resolves.toEqual({ roomId, keyId, envelopes: {} });
+    await expect(
+      services.avatarService.rewrapProfileKeys(alice.id, { roomId, keyId, envelopes: { [alice.id]: 'env-a', [bob.id]: 'env-b' } }),
+    ).resolves.toEqual({ roomId, keyId, envelopes: { [bob.id]: 'env-b' } });
+    await expect(
+      services.avatarService.rewrapProfileKeys(alice.id, { roomId, keyId, envelopes: { [alice.id]: 'env-a', [bob.id]: 'env-b' } }),
+    ).resolves.toEqual({ roomId, keyId, envelopes: {} });
+    await expect(services.avatarService.publishProfileKey(alice.id, { roomId, keyId, envelope: 'env-a2' })).resolves.toEqual({
+      roomId,
+      keyId,
+      envelopes: { [alice.id]: 'env-a2' },
+    });
+  });
+
+  it('a banned member can neither publish nor rewrap, even before the ban purge runs', async () => {
+    const services = await buildRoomService();
+    const alice = await createUser(services, 'Alice');
+    const bob = await createUser(services, 'Bob');
+    const carol = await createUser(services, 'Carol');
+    const { roomId, keyId } = await groupWith(services, alice.id, [bob.id, carol.id]);
+    await services.db.insert(roomBans).values({ roomId, userId: bob.id, bannedBy: alice.id, bannedAt: new Date().toISOString() });
+
+    await expect(services.avatarService.publishProfileKey(bob.id, { roomId, keyId, envelope: 'bob' })).rejects.toMatchObject({ code: 'room.notFound' });
+    await expect(services.avatarService.rewrapProfileKeys(bob.id, { roomId, keyId, envelopes: { [carol.id]: 'carol' } })).rejects.toMatchObject({
+      code: 'room.notFound',
+    });
+    await expect(services.avatarService.rewrapProfileKeys(alice.id, { roomId, keyId, envelopes: { [bob.id]: 'bob' } })).rejects.toMatchObject({
+      code: 'room.notMember',
+    });
+    await expect(envelopes(services, roomId)).resolves.toEqual({ [alice.id]: null, [bob.id]: null, [carol.id]: null });
+
+    await services.roomService.removeMember(roomId, alice.id, carol.id);
+    await expect(services.avatarService.publishProfileKey(carol.id, { roomId, keyId, envelope: 'carol' })).rejects.toMatchObject({ code: 'room.notFound' });
   });
 
   it('a removed member loses the envelope', async () => {

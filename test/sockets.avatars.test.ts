@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { listSocketEvents } from '@/docs/socket-registry.js';
+import { MAX_PROFILE_KEY_ENVELOPE_LENGTH, MAX_PROFILE_KEY_ENVELOPES } from '@/modules/avatars/index.js';
+import { SOCKET_MAX_HTTP_BUFFER_SIZE } from '@/sockets/socket-options.js';
+import { createEventLimiter, DEFAULT_SOCKET_EVENT_BUDGETS } from '@/sockets/socket-rate-limit.js';
 import { fakeProof, seedInvite } from './support/invites.js';
 import { newKeyId } from './support/room-keys.js';
 import { collectEvents, roundTrip, settle, startSocketHarness, waitForEvent, type TestClient } from './support/socket-harness.js';
@@ -170,8 +173,8 @@ describe('avatar socket events', () => {
     await expectError(aliceClient, 'user:set-avatar', { url, encryptedAvatar: 'x'.repeat(2049), profileKeyVersion: 1 }, 'validation.invalidPayload');
     await expectError(aliceClient, 'user:set-avatar', { url, encryptedAvatar: 'x', profileKeyVersion: 0 }, 'validation.invalidPayload');
     await expectError(aliceClient, 'room:set-avatar', { roomId: groupId, url, encryptedAvatar: 'x'.repeat(2049), keyId }, 'validation.invalidPayload');
-    await expectError(aliceClient, 'room:publish-profile-key', { roomId: groupId, keyId, envelope: 'x'.repeat(1025) }, 'validation.invalidPayload');
-    const tooMany = Object.fromEntries(Array.from({ length: 257 }, (_, index) => [`user-${index}`, 'env']));
+    await expectError(aliceClient, 'room:publish-profile-key', { roomId: groupId, keyId, envelope: 'x'.repeat(513) }, 'validation.invalidPayload');
+    const tooMany = Object.fromEntries(Array.from({ length: 151 }, (_, index) => [`user-${index}`, 'env']));
     await expectError(aliceClient, 'room:rewrap-profile-keys', { roomId: groupId, keyId, envelopes: tooMany }, 'validation.invalidPayload');
   });
 
@@ -250,6 +253,42 @@ describe('avatar socket events', () => {
     await expectError(aliceClient, 'room:rewrap-profile-keys', { roomId: groupId, keyId, envelopes: { [mallory.user.id]: 'env' } }, 'room.notMember');
   });
 
+  it('do not announce a profile key that did not change', async () => {
+    const { aliceClient, bobClient, groupId, keyId } = await setup();
+    const first = waitForEvent(bobClient, 'room:profile-keys-updated');
+    aliceClient.emit('room:publish-profile-key', { roomId: groupId, keyId, envelope: 'alice-env' });
+    await first;
+    const updates = collectEvents(bobClient, 'room:profile-keys-updated');
+
+    aliceClient.emit('room:publish-profile-key', { roomId: groupId, keyId, envelope: 'alice-env' });
+    aliceClient.emit('room:rewrap-profile-keys', { roomId: groupId, keyId, envelopes: {} });
+
+    await roundTrip(aliceClient);
+    await roundTrip(bobClient);
+    expect(updates).toEqual([]);
+  });
+
+  it('use a small budget for profile key events', async () => {
+    const { aliceClient, groupId, keyId } = await setup();
+    const errors = collectEvents<ErrorEvent>(aliceClient, 'error');
+
+    for (let index = 0; index < 25; index += 1) {
+      aliceClient.emit('room:publish-profile-key', { roomId: groupId, keyId, envelope: `env-${index}` });
+    }
+    await roundTrip(aliceClient);
+
+    expect(errors).toContainEqual(expect.objectContaining({ code: 'rateLimit.socket', event: 'room:publish-profile-key' }));
+  });
+
+  it('fit the largest rewrap and photo payloads within the socket buffer', () => {
+    const envelopes = Object.fromEntries(
+      Array.from({ length: MAX_PROFILE_KEY_ENVELOPES }, () => [randomUUID(), 'x'.repeat(MAX_PROFILE_KEY_ENVELOPE_LENGTH)]),
+    );
+    const rewrap = JSON.stringify(['room:rewrap-profile-keys', { roomId: randomUUID(), keyId: newKeyId(), envelopes }]);
+
+    expect(Buffer.byteLength(rewrap)).toBeLessThan(SOCKET_MAX_HTTP_BUFFER_SIZE);
+  });
+
   it('include the own photo pointer and profile key version in the resumed user', async () => {
     const { h, alice, aliceClient } = await setup();
     const { url } = await avatarUpload(h, alice.user.id);
@@ -262,5 +301,30 @@ describe('avatar socket events', () => {
     client.emit('user:join', { mode: 'resume', userId: alice.user.id, sessionToken: alice.sessionToken });
 
     expect((await resumed).user).toMatchObject({ avatar: 0, encryptedAvatar: 'alice-ptr', profileKeyVersion: 2 });
+  });
+});
+
+describe('avatar socket budgets', () => {
+  it('keep photo changes and profile key events near the room action budget', () => {
+    const { events } = DEFAULT_SOCKET_EVENT_BUDGETS;
+
+    expect(events['room:publish-profile-key']).toEqual({ capacity: 20, refillPerSecond: 1 });
+    expect(events['room:rewrap-profile-keys']).toEqual({ capacity: 20, refillPerSecond: 1 });
+    for (const event of ['user:set-avatar', 'user:clear-avatar', 'room:set-avatar', 'room:clear-avatar']) {
+      expect(events[event]).toEqual({ capacity: 10, refillPerSecond: 0.2 });
+    }
+  });
+
+  it('refill the profile key budget at one event per second', () => {
+    let now = 0;
+    const tryConsume = createEventLimiter(DEFAULT_SOCKET_EVENT_BUDGETS, () => now);
+
+    for (let index = 0; index < 20; index += 1) {
+      expect(tryConsume('room:rewrap-profile-keys')).toBe(true);
+    }
+    expect(tryConsume('room:rewrap-profile-keys')).toBe(false);
+    now += 1000;
+    expect(tryConsume('room:rewrap-profile-keys')).toBe(true);
+    expect(tryConsume('room:rewrap-profile-keys')).toBe(false);
   });
 });
