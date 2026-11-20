@@ -15,7 +15,7 @@ export const TRANSFER_PENDING_MS = 15_000;
 export const MAX_CALL_DURATION_MS = 4 * 60 * 60 * 1000;
 export const RESTART_GRACE_MS = 60_000;
 export const MAX_ENVELOPE_LENGTH = 16 * 1024;
-export const TURN_TTL_SECONDS = 4 * 60 * 60;
+export const TURN_TTL_SECONDS = 60 * 60;
 export const CALL_ID_PATTERN = /^[A-Za-z0-9_-]{22}$/;
 
 export interface CallRecord {
