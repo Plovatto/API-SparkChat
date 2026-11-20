@@ -95,6 +95,19 @@ ${key.roster}`;
 
 type Executor = Pick<Database, 'select' | 'update' | 'insert'>;
 
+export function activeMemberCount(roomId: string, userIds: SQL): SQL {
+  return sql`(select count(*) from ${roomParticipants} p
+    where p.room_id = ${roomId} and p.user_id in ${userIds}
+      and not exists (select 1 from ${roomBans} b where b.room_id = p.room_id and b.user_id = p.user_id))`;
+}
+
+export function inRosterCondition(roomId: string, userId: string, keyId: string | SQL): SQL {
+  return sql`exists (select 1 from ${roomParticipants} p
+    join ${roomRosters} r on r.room_id = p.room_id and r.key_id = ${keyId}
+    where p.room_id = ${roomId} and p.user_id = ${userId}
+      and p.joined_at is not null and p.joined_at <= r.created_at)`;
+}
+
 function sameMembers(a: string[], b: string[]): boolean {
   const left = new Set(a);
   return left.size === a.length && a.length === b.length && b.every((id) => left.has(id));
@@ -139,9 +152,7 @@ export class RoomKeyRepository {
   }
 
   private memberCondition(roomId: string, userIds: SQL): SQL {
-    return sql`(select count(*) from ${roomParticipants} p
-      where p.room_id = ${roomId} and p.user_id in ${userIds}
-        and not exists (select 1 from ${roomBans} b where b.room_id = p.room_id and b.user_id = p.user_id))`;
+    return activeMemberCount(roomId, userIds);
   }
 
   private keyRows(publication: RoomKeyPublication): SQL {
@@ -261,10 +272,7 @@ export class RoomKeyRepository {
   }
 
   private inCurrentRosterCondition(roomId: string, userId: string, keyId: string): SQL {
-    return sql`exists (select 1 from ${roomParticipants} p
-      join ${roomRosters} r on r.room_id = p.room_id and r.key_id = ${keyId}
-      where p.room_id = ${roomId} and p.user_id = ${userId}
-        and p.joined_at is not null and p.joined_at <= r.created_at)`;
+    return inRosterCondition(roomId, userId, keyId);
   }
 
   async findRoster(roomId: string, keyId: string): Promise<string | null> {

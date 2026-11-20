@@ -102,6 +102,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     aiService,
     callService,
     pushService,
+    avatarService: services.avatarService,
     ...(options.socketEventBudgets ? { socketEventBudgets: options.socketEventBudgets } : {}),
   });
 

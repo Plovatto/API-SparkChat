@@ -20,6 +20,8 @@ export interface UserRecord {
   e2eEncryptedPrivateKeyByRecovery?: string | null;
   authSalt?: string | null;
   authVersion?: AuthVersion;
+  encryptedAvatar?: string | null;
+  profileKeyVersion?: number;
 }
 
 export interface SessionRecord {

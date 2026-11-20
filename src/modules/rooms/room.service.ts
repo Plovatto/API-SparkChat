@@ -5,7 +5,7 @@ import type { UserRecord, UserService } from '../users/index.js';
 import { hashInviteToken, matchesInviteToken, toInviteView, type InviteProofView, type RoomInviteView, type RoomNameView, type RoomRosterView } from './room.invites.js';
 import type { InviteResetOutcome, RoomRepository } from './room.repository.js';
 import type { RoomRotationAnnouncement } from './room.rotation.js';
-import { MAX_GROUP_MEMBERS, type RoomParticipant, type RoomRecord, type RoomSummary } from './room.types.js';
+import { MAX_GROUP_MEMBERS, type ProfileKeyEnvelopeView, type RoomAvatarView, type RoomParticipant, type RoomRecord, type RoomSummary } from './room.types.js';
 
 export interface JoinByInviteRequest {
   roomId: string;
@@ -18,7 +18,12 @@ export interface JoinByCodeResult {
   joined: boolean;
 }
 
-function toParticipant(user: UserRecord, isAdmin: boolean): RoomParticipant {
+function currentProfileKeyEnvelope(room: RoomRecord, userId: string): ProfileKeyEnvelopeView | null {
+  const envelope = room.profileKeyEnvelopes?.[userId];
+  return envelope && room.currentKeyId && envelope.keyId === room.currentKeyId ? envelope : null;
+}
+
+function toParticipant(user: UserRecord, isAdmin: boolean, room: RoomRecord, revealProfile: boolean): RoomParticipant {
   return {
     id: user.id,
     nickname: user.nickname,
@@ -27,15 +32,25 @@ function toParticipant(user: UserRecord, isAdmin: boolean): RoomParticipant {
     statusText: user.statusText,
     lastSeen: user.lastSeen,
     isAdmin,
+    encryptedAvatar: revealProfile ? (user.encryptedAvatar ?? null) : null,
+    profileKeyVersion: user.profileKeyVersion ?? 1,
+    profileKeyEnvelope: revealProfile ? currentProfileKeyEnvelope(room, user.id) : null,
   };
 }
 
-function toParticipants(room: RoomRecord, usersById: Map<string, UserRecord>): RoomParticipant[] {
+function toParticipants(room: RoomRecord, usersById: Map<string, UserRecord>, revealProfile: boolean): RoomParticipant[] {
   const admins = new Set(room.admins);
   return room.participants
     .map((id) => usersById.get(id))
     .filter((user): user is UserRecord => user !== undefined)
-    .map((user) => toParticipant(user, admins.has(user.id)));
+    .map((user) => toParticipant(user, admins.has(user.id), room, revealProfile));
+}
+
+function avatarView(room: RoomRecord, viewerId: string): RoomAvatarView | null {
+  if (room.type !== 'group' || !room.participants.includes(viewerId) || !room.encryptedAvatar || !room.avatarKeyId) {
+    return null;
+  }
+  return { encryptedAvatar: room.encryptedAvatar, keyId: room.avatarKeyId };
 }
 
 function inviteView(room: RoomRecord, viewerId: string): RoomInviteView | null {
@@ -354,7 +369,7 @@ export class RoomService {
 
   async buildParticipantViews(room: RoomRecord): Promise<RoomParticipant[]> {
     const usersById = await this.userService.getUsersByIds(room.participants);
-    return toParticipants(room, usersById);
+    return toParticipants(room, usersById, true);
   }
 
   async buildSummary(room: RoomRecord, viewerId: string): Promise<RoomSummary> {
@@ -407,7 +422,7 @@ export class RoomService {
         type: room.type,
         createdBy: creator?.nickname,
         creatorId: room.createdBy,
-        participants: toParticipants(room, usersById),
+        participants: toParticipants(room, usersById, room.participants.includes(viewerId)),
         lastMessage,
         unreadCount: digest?.unreadCount ?? 0,
         mentionCount: digest?.mentionCount ?? 0,
@@ -421,6 +436,7 @@ export class RoomService {
         invite: inviteView(room, viewerId),
         roster: rosterView(room, viewerId),
         encryptedName: nameView(room, viewerId),
+        encryptedAvatar: avatarView(room, viewerId),
         inviteProofs: inviteProofsView(room, viewerId),
       };
     });

@@ -1,10 +1,11 @@
-export type UploadKind = 'image' | 'audio' | 'file' | 'gif';
+export type UploadKind = 'image' | 'audio' | 'file' | 'gif' | 'avatar';
 
 const UPLOAD_KIND_LABELS: Record<UploadKind, string> = {
   image: 'imagem',
   audio: 'áudio',
   file: 'arquivo',
   gif: 'GIF',
+  avatar: 'arquivo da foto',
 };
 
 const UPLOAD_MISSING_FILE_MESSAGES: Record<UploadKind, string> = {
@@ -12,6 +13,7 @@ const UPLOAD_MISSING_FILE_MESSAGES: Record<UploadKind, string> = {
   audio: 'Nenhum áudio enviado.',
   file: 'Nenhum arquivo enviado.',
   gif: 'Nenhum GIF enviado.',
+  avatar: 'Nenhuma foto enviada.',
 };
 
 const UPLOAD_ACCEPTED_TYPES: Record<UploadKind, string> = {
@@ -19,6 +21,7 @@ const UPLOAD_ACCEPTED_TYPES: Record<UploadKind, string> = {
   audio: 'WEBM, OGG, MP4, AAC, MPEG ou WAV',
   file: 'PDF, vídeo (MP4, WEBM, MOV, AVI), documento do Office, ZIP, TXT ou CSV',
   gif: 'criptografado',
+  avatar: 'criptografado pelo aplicativo',
 };
 
 export const ERROR_CATALOG = {
@@ -41,6 +44,8 @@ export const ERROR_CATALOG = {
   'user.currentPasswordRequired': () =>
     'Informe a senha atual. A troca sem a senha atual só é permitida uma vez, nos 10 minutos seguintes à entrada com o arquivo de recuperação.',
   'user.credentialsInvalid': () => 'Credenciais em formato inválido.',
+  'user.avatarUploadInvalid': () => 'A foto enviada não foi encontrada, já está em uso ou não pertence a você.',
+  'user.profileKeyVersionStale': () => 'A versão da chave de perfil é anterior à atual. Atualize o aplicativo e tente novamente.',
   'user.credentialsIncomplete': () => 'Dados de credenciais incompletos. Atualize o aplicativo e tente novamente.',
   'room.notFound': () => 'Sala não encontrada.',
   'room.invalidCode': () => 'Formato de código inválido.',
@@ -50,6 +55,7 @@ export const ERROR_CATALOG = {
   'room.cannotRemoveSelf': () => 'Use a opção de sair do grupo para se remover.',
   'room.notMember': () => 'Usuário não faz parte do grupo.',
   'room.invalidInvite': () => 'Este link de convite é inválido ou foi redefinido.',
+  'room.avatarUploadInvalid': () => 'A foto enviada não foi encontrada, já está em uso ou não pertence a você.',
   'room.groupFull': ({ maxMembers }: { maxMembers: number }) => `Este grupo está cheio. O limite é de ${maxMembers} membros.`,
   'message.notFound': () => 'Mensagem não encontrada.',
   'message.deleteForbidden': () => 'Você não tem permissão para deletar esta mensagem.',
@@ -69,6 +75,9 @@ export const ERROR_CATALOG = {
   'e2e.nameRequired': () => 'A nova chave de um grupo precisa vir junto com o nome do grupo criptografado.',
   'e2e.nameKeyStale': () => 'O nome do grupo precisa ser criptografado com a chave atual da sala.',
   'e2e.renameRequiresRoster': () => 'Só quem está na lista verificada de membros da chave atual pode renomear o grupo. Aguarde a próxima troca de chave.',
+  'e2e.avatarKeyStale': () => 'A foto do grupo precisa ser criptografada com a chave atual da sala.',
+  'e2e.avatarRequiresRoster': () => 'Só quem está na lista verificada de membros da chave atual pode trocar a foto do grupo. Aguarde a próxima troca de chave.',
+  'e2e.profileKeyStale': () => 'A chave de perfil precisa ser embrulhada com a chave atual da sala.',
   'e2e.inviteRequired': () => 'A nova chave de um grupo precisa vir junto com o novo convite do grupo.',
   'e2e.roomKeyConflict': () => 'Não foi possível compartilhar a chave da sala: algum destinatário já a tem ou não é membro.',
   'upload.missingFile': ({ kind }: { kind: UploadKind }) => UPLOAD_MISSING_FILE_MESSAGES[kind],

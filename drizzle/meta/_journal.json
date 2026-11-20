@@ -190,6 +190,13 @@
       "when": 1795130114950,
       "tag": "0026_upload_expiry",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1795134548993,
+      "tag": "0027_profile_photos",
+      "breakpoints": true
     }
   ]
 }

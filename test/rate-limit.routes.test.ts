@@ -37,6 +37,17 @@ describe('rate limiters', () => {
       message: 'Muitos envios de arquivo. Aguarde um momento e tente novamente.',
       code: 'rateLimit.upload',
     });
+
+    const avatar = await request(app).post('/api/avatars/upload');
+    expect(avatar.status).toBe(401);
+  });
+
+  it('gives avatar uploads their own upload limiter', async () => {
+    const { app } = await buildTestApp();
+
+    const response = await sendUntilRateLimited(() => request(app).post('/api/avatars/upload'));
+
+    expect(response.body).toMatchObject({ code: 'rateLimit.upload' });
   });
 
   it('answers the global api limiter with rateLimit.api', async () => {
