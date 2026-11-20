@@ -26,7 +26,6 @@ export function createRateLimiter({ limit, code, windowMs = DEFAULT_WINDOW_MS, p
     standardHeaders: true,
     legacyHeaders: false,
     message: errorPayload(code),
-    ...(perUser ? { keyGenerator: authenticatedUserKey } : {}),
-    ipv6Subnet: 64,
+    ...(perUser ? { keyGenerator: authenticatedUserKey } : { ipv6Subnet: 64 }),
   });
 }
