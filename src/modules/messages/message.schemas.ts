@@ -49,6 +49,12 @@ const messageReplySnapshotSchema = z.object({
   }),
 });
 
+export const messageReactionSchema = z.object({
+  userId: z.string(),
+  emoji: z.string().openapi({ description: 'Emoji da reação cifrado como campo e2e:v2 com a chave da sala; o servidor nunca vê o emoji em claro' }),
+  updatedAt: z.string(),
+});
+
 export const messageViewSchema = z.object({
   id: z.string(),
   roomId: z.string(),
@@ -68,6 +74,15 @@ export const messageViewSchema = z.object({
   caption: z.string().nullable(),
   linkPreview: messageLinkPreviewSchema.nullable(),
   systemEvent: systemEventSchema.nullable(),
+  reactions: z.array(messageReactionSchema).openapi({
+    description: 'Reações à mensagem, no máximo uma por pessoa, ordenadas por updatedAt; vazio para mensagens apagadas para todos e de sistema',
+  }),
+});
+
+export const messageReactionsUpdatedPayloadSchema = z.object({
+  roomId: z.string(),
+  messageId: z.string(),
+  reactions: z.array(messageReactionSchema),
 });
 
 export const newMessagePayloadSchema = messageViewSchema.extend({

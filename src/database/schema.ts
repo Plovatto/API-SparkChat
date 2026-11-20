@@ -192,6 +192,22 @@ export const messages = sqliteTable(
   (table) => [index('messages_room_id_timestamp_idx').on(table.roomId, table.timestamp)],
 );
 
+export const messageReactions = sqliteTable(
+  'message_reactions',
+  {
+    messageId: text('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    emoji: text('emoji').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.messageId, table.userId] }),
+    index('message_reactions_message_id_idx').on(table.messageId),
+  ],
+);
+
 export const uploads = sqliteTable(
   'uploads',
   {

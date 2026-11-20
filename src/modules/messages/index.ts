@@ -10,7 +10,7 @@ export { MessageService } from './message.service.js';
 export { INITIAL_MESSAGES_LIMIT, registerMessageSocketHandlers, releaseSocketActivity } from './message.socket.js';
 export { systemEvent } from './message.system-events.js';
 export type { SystemEvent, SystemEventType } from './message.system-events.js';
-export type { MessageRecord, MessageView } from './message.types.js';
+export type { MessageReaction, MessageRecord, MessageView } from './message.types.js';
 export { RecordingService } from './recording.service.js';
 export { RoomPresenceService } from './room-presence.service.js';
 export { TypingService } from './typing.service.js';
