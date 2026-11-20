@@ -1,3 +1,4 @@
+import { AvatarRepository, AvatarService } from '@/modules/avatars/index.js';
 import { MessageRepository, MessageService } from '@/modules/messages/index.js';
 import { RoomKeyRepository, RoomRepository, RoomService } from '@/modules/rooms/index.js';
 import { UserRepository, UserService, UserSessionRepository } from '@/modules/users/index.js';
@@ -32,6 +33,8 @@ export async function buildRoomService(databaseUrl?: string) {
   const roomRepository = new RoomRepository(db);
   const roomService = new RoomService(roomRepository, userService, messageService);
   const roomKeyRepository = new RoomKeyRepository(db);
+  const avatarRepository = new AvatarRepository(db);
+  const avatarService = new AvatarService(avatarRepository, uploadRegistry, objectStorage, storageQuota);
 
   function joinGroup(roomId: string, userId: string) {
     return joinGroupWithSeededInvite(db, roomService, roomId, userId);
@@ -43,6 +46,8 @@ export async function buildRoomService(databaseUrl?: string) {
     roomService,
     roomRepository,
     roomKeyRepository,
+    avatarRepository,
+    avatarService,
     uploadRegistry,
     storeUpload,
     userService,

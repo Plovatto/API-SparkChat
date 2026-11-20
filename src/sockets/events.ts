@@ -1,5 +1,6 @@
 import type { Server, Socket } from 'socket.io';
 import type { Locale } from '../lib/locale.js';
+import type { AvatarClientToServerEvents, AvatarServerToClientEvents } from '../modules/avatars/index.js';
 import type { CallClientToServerEvents, CallServerToClientEvents } from '../modules/calls/index.js';
 import type { MessageClientToServerEvents, MessageServerToClientEvents } from '../modules/messages/index.js';
 import type { PushClientToServerEvents, PushServerToClientEvents } from '../modules/push/index.js';
@@ -10,13 +11,15 @@ export type ServerToClientEvents = UserServerToClientEvents &
   RoomServerToClientEvents &
   MessageServerToClientEvents &
   CallServerToClientEvents &
-  PushServerToClientEvents;
+  PushServerToClientEvents &
+  AvatarServerToClientEvents;
 
 export type ClientToServerEvents = UserClientToServerEvents &
   RoomClientToServerEvents &
   MessageClientToServerEvents &
   CallClientToServerEvents &
-  PushClientToServerEvents;
+  PushClientToServerEvents &
+  AvatarClientToServerEvents;
 
 export type InterServerEvents = Record<string, never>;
 

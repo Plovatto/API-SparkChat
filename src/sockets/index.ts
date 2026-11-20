@@ -1,6 +1,7 @@
 import { logger } from '../config/logger.js';
 import { registerClientEvents } from '../docs/socket-registry.js';
 import type { AiService } from '../modules/ai/index.js';
+import { registerAvatarSocketHandlers, type AvatarService } from '../modules/avatars/index.js';
 import { registerCallSocketHandlers, type CallService } from '../modules/calls/index.js';
 import {
   registerMessageSocketHandlers,
@@ -50,6 +51,7 @@ export interface SocketDeps {
   roomRateLimiter: RoomActionRateLimiter;
   callService: CallService;
   pushService: PushService;
+  avatarService: AvatarService;
   socketEventBudgets?: SocketEventBudgets;
 }
 
@@ -146,6 +148,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
 
     registerCallSocketHandlers(socket, { callService: deps.callService });
     registerPushSocketHandlers(socket, { pushService: deps.pushService });
+    registerAvatarSocketHandlers(io, socket, { avatarService: deps.avatarService, roomService: deps.roomService });
 
     socket.on('disconnect', (reason) => {
       logger.info({ socketId: socket.id, reason }, 'Client disconnected');

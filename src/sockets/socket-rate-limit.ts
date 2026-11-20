@@ -76,6 +76,12 @@ export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
     'user:logout': accountAction,
     'user:list-sessions': roomAction,
     'user:revoke-session': accountAction,
+    'user:set-avatar': { capacity: 10, refillPerSecond: 0.2 },
+    'user:clear-avatar': { capacity: 10, refillPerSecond: 0.2 },
+    'room:set-avatar': { capacity: 10, refillPerSecond: 0.2 },
+    'room:clear-avatar': { capacity: 10, refillPerSecond: 0.2 },
+    'room:publish-profile-key': keyExchange,
+    'room:rewrap-profile-keys': keyExchange,
   },
   fallback: { capacity: 60, refillPerSecond: 10 },
 };

@@ -20,7 +20,7 @@ import {
 } from './message.controller.js';
 import { audioUpload, fileUpload, gifUpload, imageUpload } from './message.upload.js';
 
-const uploadRateLimiter = createRateLimiter({
+export const uploadRateLimiter = createRateLimiter({
   limit: 20,
   code: 'rateLimit.upload',
 });

@@ -7,6 +7,7 @@ import { webPushVapidConfig } from './config/web-push-env.js';
 import { db } from './database/turso-client.js';
 import { runMigrations } from './database/migrate.js';
 import { CallBudget, CallRateLimiter, CallRepository, CallService, createCloudflareTurnProvider } from './modules/calls/index.js';
+import { AvatarRepository, AvatarService } from './modules/avatars/index.js';
 import { createGifProvider } from './modules/gifs/index.js';
 import { AiService, AiUsageLimiter, createGeminiRouter, ensureAssistantUser, loadAssistantIdentity } from './modules/ai/index.js';
 import { httpLinkPreviewFetcher, LinkPreviewRepository, LinkPreviewService } from './modules/link-preview/index.js';
@@ -68,6 +69,7 @@ const messageService = new MessageService(messageRepository, userService, object
 const roomRepository = new RoomRepository(db);
 const roomService = new RoomService(roomRepository, userService, messageService);
 const roomKeyRepository = new RoomKeyRepository(db);
+const avatarService = new AvatarService(new AvatarRepository(db), uploadRegistry, objectStorage, storageQuota);
 
 const { purgedParticipants, clearedCodes } = await roomService.normalizeMembershipsAndRoomCodes();
 if (purgedParticipants > 0 || clearedCodes > 0) {
@@ -174,6 +176,7 @@ registerSocketHandlers(io, {
   aiService,
   callService,
   pushService,
+  avatarService,
 });
 
 httpServer.listen(env.PORT, () => {

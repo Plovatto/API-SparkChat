@@ -65,13 +65,14 @@ interface UploadHandlerOptions<TResponse> {
   countsTowardUserQuota?: boolean;
   ttlMs?: number;
   maxExpiringBytes?: number;
+  encryptedOnly?: boolean;
 }
 
-function createUploadHandler<TResponse>(
+export function createUploadHandler<TResponse>(
   objectStorage: ObjectStorage,
   storageQuota: StorageQuota,
   uploadRegistry: UploadRegistry,
-  { kind, buildKey, buildResponse, contentDisposition, validateFile, countsTowardUserQuota = true, ttlMs, maxExpiringBytes }: UploadHandlerOptions<TResponse>,
+  { kind, buildKey, buildResponse, contentDisposition, validateFile, countsTowardUserQuota = true, ttlMs, maxExpiringBytes, encryptedOnly = false }: UploadHandlerOptions<TResponse>,
 ) {
   return async (req: Request, res: Response): Promise<void> => {
     const file = req.file;
@@ -87,7 +88,7 @@ function createUploadHandler<TResponse>(
     }
 
     const encrypted = isEncryptedUpload(req);
-    if (!encrypted && isNeutralUpload(file)) {
+    if ((encryptedOnly || isNeutralUpload(file)) && !(encrypted && isNeutralUpload(file))) {
       res.status(400).json(errorPayload('upload.invalidType', { kind }));
       return;
     }
