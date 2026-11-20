@@ -30,7 +30,7 @@ export interface PushServiceOptions {
   sender: PushSender | null;
   repository: PushRepository;
   limiter: PushRateLimiter;
-  isUserConnected: (userId: string) => boolean;
+  hasVisibleClient: (userId: string) => boolean;
   isSessionLive?: (session: PushSessionTimes, now: number) => boolean;
   now?: () => number;
 }
@@ -72,7 +72,7 @@ export class PushService {
   private readonly sender: PushSender | null;
   private readonly repository: PushRepository;
   private readonly limiter: PushRateLimiter;
-  private readonly isUserConnected: (userId: string) => boolean;
+  private readonly hasVisibleClient: (userId: string) => boolean;
   private readonly isSessionLive: (session: PushSessionTimes, now: number) => boolean;
   private readonly now: () => number;
   private readonly ringingCalls = new Map<string, number>();
@@ -86,7 +86,7 @@ export class PushService {
     this.sender = options.publicKey ? options.sender : null;
     this.repository = options.repository;
     this.limiter = options.limiter;
-    this.isUserConnected = options.isUserConnected;
+    this.hasVisibleClient = options.hasVisibleClient;
     this.isSessionLive = options.isSessionLive ?? (() => true);
     this.now = options.now ?? Date.now;
   }
@@ -160,11 +160,11 @@ export class PushService {
     }
     const topic = pushTopic('room', input.roomId);
     for (const userId of new Set(input.recipientIds)) {
-      if (userId === input.senderId || this.isUserConnected(userId) || !this.limiter.tryMessage(userId, input.roomId)) {
+      if (userId === input.senderId || this.hasVisibleClient(userId) || !this.limiter.tryMessage(userId, input.roomId)) {
         continue;
       }
       this.enqueue(`${userId}:${topic}`, () =>
-        this.deliver(userId, { t: 'msg', roomId: input.roomId }, { TTL: MESSAGE_TTL_SECONDS, urgency: 'normal', topic }),
+        this.deliver(userId, { t: 'msg', roomId: input.roomId }, { TTL: MESSAGE_TTL_SECONDS, urgency: 'high', topic }),
       );
     }
   }

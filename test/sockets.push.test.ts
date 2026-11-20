@@ -378,7 +378,7 @@ describe('message pushes', () => {
     await delivered;
   }
 
-  it('does not push while the recipient has a connected socket', async () => {
+  it('does not push while the recipient has a visible client', async () => {
     const { h, room, aliceClient, sent } = await messageSetup();
     await send(aliceClient, room.id, 'oi', 'm1');
     await settle(50);
@@ -396,12 +396,52 @@ describe('message pushes', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]?.endpoint).toBe(bobSub.endpoint);
     expect(sent[0]?.payload).toEqual({ t: 'msg', roomId: room.id });
-    expect(sent[0]?.options).toEqual({ TTL: 86_400, urgency: 'normal', topic: pushTopic('room', room.id) });
+    expect(sent[0]?.options).toEqual({ TTL: 86_400, urgency: 'high', topic: pushTopic('room', room.id) });
     expect(sent[0]?.raw).not.toMatch(/segredo|Alice/);
 
     await send(aliceClient, room.id, 'de novo', 'm2');
     await h.pushService.idle();
     expect(sent).toHaveLength(1);
+  });
+
+  async function setVisibility(client: TestClient, visible: boolean): Promise<void> {
+    await new Promise<void>((resolve) => {
+      client.emit('user:visibility', { visible }, () => resolve());
+    });
+    await settle(20);
+  }
+
+  it('pushes to a recipient whose only client is hidden in the background', async () => {
+    const { h, room, aliceClient, bobClient, bobSub, sent } = await messageSetup();
+    await setVisibility(bobClient, false);
+    await send(aliceClient, room.id, 'oi', 'm1');
+    await h.pushService.idle();
+    expect(sent.map((push) => push.endpoint)).toEqual([bobSub.endpoint]);
+    expect(sent[0]?.options.urgency).toBe('high');
+  });
+
+  it('does not push while another device of the recipient is visible', async () => {
+    const { h, bob, room, aliceClient, bobClient, sent } = await messageSetup();
+    const bobDesktop = await h.connectAs(bob);
+    await setVisibility(bobClient, false);
+    await send(aliceClient, room.id, 'oi', 'm1');
+    await h.pushService.idle();
+    expect(sent).toEqual([]);
+
+    await setVisibility(bobDesktop, false);
+    clock.now += 11_000;
+    await send(aliceClient, room.id, 'de novo', 'm2');
+    await h.pushService.idle();
+    expect(sent).toHaveLength(1);
+  });
+
+  it('stops pushing once the hidden client becomes visible again', async () => {
+    const { h, room, aliceClient, bobClient, sent } = await messageSetup();
+    await setVisibility(bobClient, false);
+    await setVisibility(bobClient, true);
+    await send(aliceClient, room.id, 'oi', 'm1');
+    await h.pushService.idle();
+    expect(sent).toEqual([]);
   });
 
   it('never pushes the sender own devices', async () => {

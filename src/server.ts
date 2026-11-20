@@ -23,7 +23,7 @@ import { createWebPushSender, PushRateLimiter, PushRepository, PushService } fro
 import { notifyRoomRotations, RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
 import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
-import { listUserSockets } from './sockets/user-sockets.js';
+import { hasVisibleUserSocket } from './sockets/user-sockets.js';
 import { SOCKET_MAX_HTTP_BUFFER_SIZE } from './sockets/socket-options.js';
 import { createR2ObjectStorage } from './storage/r2-object-storage.js';
 import { StorageQuota } from './storage/storage-quota.js';
@@ -150,7 +150,7 @@ const pushService = new PushService({
   sender: vapid ? createWebPushSender(vapid) : null,
   repository: new PushRepository(db),
   limiter: new PushRateLimiter(),
-  isUserConnected: (userId) => listUserSockets(io, userId).length > 0,
+  hasVisibleClient: (userId) => hasVisibleUserSocket(io, userId),
   isSessionLive: (session, now) => isSessionLive(session, now),
 });
 pushService.startMaintenance();

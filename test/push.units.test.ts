@@ -34,7 +34,7 @@ async function build(
     sender,
     repository,
     limiter: new PushRateLimiter(options.now),
-    isUserConnected: (userId) => connected.has(userId),
+    hasVisibleClient: (userId) => connected.has(userId),
     ...(options.isSessionLive ? { isSessionLive: options.isSessionLive } : {}),
     ...(options.now ? { now: options.now } : {}),
   });
@@ -152,7 +152,7 @@ describe('push service', () => {
     expect(await repository.listForUser('u1')).toHaveLength(1);
   });
 
-  it('pushes messages only to recipients without a connected socket and throttles per room', async () => {
+  it('pushes messages only to recipients without a visible client and throttles per room', async () => {
     let now = Date.UTC(2026, 0, 1);
     const sender = vi.fn<PushSender>(() => Promise.resolve());
     const { service, connected } = await build({ sender, now: () => now });
@@ -169,7 +169,7 @@ describe('push service', () => {
     service.newMessage({ roomId: 'r1', senderId: 'u2', recipientIds: ['u1', 'u2'] });
     await service.idle();
     expect(sender).toHaveBeenCalledTimes(2);
-    expect(sender.mock.calls[1]?.[2]).toEqual({ TTL: 86_400, urgency: 'normal', topic: pushTopic('room', 'r1') });
+    expect(sender.mock.calls[1]?.[2]).toEqual({ TTL: 86_400, urgency: 'high', topic: pushTopic('room', 'r1') });
   });
 
   it('updates last use at most once an hour', async () => {
