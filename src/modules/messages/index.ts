@@ -1,4 +1,4 @@
-export { emitMessageUpdate } from './message.broadcast.js';
+export { emitMessageUpdate, emitReactionsUpdate } from './message.broadcast.js';
 export type { MessageClientToServerEvents, MessageServerToClientEvents } from './message.events.js';
 export { MessageRateLimiter } from './message.rate-limiter.js';
 export { MessageRepository } from './message.repository.js';
