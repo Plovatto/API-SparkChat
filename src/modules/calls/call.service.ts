@@ -12,6 +12,7 @@ import type { CallRepository } from './call.repository.js';
 import { transition, type CallEvent } from './call.state.js';
 import {
   HEARTBEAT_TIMEOUT_MS,
+  TAKEOVER_SILENCE_MS,
   MAX_CALL_DURATION_MS,
   MAX_ENVELOPE_LENGTH,
   RESTART_GRACE_MS,
@@ -86,6 +87,7 @@ function peerOf(call: CallRecord, role: CallRole): string {
 
 export class CallService {
   private readonly bindings = new Map<string, SocketBindings>();
+  private readonly beats = new Map<string, Partial<Record<CallRole, number>>>();
   private readonly ringingInvites = new Map<string, IncomingCallPayload>();
   private readonly pending = new Map<string, QueuedSignal[]>();
   private readonly now: () => number;
@@ -256,13 +258,19 @@ export class CallService {
     }
   }
 
-  async hangup(actor: CallActor, callId: string): Promise<void> {
+  async hangup(actor: CallActor, callId: string, force = false): Promise<void> {
     this.requireEnabled();
     const call = await this.requireParticipant(callId, actor.userId);
     if (call.state === 'ended') {
       return;
     }
     const role = roleOf(call, actor.userId);
+    if (role && !force && (call.state === 'accepted' || call.state === 'active')) {
+      const bound = this.boundSocket(call, role);
+      if (bound !== undefined && bound !== actor.socketId && this.io.sockets.sockets.has(bound)) {
+        throw AppError.of('call.notAllowed');
+      }
+    }
     const ended = await this.finish(callId, { type: 'hangup', by: role ?? 'caller' });
     if (ended && role === 'callee' && call.state === 'ringing') {
       this.io.in(userRoom(call.calleeId)).except(actor.socketId).emit('call:declined-elsewhere', { callId });
@@ -291,6 +299,7 @@ export class CallService {
     }
 
     this.requireBoundSocket(call, role, actor.socketId);
+    this.markBeat(call.id, role);
 
     if (role === 'callee' && call.state === 'accepted') {
       await this.repository.markActive(call.id);
@@ -314,9 +323,42 @@ export class CallService {
       if (!role) {
         throw AppError.of('call.notAllowed');
       }
-      this.requireBoundSocket(call, role, actor.socketId);
+      if (this.boundSocket(call, role) !== actor.socketId) {
+        if (!this.mayTakeOver(call, role, actor.socketId)) {
+          throw AppError.of('call.notAllowed');
+        }
+        await this.takeOver(call, role, actor.socketId);
+        return;
+      }
+      this.markBeat(call.id, role);
       await this.repository.touchHeartbeat(callId, new Date(this.now()).toISOString());
     }
+  }
+
+  private markBeat(callId: string, role: CallRole): void {
+    const beats = this.beats.get(callId) ?? {};
+    beats[role] = this.now();
+    this.beats.set(callId, beats);
+  }
+
+  private lastBeatOf(call: CallRecord, role: CallRole): number {
+    return this.beats.get(call.id)?.[role] ?? Date.parse(call.lastHeartbeatAt ?? call.answeredAt ?? call.createdAt);
+  }
+
+  private mayTakeOver(call: CallRecord, role: CallRole, socketId: string): boolean {
+    return this.canTakeOver(call, role, socketId) || this.now() - this.lastBeatOf(call, role) >= TAKEOVER_SILENCE_MS;
+  }
+
+  private async takeOver(call: CallRecord, role: CallRole, socketId: string): Promise<void> {
+    const bindings = this.bindings.get(call.id) ?? {};
+    bindings[role] = socketId;
+    this.bindings.set(call.id, bindings);
+    if (role === 'callee') {
+      await this.repository.rebindAcceptedDevice(call.id, socketId);
+    }
+    this.markBeat(call.id, role);
+    await this.repository.touchHeartbeat(call.id, new Date(this.now()).toISOString());
+    this.flushSignals(call.id, role, socketId);
   }
 
   async sync(actor: CallActor): Promise<void> {
@@ -331,14 +373,7 @@ export class CallService {
 
     if (call.state === 'accepted' || call.state === 'active') {
       if (this.canTakeOver(call, role, actor.socketId)) {
-        const bindings = this.bindings.get(call.id) ?? {};
-        bindings[role] = actor.socketId;
-        this.bindings.set(call.id, bindings);
-        if (role === 'callee') {
-          await this.repository.rebindAcceptedDevice(call.id, actor.socketId);
-        }
-        await this.repository.touchHeartbeat(call.id, new Date(this.now()).toISOString());
-        this.flushSignals(call.id, role, actor.socketId);
+        await this.takeOver(call, role, actor.socketId);
       }
     }
 
@@ -487,6 +522,7 @@ export class CallService {
 
   private async afterEnd(call: CallRecord): Promise<void> {
     this.bindings.delete(call.id);
+    this.beats.delete(call.id);
     this.ringingInvites.delete(call.id);
     this.pending.delete(call.id);
     this.limiter.forgetCall(call.id);
