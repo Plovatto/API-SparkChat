@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { validateWebPushEnv, webPushVapidConfig } from '@/config/web-push-env.js';
 import { pushSubscriptions, sessions, users } from '@/database/schema.js';
 import { isAllowedPushEndpoint, isAllowedPushHost, normalizeAuthSecret, normalizeP256dh } from '@/modules/push/push.endpoint.js';
-import { PushDeliveryError, PushRateLimiter, PushRepository, PushService, pushTopic, type PushSender } from '@/modules/push/index.js';
+import { buildMessagePushPayload, PushDeliveryError, PushRateLimiter, PushRepository, PushService, pushTopic, type PushSender } from '@/modules/push/index.js';
 import { createTestDb } from './support/create-test-db.js';
 
 const PUBLIC_KEY = Buffer.concat([Buffer.from([4]), randomBytes(64)]).toString('base64url');
@@ -34,7 +34,7 @@ async function build(
     sender,
     repository,
     limiter: new PushRateLimiter(options.now),
-    isUserConnected: (userId) => connected.has(userId),
+    hasVisibleClient: (userId) => connected.has(userId),
     ...(options.isSessionLive ? { isSessionLive: options.isSessionLive } : {}),
     ...(options.now ? { now: options.now } : {}),
   });
@@ -99,6 +99,48 @@ describe('web push env', () => {
   });
 });
 
+describe('message push payload', () => {
+  const KEY_ID = 'AAAAAAAAAAAAAAAAAAAAAA';
+  const base = { roomId: 'r1', senderId: 'u2', recipientIds: ['u1'] };
+  const cipher = (bytes: number) => `e2e:v2:${KEY_ID}:${randomBytes(bytes).toString('base64')}`;
+
+  it('carries the ciphertext, ids and kind of a text message', () => {
+    const content = cipher(200);
+    expect(buildMessagePushPayload({ ...base, message: { id: 'm1', type: 'text', content } })).toEqual({ t: 'msg', roomId: 'r1', m: { id: 'm1', s: 'u2', k: 'text', c: content } });
+  });
+
+  it('carries the signed encrypted mime type of media but never their encrypted urls', () => {
+    const fileMime = cipher(40);
+    for (const type of ['image', 'audio', 'file']) {
+      const payload = buildMessagePushPayload({ ...base, message: { id: 'm1', type, content: `https://media.example/${type}`, fileMime } });
+      expect(payload).toEqual({ t: 'msg', roomId: 'r1', m: { id: 'm1', s: 'u2', k: type, c: fileMime } });
+      expect(JSON.stringify(payload)).not.toContain('media.example');
+    }
+    expect(buildMessagePushPayload({ ...base, message: { id: 'm1', type: 'image', content: cipher(40), fileMime: 'image/png' } })).toEqual({ t: 'msg', roomId: 'r1', m: { id: 'm1', s: 'u2', k: 'image' } });
+    expect(buildMessagePushPayload({ ...base, message: { id: 'm1', type: 'image', content: cipher(40) } })).toEqual({ t: 'msg', roomId: 'r1', m: { id: 'm1', s: 'u2', k: 'image' } });
+  });
+
+  it('never forwards content that is not an end-to-end encrypted field', () => {
+    const payload = buildMessagePushPayload({ ...base, message: { id: 'm1', type: 'text', content: 'texto em claro' } });
+    expect(payload).toEqual({ t: 'msg', roomId: 'r1', m: { id: 'm1', s: 'u2', k: 'text' } });
+    expect(JSON.stringify(payload)).not.toContain('claro');
+  });
+
+  it('drops the ciphertext when it would not fit in a push and keeps the payload under 3 KB', () => {
+    const fits = buildMessagePushPayload({ ...base, message: { id: 'm1', type: 'text', content: cipher(2000) } });
+    expect(fits.t === 'msg' && fits.m?.c).toBeTruthy();
+    expect(Buffer.byteLength(JSON.stringify(fits))).toBeLessThanOrEqual(3000);
+    const tooBig = buildMessagePushPayload({ ...base, message: { id: 'm1', type: 'text', content: cipher(2400) } });
+    expect(tooBig).toEqual({ t: 'msg', roomId: 'r1', m: { id: 'm1', s: 'u2', k: 'text' } });
+  });
+
+  it('falls back to the room id alone for system messages, unknown kinds and missing data', () => {
+    expect(buildMessagePushPayload(base)).toEqual({ t: 'msg', roomId: 'r1' });
+    expect(buildMessagePushPayload({ ...base, message: { id: 'm1', type: 'system', content: cipher(10) } })).toEqual({ t: 'msg', roomId: 'r1' });
+    expect(buildMessagePushPayload({ ...base, message: { id: 'x'.repeat(4000), type: 'image', content: '' } })).toEqual({ t: 'msg', roomId: 'r1' });
+  });
+});
+
 describe('push service', () => {
   it('sends nothing and reports disabled without a public key', async () => {
     const sender = vi.fn<PushSender>(() => Promise.resolve());
@@ -152,7 +194,7 @@ describe('push service', () => {
     expect(await repository.listForUser('u1')).toHaveLength(1);
   });
 
-  it('pushes messages only to recipients without a connected socket and throttles per room', async () => {
+  it('pushes messages only to recipients without a visible client and throttles per room', async () => {
     let now = Date.UTC(2026, 0, 1);
     const sender = vi.fn<PushSender>(() => Promise.resolve());
     const { service, connected } = await build({ sender, now: () => now });
@@ -169,7 +211,7 @@ describe('push service', () => {
     service.newMessage({ roomId: 'r1', senderId: 'u2', recipientIds: ['u1', 'u2'] });
     await service.idle();
     expect(sender).toHaveBeenCalledTimes(2);
-    expect(sender.mock.calls[1]?.[2]).toEqual({ TTL: 86_400, urgency: 'normal', topic: pushTopic('room', 'r1') });
+    expect(sender.mock.calls[1]?.[2]).toEqual({ TTL: 86_400, urgency: 'high', topic: pushTopic('room', 'r1') });
   });
 
   it('updates last use at most once an hour', async () => {
