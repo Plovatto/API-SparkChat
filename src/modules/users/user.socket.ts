@@ -52,12 +52,12 @@ const joinPayloadSchema = z.discriminatedUnion('mode', [
   }),
   z.object({
     mode: z.literal('resume'),
-    userId: z.string().trim().min(1),
-    sessionToken: z.string().trim().min(1),
+    userId: z.string().trim().min(1).max(64),
+    sessionToken: z.string().trim().min(1).max(256),
   }),
 ]);
 
-const currentPasswordSchema = z.string().optional().openapi({
+const currentPasswordSchema = z.string().max(128).optional().openapi({
   description: 'Senha atual. Obrigatória para trocar o nickname, regenerar o arquivo de recuperação e trocar a senha',
 });
 
@@ -91,7 +91,7 @@ const changePasswordPayloadSchema = z.object({
 });
 
 const revokeSessionPayloadSchema = z.object({
-  sessionId: z.string().trim().min(1),
+  sessionId: z.string().trim().min(1).max(64),
 });
 
 const setLocalePayloadSchema = z.object({

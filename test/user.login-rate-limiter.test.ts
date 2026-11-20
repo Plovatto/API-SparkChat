@@ -109,7 +109,7 @@ describe('LoginRateLimiter', () => {
   it('groups addresses by network prefix', () => {
     expect(networkPrefix('10.1.2.3')).toBe('10.1.2');
     expect(networkPrefix('::ffff:10.1.2.3')).toBe('10.1.2');
-    expect(networkPrefix('2001:DB8:abcd:12::1')).toBe('2001:db8:abcd');
+    expect(networkPrefix('2001:DB8:abcd:12::1')).toBe('2001:db8:abcd:12::/64');
   });
 
   it('grows the account backoff exponentially up to fifteen minutes', () => {

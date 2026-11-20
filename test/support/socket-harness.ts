@@ -16,6 +16,7 @@ import type { AppServer } from '@/sockets/events.js';
 import { hasVisibleUserSocket } from '@/sockets/user-sockets.js';
 import { registerSocketHandlers } from '@/sockets/index.js';
 import { SOCKET_MAX_HTTP_BUFFER_SIZE } from '@/sockets/socket-options.js';
+import type { SocketConnectionLimits } from '@/sockets/connection-limits.js';
 import type { SocketEventBudgets } from '@/sockets/socket-rate-limit.js';
 import { buildRoomService } from './build-room-service.js';
 import { establishFakeGeneration, newKeyId, TEST_KEY_ID } from './room-keys.js';
@@ -32,6 +33,7 @@ export interface SocketHarnessOptions {
   roomRateLimiter?: RoomActionRateLimiter;
   connectionStateRecovery?: boolean;
   socketEventBudgets?: SocketEventBudgets;
+  socketConnectionLimits?: SocketConnectionLimits;
   loginRateLimiter?: LoginRateLimiter;
   calls?: { turnProvider?: TurnProvider; now?: () => number; enabled?: boolean; tierBytes?: number };
   push?: { sender?: PushSender; publicKey?: string; limiter?: PushRateLimiter };
@@ -104,6 +106,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     pushService,
     avatarService: services.avatarService,
     ...(options.socketEventBudgets ? { socketEventBudgets: options.socketEventBudgets } : {}),
+    ...(options.socketConnectionLimits ? { socketConnectionLimits: options.socketConnectionLimits } : {}),
   });
 
   await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
