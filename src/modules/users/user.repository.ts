@@ -128,7 +128,10 @@ export class UserRepository {
       this.db.update(users).set(patch).where(eq(users.id, userId)),
       this.db
         .update(rooms)
-        .set({ rotationRequired: sql`${rooms.currentEpoch} + 1` })
+        .set({
+          rotationRequired: sql`${rooms.currentEpoch} + 1`,
+          rotationRequiredAt: sql`coalesce(${rooms.rotationRequiredAt}, ${new Date().toISOString()})`,
+        })
         .where(and(inArray(rooms.id, memberRooms), gt(rooms.currentEpoch, 0)))
         .returning({ roomId: rooms.id, epoch: rooms.rotationRequired }),
     ]);

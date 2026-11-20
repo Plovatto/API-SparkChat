@@ -23,6 +23,7 @@ const envSchema = z.object({
       .refine((value) => (value & (value - 1)) === 0, 'PASSWORD_SCRYPT_COST must be a power of two')
       .default(2 ** 16),
   ),
+  PASSWORD_LENGTH_DECLARATION_REQUIRED: z.preprocess((value) => value === 'true' || value === '1', z.boolean()),
   GEMINI_API_KEY: z.string().min(1),
   AI_ASSISTANT_PRIVATE_KEY: z.string().min(1),
   R2_ACCOUNT_ID: z.string().min(1),

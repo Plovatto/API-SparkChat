@@ -22,6 +22,7 @@ export interface RoomRecord {
   currentEpoch?: number | undefined;
   currentKeyId?: string | undefined;
   rotationRequired?: number | undefined;
+  rotationRequiredAt?: string | undefined;
   inviteTokenHash?: string | undefined;
   encryptedInvite?: string | undefined;
   inviteKeyId?: string | undefined;

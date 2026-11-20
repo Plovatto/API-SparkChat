@@ -12,7 +12,7 @@ import { bindSocketSession, clearSocketSession, requireSocketUserId } from '../.
 import { findSocketsBoundToUser, hasVisibleUserSocket, userRoom } from '../../sockets/user-sockets.js';
 import { emitMessageUpdate, type MessageService } from '../messages/index.js';
 import { notifyRoomRotations, type RoomService } from '../rooms/index.js';
-import { authSaltSchema, clientSecretSchema } from './user.credentials.js';
+import { authSaltSchema, clientSecretSchema, passwordLengthSchema } from './user.credentials.js';
 import { describeDevice } from './user.device.js';
 import { getPublicKeysPayloadSchema, publishE2eKeysPayloadSchema, publishSigningKeyPayloadSchema, wrappedPrivateKeySchema } from './user.e2e-keys.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
@@ -49,6 +49,7 @@ const joinPayloadSchema = z.discriminatedUnion('mode', [
     password: clientSecretSchema,
     authSalt: authSaltSchema,
     recoveryVerifier: clientSecretSchema,
+    passwordLength: passwordLengthSchema,
   }),
   z.object({
     mode: z.literal('resume'),
@@ -84,6 +85,7 @@ const visibilityPayloadSchema = z.object({
 const changePasswordPayloadSchema = z.object({
   currentPassword: currentPasswordSchema,
   newPassword: clientSecretSchema,
+  passwordLength: passwordLengthSchema,
   newAuthSalt: authSaltSchema,
   encryptedPrivateKeyByPassword: wrappedPrivateKeySchema,
   recoveryVerifier: clientSecretSchema.optional(),
@@ -252,6 +254,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
         password: input.password,
         authSalt: input.authSalt,
         recoveryVerifier: input.recoveryVerifier,
+        passwordLength: input.passwordLength,
         userAgent: socket.handshake.headers['user-agent'] ?? '',
       });
 

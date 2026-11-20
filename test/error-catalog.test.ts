@@ -4,6 +4,7 @@ import { ERROR_CATALOG, ERROR_CODES, type ErrorCode } from '@/lib/error-catalog.
 
 const SAMPLE_PARAMS: Partial<Record<ErrorCode, object>> = {
   'user.nicknameInvalid': { minLength: 2, maxLength: 20, minLetters: 2 },
+  'user.passwordTooShort': { minLength: 12 },
   'upload.missingFile': { kind: 'audio' },
   'upload.tooLarge': { kind: 'audio', maxSize: '8MB' },
   'upload.invalidType': { kind: 'file' },

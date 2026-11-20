@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, inArray, notExists, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
-import { roomBans, roomKeys, roomParticipants, roomRosters, rooms, users } from '../../database/schema.js';
+import { roomBans, roomKeyReports, roomKeys, roomParticipants, roomRosters, rooms, users } from '../../database/schema.js';
 import type { RoomInvite } from './room.invites.js';
 
 export interface StoredRoomKey {
@@ -46,10 +46,20 @@ export interface RoomRotation {
   epoch: number;
 }
 
+export interface BadKeyReportOutcome {
+  reported: boolean;
+  rotation: RoomRotation | null;
+}
+
 export interface RoomKeyWithSender extends StoredRoomKey {
   senderPublicKey: string | null;
   senderSigningPublicKey: string | null;
   senderIsMember: boolean;
+}
+
+export function reportThreshold(memberCount: number): number {
+  const eligible = Math.max(1, memberCount - 1);
+  return Math.min(Math.max(2, Math.ceil(eligible / 2)), eligible);
 }
 
 export const MAX_ROSTER_BYTES_PER_RESPONSE = 256 * 1024;
@@ -185,7 +195,7 @@ export class RoomKeyRepository {
           name_key_id = case when type = 'group' then ${keyId} end`
       : sql``;
     const advance = this.db.run(sql`
-      update ${rooms} set current_epoch = ${epoch}, current_key_id = ${keyId}, rotation_required = null${inviteColumns}${rosterColumns}${nameColumns}
+      update ${rooms} set current_epoch = ${epoch}, current_key_id = ${keyId}, rotation_required = null, rotation_required_at = null${inviteColumns}${rosterColumns}${nameColumns}
       where id = ${roomId}
         and (type <> 'group' or ${invite && roster && name ? 1 : 0} = 1)
         and current_epoch = ${epoch - 1}
@@ -229,6 +239,8 @@ export class RoomKeyRepository {
         and exists (select 1 from ${roomKeys} k where k.room_id = ${roomId} and k.user_id = ${senderId} and k.key_id = ${keyId})
         and ${this.memberCondition(roomId, targetIds)} = ${keys.length}
         and not exists (select 1 from ${roomKeys} k where k.room_id = ${roomId} and k.key_id = ${keyId} and k.user_id in ${targetIds})
+        and not exists (select 1 from ${roomKeyReports} r where r.room_id = ${roomId} and r.key_id = ${keyId}
+          and r.sender_id = ${senderId} and r.user_id in ${targetIds})
     `);
     return result.rowsAffected === keys.length;
   }
@@ -286,10 +298,64 @@ export class RoomKeyRepository {
   async markRotationRequired(roomId: string): Promise<RoomRotation | null> {
     const [row] = await this.db
       .update(rooms)
-      .set({ rotationRequired: sql`${rooms.currentEpoch} + 1` })
+      .set({
+        rotationRequired: sql`${rooms.currentEpoch} + 1`,
+        rotationRequiredAt: sql`coalesce(${rooms.rotationRequiredAt}, ${new Date().toISOString()})`,
+      })
       .where(and(eq(rooms.id, roomId), gt(rooms.currentEpoch, 0)))
       .returning({ roomId: rooms.id, epoch: rooms.rotationRequired });
     return row?.epoch ? { roomId: row.roomId, epoch: row.epoch } : null;
+  }
+
+  async isBarredSender(roomId: string, keyId: string, senderId: string): Promise<boolean> {
+    const [state, memberIds] = await Promise.all([this.getState(roomId), this.memberIds(this.db, roomId)]);
+    if (!state || state.rotationRequired === null || state.currentKeyId !== keyId) {
+      return false;
+    }
+    const reports = await this.db
+      .select({ userId: roomKeyReports.userId, senderId: roomKeyReports.senderId })
+      .from(roomKeyReports)
+      .where(and(eq(roomKeyReports.roomId, roomId), eq(roomKeyReports.keyId, keyId), inArray(roomKeyReports.userId, memberIds)));
+    const reporters = new Set(reports.map((report) => report.userId));
+    return reporters.size >= reportThreshold(memberIds.length) && reports.some((report) => report.senderId === senderId);
+  }
+
+  async startRotationClock(roomId: string): Promise<void> {
+    await this.db.run(sql`
+      update ${rooms} set rotation_required_at = ${new Date().toISOString()}
+      where id = ${roomId} and rotation_required is not null and rotation_required_at is null
+    `);
+  }
+
+  async reportBadKey(roomId: string, userId: string, keyId: string): Promise<BadKeyReportOutcome> {
+    const [row] = await this.db
+      .select({ senderId: roomKeys.senderId })
+      .from(roomKeys)
+      .where(and(eq(roomKeys.roomId, roomId), eq(roomKeys.userId, userId), eq(roomKeys.keyId, keyId)));
+    if (!row || row.senderId === userId) {
+      return { reported: false, rotation: null };
+    }
+
+    await this.db.batch([
+      this.db.delete(roomKeys).where(and(eq(roomKeys.roomId, roomId), eq(roomKeys.userId, userId), eq(roomKeys.keyId, keyId))),
+      this.db
+        .insert(roomKeyReports)
+        .values({ roomId, userId, keyId, senderId: row.senderId, createdAt: new Date().toISOString() })
+        .onConflictDoNothing(),
+    ]);
+
+    const [state, memberIds] = await Promise.all([this.getState(roomId), this.memberIds(this.db, roomId)]);
+    if (!state || state.currentKeyId !== keyId || state.rotationRequired !== null) {
+      return { reported: true, rotation: null };
+    }
+    const [counted] = await this.db
+      .select({ reporters: sql<number>`count(distinct ${roomKeyReports.userId})` })
+      .from(roomKeyReports)
+      .where(and(eq(roomKeyReports.roomId, roomId), eq(roomKeyReports.keyId, keyId), inArray(roomKeyReports.userId, memberIds)));
+    if (Number(counted?.reporters ?? 0) < reportThreshold(memberIds.length)) {
+      return { reported: true, rotation: null };
+    }
+    return { reported: true, rotation: await this.markRotationRequired(roomId) };
   }
 
   async findForUser(roomId: string, userId: string, keyId: string): Promise<RoomKeyWithSender | null> {

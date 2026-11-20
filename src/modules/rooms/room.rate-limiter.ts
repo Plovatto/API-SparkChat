@@ -8,6 +8,7 @@ const MAX_PRIVATE_LOOKUP_MISSES = 10;
 const PRIVATE_LOOKUP_MISS_WINDOW_MS = 10 * 60 * 1000;
 export const KEY_REQUEST_INTERVAL_MS = 30 * 1000;
 export const INVITE_RESET_INTERVAL_MS = 30 * 1000;
+export const BAD_KEY_REPORT_INTERVAL_MS = 10 * 60 * 1000;
 const MAX_TRACKED_ENTRIES = 10_000;
 
 function pruneExpired(entries: Map<string, number>, now: number): void {
@@ -28,6 +29,7 @@ export class RoomActionRateLimiter {
   private readonly privateLookupMisses = new Map<string, number[]>();
   private readonly keyRequestCooldowns = new Map<string, number>();
   private readonly inviteResetCooldowns = new Map<string, number>();
+  private readonly badKeyReportCooldowns = new Map<string, number>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -92,6 +94,10 @@ export class RoomActionRateLimiter {
 
   tryKeyRequest(userId: string, roomId: string): boolean {
     return this.tryCooldown(this.keyRequestCooldowns, `${userId}:${roomId}`, KEY_REQUEST_INTERVAL_MS);
+  }
+
+  tryBadKeyReport(userId: string, roomId: string, keyId: string): boolean {
+    return this.tryCooldown(this.badKeyReportCooldowns, `${userId}:${roomId}:${keyId}`, BAD_KEY_REPORT_INTERVAL_MS);
   }
 
   tryInviteReset(userId: string, roomId: string): boolean {
