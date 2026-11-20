@@ -29,6 +29,7 @@ export class CallRateLimiter {
   private readonly iceServers = new Map<string, IceServersUsage>();
   private readonly closed = new Map<string, number>();
   private readonly transfers = new Map<string, number[]>();
+  private readonly iceBypass = new Map<string, string>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -68,11 +69,21 @@ export class CallRateLimiter {
     return true;
   }
 
-  tryIceServers(callId: string, userId: string): boolean {
+  allowNextIceServers(callId: string, userId: string, socketId: string): void {
+    this.iceBypass.set(`${callId}:${userId}`, socketId);
+  }
+
+  tryIceServers(callId: string, userId: string, socketId?: string): boolean {
     if (this.isClosed(callId)) {
       return false;
     }
     const key = `${callId}:${userId}`;
+    if (socketId !== undefined && this.iceBypass.get(key) === socketId) {
+      this.iceBypass.delete(key);
+      const usage = this.iceServers.get(key);
+      this.iceServers.set(key, { lastAt: this.now(), count: usage?.count ?? 1 });
+      return true;
+    }
     const current = this.now();
     const usage = this.iceServers.get(key);
     if (usage && (current - usage.lastAt < ICE_SERVERS_COOLDOWN_MS || usage.count >= MAX_ICE_SERVERS_PER_USER)) {
@@ -98,6 +109,11 @@ export class CallRateLimiter {
   forgetCall(callId: string): void {
     this.signals.delete(callId);
     this.transfers.delete(callId);
+    for (const key of this.iceBypass.keys()) {
+      if (key.startsWith(`${callId}:`)) {
+        this.iceBypass.delete(key);
+      }
+    }
     for (const key of this.iceServers.keys()) {
       if (key.startsWith(`${callId}:`)) {
         this.iceServers.delete(key);

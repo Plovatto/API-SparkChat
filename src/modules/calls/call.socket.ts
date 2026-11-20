@@ -57,6 +57,7 @@ registerServerEvents(
     'call:transferred',
     'call:peer-transfer',
     'call:transfer-accepted',
+    'call:transfer-failed',
   ],
   {
     'call:config': z.object({ enabled: z.boolean(), relayAvailable: z.boolean(), degrade: degradeSchema }),
@@ -87,6 +88,7 @@ registerServerEvents(
     'call:transferred': callIdPayloadSchema,
     'call:peer-transfer': z.object({ callId: callIdSchema, from: z.string(), envelope: envelopeSchema }),
     'call:transfer-accepted': z.object({ callId: callIdSchema, envelope: envelopeSchema }),
+    'call:transfer-failed': callIdPayloadSchema,
     'call:ice-servers-result': z.object({
       callId: callIdSchema,
       iceServers: z.array(iceServerSchema),
