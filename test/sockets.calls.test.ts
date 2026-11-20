@@ -1291,6 +1291,33 @@ describe('call transfer between devices', () => {
     expect((await callRow(h, callId)).state).not.toBe('ended');
   });
 
+  it('ignores an accept when the pending device left or when the accept comes from the transferring side', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const phone = await h.connectAs(alice);
+    const moved = waitForEvent(bobClient, 'call:peer-transfer');
+    phone.emit('call:transfer', { callId, envelope: 'e' });
+    await moved;
+
+    const own = expectError(aliceClient, 'call:transfer-accept');
+    aliceClient.emit('call:transfer-accept', { callId, envelope: 'self' });
+    expect((await own).code).toBe('call.invalidState');
+
+    const earlyTransferred = collectEvents(aliceClient, 'call:transferred');
+    phone.disconnect();
+    await settle(100);
+    const lateAccept = expectError(bobClient, 'call:transfer-accept');
+    bobClient.emit('call:transfer-accept', { callId, envelope: 'late' });
+    expect((await lateAccept).code).toBe('call.invalidState');
+    await settle(100);
+    expect(earlyTransferred).toHaveLength(0);
+
+    const stillBound = waitForEvent<{ envelope: string }>(bobClient, 'call:signal');
+    aliceClient.emit('call:signal', { callId, to: (await callRow(h, callId)).calleeId, envelope: 'still-old' });
+    expect((await stillBound).envelope).toBe('still-old');
+  });
+
   it('works for the callee role, keeps the timer and lets the new device fetch ICE servers right away', async () => {
     const turn = fakeTurn();
     const { h, alice, bob, room, aliceClient, bobClient } = await setup({ turn });
