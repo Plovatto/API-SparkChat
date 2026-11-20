@@ -99,18 +99,13 @@ export function createUploadHandler<TResponse>(
       return;
     }
 
-    if (countsTowardUserQuota && (await uploadRegistry.totalBytesFor(uploaderId)) + file.size > MAX_USER_STORAGE_BYTES) {
-      res.status(507).json(errorPayload('upload.userQuotaExceeded'));
-      return;
-    }
-
-    if (maxExpiringBytes !== undefined && (await uploadRegistry.expiringBytesFor(uploaderId)) + file.size > maxExpiringBytes) {
-      res.status(507).json(errorPayload('upload.userQuotaExceeded'));
+    if (!encrypted && !verifyFileSignature(file.buffer, file.mimetype)) {
+      res.status(400).json(errorPayload('upload.contentMismatch'));
       return;
     }
 
     try {
-      await storageQuota.ensureCapacity(file.size);
+      await storageQuota.reserve(file.size);
     } catch (err) {
       if (err instanceof StorageQuotaExceededError) {
         res.status(507).json(errorPayload('upload.quotaExceeded'));
@@ -119,21 +114,39 @@ export function createUploadHandler<TResponse>(
       throw err;
     }
 
-    if (!encrypted && !verifyFileSignature(file.buffer, file.mimetype)) {
-      res.status(400).json(errorPayload('upload.contentMismatch'));
-      return;
-    }
-
     const extension = encrypted ? NEUTRAL_UPLOAD_EXTENSION : path.extname(file.originalname).toLowerCase();
     const key = buildKey(`${randomUUID()}${extension}`);
-    await objectStorage.putObject(key, file.buffer, {
-      contentType: encrypted ? NEUTRAL_UPLOAD_MIME_TYPE : file.mimetype,
-      contentDisposition: encrypted ? 'attachment' : contentDisposition?.(file.originalname),
-      cacheControl: UPLOAD_CACHE_CONTROL,
-    });
     const expiresAt = ttlMs === undefined ? null : new Date(Date.now() + ttlMs).toISOString();
-    await uploadRegistry.register(key, uploaderId, file.size, { expiresAt });
-    await storageQuota.recordUsage(file.size);
+
+    let registered = false;
+    let released = false;
+    try {
+      registered = await uploadRegistry.reserve(key, uploaderId, file.size, {
+        expiresAt,
+        ...(countsTowardUserQuota ? { permanentLimitBytes: storageQuota.userLimitBytes(MAX_USER_STORAGE_BYTES) } : {}),
+        ...(maxExpiringBytes !== undefined ? { expiringLimitBytes: maxExpiringBytes } : {}),
+      });
+      if (!registered) {
+        await storageQuota.releaseUsage(file.size);
+        released = true;
+        res.status(507).json(errorPayload('upload.userQuotaExceeded'));
+        return;
+      }
+
+      await objectStorage.putObject(key, file.buffer, {
+        contentType: encrypted ? NEUTRAL_UPLOAD_MIME_TYPE : file.mimetype,
+        contentDisposition: encrypted ? 'attachment' : contentDisposition?.(file.originalname),
+        cacheControl: UPLOAD_CACHE_CONTROL,
+      });
+    } catch (err) {
+      if (registered) {
+        await uploadRegistry.remove(key).catch(() => undefined);
+      }
+      if (!released) {
+        await storageQuota.releaseUsage(file.size).catch(() => undefined);
+      }
+      throw err;
+    }
 
     const url = withEncryptedMarker(objectStorage.publicUrl(key), encrypted);
     res.status(201).json(encrypted ? { url } : buildResponse(file, url));

@@ -50,6 +50,7 @@ describe('presence privacy', () => {
     const bob = await h.createAccount('Bob');
     const stranger = await h.createAccount('Stranger');
     await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
+    await h.roomService.createPrivateRoom(bob.user.id, alice.user.id);
 
     const contact = await h.connectAs(bob);
     const outsider = await h.connectAs(stranger);
@@ -73,6 +74,61 @@ describe('presence privacy', () => {
     await settle(100);
 
     expect(outsiderEvents.every((events) => events.length === 0)).toBe(true);
+  });
+});
+
+describe('unaccepted private rooms', () => {
+  it('give the creator no presence, profile or avatar edge to the target until the room is visible to the target', async () => {
+    const h = await start();
+    const attacker = await h.createAccount('Attacker');
+    const victim = await h.createAccount('Victim');
+    const attackerClient = await h.connectAs(attacker);
+
+    const joined = waitForEvent(attackerClient, 'room:joined');
+    attackerClient.emit('room:create-private', { targetNickname: 'Victim' });
+    await joined;
+
+    expect(await h.roomService.getContactIds(victim.user.id)).toEqual([victim.user.id]);
+    expect(await h.roomService.getContactIds(attacker.user.id)).toEqual([attacker.user.id]);
+
+    const seen = ['user:online', 'user:offline', 'user:profile-updated', 'user:avatar-updated'].map((event) =>
+      collectEvents(attackerClient, event),
+    );
+    const victimClient = await h.connectAs(victim);
+    victimClient.emit('user:update-status-text', { statusText: 'private' });
+    await settle(200);
+    victimClient.disconnect();
+    await settle(200);
+
+    expect(seen.every((events) => events.length === 0)).toBe(true);
+  });
+
+  it('opens the presence edge once the target makes the room visible', async () => {
+    const h = await start();
+    const attacker = await h.createAccount('Attacker');
+    const victim = await h.createAccount('Victim');
+    await h.roomService.createPrivateRoom(attacker.user.id, victim.user.id);
+    await h.roomService.createPrivateRoom(victim.user.id, attacker.user.id);
+
+    expect(await h.roomService.getContactIds(attacker.user.id)).toContain(victim.user.id);
+    expect(await h.roomService.getContactIds(victim.user.id)).toContain(attacker.user.id);
+  });
+
+  it('caps how many new private rooms and unknown nicknames one user can probe', async () => {
+    const h = await start();
+    const attacker = await h.createAccount('Attacker');
+    const attackerClient = await h.connectAs(attacker);
+
+    let limited = 0;
+    for (let index = 0; index < 12; index += 1) {
+      const error = waitForEvent<{ code: string }>(attackerClient, 'error');
+      attackerClient.emit('room:create-private', { targetNickname: `Nobody${index}` });
+      if ((await error).code === 'rateLimit.privateRoomCreate') {
+        limited += 1;
+      }
+    }
+
+    expect(limited).toBe(2);
   });
 });
 

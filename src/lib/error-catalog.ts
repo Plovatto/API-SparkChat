@@ -121,6 +121,7 @@ export const ERROR_CATALOG = {
   'rateLimit.inviteReset': () => 'O link de convite foi redefinido há pouco. Aguarde um momento e tente de novo.',
   'rateLimit.roomJoin': () => 'Muitas tentativas de entrar em grupos. Tente novamente mais tarde.',
   'rateLimit.roomCreate': () => 'Muitos grupos criados em pouco tempo. Tente novamente mais tarde.',
+  'rateLimit.privateRoomCreate': () => 'Muitas conversas novas em pouco tempo. Tente novamente mais tarde.',
   'rateLimit.socket': () => 'Muitas ações em pouco tempo. Aguarde um instante.',
   'validation.invalidPayload': () => 'Dados inválidos.',
   'internal.unexpected': () => 'Erro inesperado.',

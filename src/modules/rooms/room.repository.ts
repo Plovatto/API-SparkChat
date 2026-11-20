@@ -344,9 +344,11 @@ export class RoomRepository {
       .selectDistinct({ userId: rp2.userId })
       .from(roomParticipants)
       .innerJoin(rp2, eq(rp2.roomId, roomParticipants.roomId))
+      .innerJoin(rooms, eq(rooms.id, roomParticipants.roomId))
       .where(
         and(
           eq(roomParticipants.userId, userId),
+          sql`(${rooms.type} <> 'private' or (${roomParticipants.isVisible} = 1 and ${rp2.isVisible} = 1))`,
           sql`coalesce(${rp2.blockedByUserId}, '') <> ${userId}`,
           sql`coalesce(${roomParticipants.blockedByUserId}, '') <> ${rp2.userId}`,
           this.notBanned(roomParticipants.roomId, roomParticipants.userId),

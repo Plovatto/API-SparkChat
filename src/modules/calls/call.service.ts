@@ -31,6 +31,8 @@ import { STUN_ONLY_SERVERS, type TurnProvider } from './turn-credentials.js';
 const SWEEP_INTERVAL_MS = 2000;
 const REVOKE_SWEEP_BATCH = 50;
 const MONTHLY_RELAY_SECONDS_PER_USER = 20 * 60 * 60;
+const DAILY_RELAY_SECONDS_PER_USER = 6 * 60 * 60;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const SIGNAL_QUEUE_TTL_MS = 15_000;
 const SIGNAL_QUEUE_LIMIT = 64;
 
@@ -676,8 +678,13 @@ export class CallService {
   private async userRelayExhausted(userId: string): Promise<boolean> {
     const current = this.now();
     const monthStart = `${monthKey(current)}-01T00:00:00.000Z`;
-    const seconds = await this.repository.relaySecondsForUser(userId, monthStart, new Date(current).toISOString());
-    return seconds >= MONTHLY_RELAY_SECONDS_PER_USER;
+    const nowIso = new Date(current).toISOString();
+    const dayStart = new Date(current - DAY_MS).toISOString();
+    const [monthSeconds, daySeconds] = await Promise.all([
+      this.repository.relaySecondsForUser(userId, monthStart, nowIso),
+      this.repository.relaySecondsForUser(userId, dayStart, nowIso),
+    ]);
+    return monthSeconds >= MONTHLY_RELAY_SECONDS_PER_USER || daySeconds >= DAILY_RELAY_SECONDS_PER_USER;
   }
 
   private requireBoundSocket(call: CallRecord, role: CallRole, socketId: string): void {

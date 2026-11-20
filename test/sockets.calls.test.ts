@@ -618,6 +618,38 @@ describe('TURN credentials', () => {
     expect((await callRow(h, callId)).relayUsed).toBe(0);
   });
 
+  it('stops issuing relay credentials to a user who already relayed more than the daily allowance', async () => {
+    const turn = fakeTurn();
+    const { h, room, aliceClient, bobClient } = await setup({ turn });
+    const first = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, first);
+    const issued = waitForEvent<Record<string, unknown>>(aliceClient, 'call:ice-servers-result');
+    aliceClient.emit('call:ice-servers', { callId: first, protectIp: true });
+    expect(await issued).toMatchObject({ relayOnly: true });
+
+    clock.now += 7 * 60 * 60 * 1000;
+    const ended = waitForEvent(aliceClient, 'call:ended');
+    aliceClient.emit('call:hangup', { callId: first });
+    await ended;
+
+    const second = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, second);
+    const refused = expectError(aliceClient, 'call:ice-servers');
+    aliceClient.emit('call:ice-servers', { callId: second, protectIp: true });
+    expect((await refused).code).toBe('call.relayUnavailable');
+    expect(turn.generated).toBe(1);
+
+    clock.now += 18 * 60 * 60 * 1000;
+    const ended2 = waitForEvent(aliceClient, 'call:ended');
+    aliceClient.emit('call:hangup', { callId: second });
+    await ended2;
+    const third = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, third);
+    const again = waitForEvent<Record<string, unknown>>(aliceClient, 'call:ice-servers-result');
+    aliceClient.emit('call:ice-servers', { callId: third, protectIp: true });
+    expect(await again).toMatchObject({ relayOnly: true });
+  });
+
   it('serves STUN only when no TURN provider is configured', async () => {
     const { h, room, aliceClient, bobClient } = await setup();
     const callId = await ring(h, aliceClient, [bobClient], room.id);
