@@ -560,11 +560,11 @@ describe('TURN credentials', () => {
     aliceClient.emit('call:ice-servers', { callId, protectIp: true });
     const issued = await result;
 
-    expect(turn.generateSpy).toHaveBeenCalledWith(14_400);
+    expect(turn.generateSpy).toHaveBeenCalledWith(3_600);
     expect(issued).toEqual({
       callId,
       iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }, { urls: ['turn:turn.cloudflare.com:3478'], username: 'turn-user-1', credential: 'secret-1' }],
-      expiresAt: new Date(clock.now + 14_400_000).toISOString(),
+      expiresAt: new Date(clock.now + 3_600_000).toISOString(),
       relayOnly: true,
       degrade: 'none',
     });

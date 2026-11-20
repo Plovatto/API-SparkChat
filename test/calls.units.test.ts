@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { budgetStep, estimateRelayBytes, FREE_TIER_BYTES } from '@/modules/calls/call-budget.js';
 import { CallRateLimiter } from '@/modules/calls/call.rate-limiter.js';
 import { transition, type CallEvent } from '@/modules/calls/call.state.js';
+import { MAX_CALL_DURATION_MS, TURN_TTL_SECONDS } from '@/modules/calls/call.types.js';
 import type { CallState } from '@/modules/calls/call.types.js';
 import { createCloudflareTurnProvider, stripPort53 } from '@/modules/calls/turn-credentials.js';
 
@@ -118,7 +119,7 @@ describe('call rate limiter', () => {
     expect(limiter.tryIceServers('c', 'u')).toBe(true);
     expect(limiter.tryIceServers('c', 'u')).toBe(false);
     expect(limiter.tryIceServers('c', 'v')).toBe(true);
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < 9; i += 1) {
       now += 11_000;
       expect(limiter.tryIceServers('c', 'u')).toBe(true);
     }
@@ -186,13 +187,13 @@ describe('cloudflare turn provider', () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(generated));
     const provider = createCloudflareTurnProvider({ keyId: 'key id', apiToken: 'api-token', fetchImpl });
 
-    const credential = await provider.generate(14_400);
+    const credential = await provider.generate(3_600);
 
     const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://rtc.live.cloudflare.com/v1/turn/keys/key%20id/credentials/generate-ice-servers');
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer api-token');
-    expect(JSON.parse(init.body as string)).toEqual({ ttl: 14_400 });
+    expect(JSON.parse(init.body as string)).toEqual({ ttl: 3_600 });
     expect(credential.username).toBe('cf-user');
     expect(credential.iceServers[0]?.urls).toEqual([
       'stun:stun.cloudflare.com:3478',
@@ -238,6 +239,20 @@ describe('cloudflare turn provider', () => {
       { urls: ['turn:a:5349'], username: 'u', credential: 'c' },
     ]);
     expect(stripPort53([{ urls: ['turn:a:530'] }, { urls: ['turn:a:153?transport=tcp'] }])).toHaveLength(2);
+  });
+});
+
+describe('turn credential lifetime', () => {
+  it('lasts one hour and the refresh cap covers a full length call', () => {
+    expect(TURN_TTL_SECONDS).toBe(3_600);
+    const refreshes = Math.floor(MAX_CALL_DURATION_MS / (40 * 60 * 1000));
+    let now = 0;
+    const limiter = new CallRateLimiter(() => now);
+    expect(limiter.tryIceServers('c', 'u')).toBe(true);
+    for (let i = 0; i < refreshes; i += 1) {
+      now += 40 * 60 * 1000;
+      expect(limiter.tryIceServers('c', 'u')).toBe(true);
+    }
   });
 });
 
