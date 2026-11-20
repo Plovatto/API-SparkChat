@@ -1,5 +1,5 @@
 import type { Request } from 'express';
-import { rateLimit, type RateLimitRequestHandler } from 'express-rate-limit';
+import { ipKeyGenerator, rateLimit, type RateLimitRequestHandler } from 'express-rate-limit';
 import { errorPayload } from '../lib/app-error.js';
 import type { ErrorCode } from '../lib/error-catalog.js';
 
@@ -16,7 +16,7 @@ interface RateLimiterOptions {
 
 function authenticatedUserKey(req: Request): string {
   const userId = req.authenticatedUser?.id;
-  return userId ? `user:${userId}` : `ip:${req.ip ?? 'unknown'}`;
+  return userId ? `user:${userId}` : `ip:${ipKeyGenerator(req.ip ?? 'unknown', 64)}`;
 }
 
 export function createRateLimiter({ limit, code, windowMs = DEFAULT_WINDOW_MS, perUser = false }: RateLimiterOptions): RateLimitRequestHandler {
@@ -27,5 +27,6 @@ export function createRateLimiter({ limit, code, windowMs = DEFAULT_WINDOW_MS, p
     legacyHeaders: false,
     message: errorPayload(code),
     ...(perUser ? { keyGenerator: authenticatedUserKey } : {}),
+    ipv6Subnet: 64,
   });
 }

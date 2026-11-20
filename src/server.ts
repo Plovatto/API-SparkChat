@@ -48,6 +48,7 @@ const userRepository = new UserRepository(db);
 const userSessionRepository = new UserSessionRepository(db);
 const userService = new UserService(userRepository, userSessionRepository, env.RECOVERY_FILE_SECRET);
 const loginRateLimiter = new LoginRateLimiter();
+setInterval(() => loginRateLimiter.sweep(), 60_000).unref();
 const sessionRevocations = new SessionRevocationNotifier();
 
 const objectStorage = createR2ObjectStorage({

@@ -97,6 +97,62 @@ interface BucketState {
   updatedAt: number;
 }
 
+const USER_BUDGET_MULTIPLIER = 3;
+const USER_LIMITER_IDLE_MS = 10 * 60 * 1000;
+const USER_LIMITER_SWEEP_INTERVAL_MS = 60 * 1000;
+
+export function scaleBudgets(budgets: SocketEventBudgets, factor: number): SocketEventBudgets {
+  const scale = (budget: EventBudget): EventBudget => ({ capacity: budget.capacity * factor, refillPerSecond: budget.refillPerSecond * factor });
+  return {
+    events: Object.fromEntries(Object.entries(budgets.events).map(([event, budget]) => [event, scale(budget)])),
+    fallback: scale(budgets.fallback),
+  };
+}
+
+export class UserEventLimiters {
+  private readonly limiters = new Map<string, { tryConsume: (event: string) => boolean; lastUsedAt: number }>();
+  private readonly aggregateBudgets: SocketEventBudgets;
+  private lastSweepAt: number;
+
+  constructor(
+    budgets: SocketEventBudgets,
+    private readonly now: () => number = Date.now,
+    multiplier: number = USER_BUDGET_MULTIPLIER,
+  ) {
+    this.aggregateBudgets = scaleBudgets(budgets, multiplier);
+    this.lastSweepAt = now();
+  }
+
+  get size(): number {
+    return this.limiters.size;
+  }
+
+  tryConsume(userId: string, event: string): boolean {
+    const current = this.now();
+    this.sweepIfDue(current);
+    const entry = this.limiters.get(userId) ?? { tryConsume: createEventLimiter(this.aggregateBudgets, this.now), lastUsedAt: current };
+    entry.lastUsedAt = current;
+    this.limiters.set(userId, entry);
+    return entry.tryConsume(event);
+  }
+
+  sweep(): void {
+    const cutoff = this.now() - USER_LIMITER_IDLE_MS;
+    for (const [userId, entry] of this.limiters) {
+      if (entry.lastUsedAt <= cutoff) {
+        this.limiters.delete(userId);
+      }
+    }
+    this.lastSweepAt = this.now();
+  }
+
+  private sweepIfDue(current: number): void {
+    if (current - this.lastSweepAt >= USER_LIMITER_SWEEP_INTERVAL_MS) {
+      this.sweep();
+    }
+  }
+}
+
 export function createEventLimiter(budgets: SocketEventBudgets, now: () => number = Date.now): (event: string) => boolean {
   const buckets = new Map<string, BucketState>();
 
@@ -132,8 +188,16 @@ export function applySocketRateLimit(
   socket: AppSocket,
   budgets: SocketEventBudgets = DEFAULT_SOCKET_EVENT_BUDGETS,
   now: () => number = Date.now,
+  userLimiters?: UserEventLimiters,
 ): void {
-  const tryConsume = createEventLimiter(budgets, now);
+  const tryConsumeSocket = createEventLimiter(budgets, now);
+  const tryConsume = (event: string): boolean => {
+    if (!tryConsumeSocket(event)) {
+      return false;
+    }
+    const userId = socket.data.userId;
+    return !userLimiters || !userId || userLimiters.tryConsume(userId, event);
+  };
   const lastNoticeAt = new Map<string, number>();
 
   socket.use(([event, ...args], next) => {

@@ -1,7 +1,16 @@
+export const DEFAULT_MAX_COUNTER_KEYS = 50_000;
+
 export class SlidingWindowCounter {
   private readonly timestampsByKey = new Map<string, number[]>();
 
-  constructor(private readonly windowMs: number) {}
+  constructor(
+    private readonly windowMs: number,
+    private readonly maxKeys: number = DEFAULT_MAX_COUNTER_KEYS,
+  ) {}
+
+  get size(): number {
+    return this.timestampsByKey.size;
+  }
 
   count(key: string): number {
     return this.pruneAndGet(key).length;
@@ -14,6 +23,9 @@ export class SlidingWindowCounter {
   record(key: string): void {
     const recent = this.pruneAndGet(key);
     recent.push(Date.now());
+    if (!this.timestampsByKey.has(key)) {
+      this.makeRoom();
+    }
     this.timestampsByKey.set(key, recent);
   }
 
@@ -29,9 +41,37 @@ export class SlidingWindowCounter {
     this.timestampsByKey.delete(key);
   }
 
-  private pruneAndGet(key: string): number[] {
+  sweep(): void {
     const cutoff = Date.now() - this.windowMs;
-    const existing = this.timestampsByKey.get(key) ?? [];
+    for (const [key, timestamps] of this.timestampsByKey) {
+      const last = timestamps.at(-1);
+      if (last === undefined || last <= cutoff) {
+        this.timestampsByKey.delete(key);
+      }
+    }
+  }
+
+  private makeRoom(): void {
+    if (this.timestampsByKey.size < this.maxKeys) {
+      return;
+    }
+
+    this.sweep();
+    for (const key of this.timestampsByKey.keys()) {
+      if (this.timestampsByKey.size < this.maxKeys) {
+        return;
+      }
+      this.timestampsByKey.delete(key);
+    }
+  }
+
+  private pruneAndGet(key: string): number[] {
+    const existing = this.timestampsByKey.get(key);
+    if (!existing) {
+      return [];
+    }
+
+    const cutoff = Date.now() - this.windowMs;
     const pruned = existing.filter((timestamp) => timestamp > cutoff);
 
     if (pruned.length === 0) {

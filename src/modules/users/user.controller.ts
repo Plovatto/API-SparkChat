@@ -3,13 +3,17 @@ import { z } from 'zod';
 import { logger } from '../../config/logger.js';
 import { errorPayload } from '../../lib/app-error.js';
 import { isValidNicknameFormat, NICKNAME_MAX_LENGTH, nicknameAvailabilityStatusSchema, publicUserSchema } from './user.model.js';
+import { PasswordCapacityError } from './user.password.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
 import type { UserService } from './user.service.js';
 import type { SessionRevocationNotifier } from './user.session-revocations.js';
 
+const NICKNAME_INPUT_MAX_LENGTH = NICKNAME_MAX_LENGTH * 4;
+const PASSWORD_INPUT_MAX_LENGTH = 128;
+
 export const nicknameAvailabilityQuerySchema = z
   .object({
-    nickname: z.string().trim().min(1).openapi({ example: 'Ada' }),
+    nickname: z.string().trim().min(1).max(NICKNAME_INPUT_MAX_LENGTH).openapi({ example: 'Ada' }),
   })
   .openapi('NicknameAvailabilityQuery');
 
@@ -21,8 +25,8 @@ export const nicknameAvailabilityResponseSchema = z
 
 export const loginBodySchema = z
   .object({
-    nickname: z.string().trim().min(1).openapi({ example: 'Ada' }),
-    password: z.string().min(1).openapi({
+    nickname: z.string().trim().min(1).max(NICKNAME_INPUT_MAX_LENGTH).openapi({ example: 'Ada' }),
+    password: z.string().min(1).max(PASSWORD_INPUT_MAX_LENGTH).openapi({
       example: 'q1w2e3r4t5y6u7i8o9p0q1w2e3r4t5y6u7i8o9p0abc',
       description: 'Chave de autenticação derivada no cliente (Argon2id), base64url sem padding (32 bytes); outros formatos são recusados com 401',
     }),
@@ -45,7 +49,7 @@ export const loginResponseSchema = z
 
 export const authParamsBodySchema = z
   .object({
-    nickname: z.string().trim().min(1).max(NICKNAME_MAX_LENGTH * 4).openapi({ example: 'Ada' }),
+    nickname: z.string().trim().min(1).max(NICKNAME_INPUT_MAX_LENGTH).openapi({ example: 'Ada' }),
   })
   .openapi('AuthParamsBody');
 
@@ -99,6 +103,11 @@ export function createUserController(
       });
     } catch (error) {
       loginRateLimiter.releaseAttempt(nickname, ip);
+      if (error instanceof PasswordCapacityError) {
+        res.setHeader('Retry-After', '1');
+        res.status(429).json(errorPayload('rateLimit.api'));
+        return;
+      }
       logger.error({ err: error }, 'Failed to log in');
       res.status(500).json(errorPayload('auth.loginFailed'));
     }

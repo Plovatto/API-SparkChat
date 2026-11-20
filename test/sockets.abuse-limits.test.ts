@@ -237,3 +237,81 @@ describe('chat settings limits', () => {
     expect(Buffer.byteLength(`42${JSON.stringify(['user:update-chat-settings', settings])}`)).toBeLessThan(SOCKET_MAX_HTTP_BUFFER_SIZE);
   });
 });
+
+describe('per-user aggregate budgets and connection caps', () => {
+  it('shares one budget between all sockets of a user', async () => {
+    const budgets = { events: { 'rooms:get': { capacity: 2, refillPerSecond: 0 } }, fallback: { capacity: 100, refillPerSecond: 0 } };
+    const h = await start({ socketEventBudgets: budgets });
+    const account = await h.createAccount('SharedBudget');
+    const clients = await Promise.all(Array.from({ length: 4 }, () => h.connectAs(account)));
+    const errors = clients.map((client) => collectEvents<ErrorEvent>(client, 'error'));
+
+    for (const client of clients) {
+      for (let i = 0; i < 2; i += 1) {
+        client.emit('rooms:get');
+      }
+    }
+    await settle();
+
+    const limited = errors.flat().filter((error) => error.code === 'rateLimit.socket');
+    expect(limited.length).toBeGreaterThan(0);
+  });
+
+  it('does not let one user exhaust the budget of another', async () => {
+    const budgets = { events: { 'rooms:get': { capacity: 1, refillPerSecond: 0 } }, fallback: { capacity: 100, refillPerSecond: 0 } };
+    const h = await start({ socketEventBudgets: budgets });
+    const noisy = await h.connectAs(await h.createAccount('NoisyUser'));
+    const quiet = await h.connectAs(await h.createAccount('QuietUser'));
+    const quietErrors = collectEvents<ErrorEvent>(quiet, 'error');
+
+    for (let i = 0; i < 10; i += 1) {
+      noisy.emit('rooms:get');
+    }
+    quiet.emit('rooms:get');
+    await settle();
+
+    expect(quietErrors.filter((error) => error.code === 'rateLimit.socket')).toHaveLength(0);
+  });
+
+  it('closes the oldest socket when a user exceeds the per-user cap', async () => {
+    const h = await start({ socketConnectionLimits: { maxPerIp: 100, maxPerUser: 3, unauthenticatedTimeoutMs: 0 } });
+    const account = await h.createAccount('ManySockets');
+    const first = await h.connectAs(account);
+    const second = await h.connectAs(account);
+    const third = await h.connectAs(account);
+    const dropped = waitForDisconnect(first);
+
+    const fourth = await h.connectAs(account);
+    await dropped;
+
+    expect(first.connected).toBe(false);
+    expect([second.connected, third.connected, fourth.connected]).toEqual([true, true, true]);
+  });
+
+  it('rejects connections above the per-address cap and frees slots on disconnect', async () => {
+    const h = await start({ socketConnectionLimits: { maxPerIp: 2, maxPerUser: 10, unauthenticatedTimeoutMs: 0 } });
+    const first = await h.connect();
+    await h.connect();
+    const third = await h.connect();
+    await waitForDisconnect(third);
+    expect(third.connected).toBe(false);
+
+    first.disconnect();
+    await settle();
+    const fourth = await h.connect();
+    await settle();
+
+    expect(fourth.connected).toBe(true);
+  });
+
+  it('closes transports that never authenticate and lets them reconnect', async () => {
+    const h = await start({ socketConnectionLimits: { maxPerIp: 100, maxPerUser: 10, unauthenticatedTimeoutMs: 150 } });
+    const idle = await h.connect();
+    const authenticated = await h.connectAs(await h.createAccount('Authenticated'));
+
+    await expect(waitForDisconnect(idle, 2000)).resolves.toBe('transport close');
+    await settle();
+
+    expect(authenticated.connected).toBe(true);
+  });
+});

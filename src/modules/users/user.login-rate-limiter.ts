@@ -1,3 +1,4 @@
+import { ipKey } from '../../lib/client-network.js';
 import { SlidingWindowCounter } from '../../lib/sliding-window-counter.js';
 
 const WINDOW_MS = 15 * 60 * 1000;
@@ -12,13 +13,14 @@ const RESUME_WINDOW_MS = 60 * 1000;
 const MAX_RESUMES_PER_SOCKET = 20;
 const MAX_RESUMES_PER_IP = 120;
 const AUTH_PARAMS_MAX_PER_IP = 60;
+const MAX_IP_FAILURES = 30;
 
 function normalizeNickname(nickname: string): string {
   return nickname.trim().toLowerCase();
 }
 
 function buildKey(nickname: string, ip: string): string {
-  return `${normalizeNickname(nickname)}:${ip}`;
+  return `${normalizeNickname(nickname)}:${ipKey(ip)}`;
 }
 
 export function networkPrefix(ip: string): string {
@@ -26,24 +28,27 @@ export function networkPrefix(ip: string): string {
   if (mapped.includes('.')) {
     return mapped.split('.').slice(0, 3).join('.');
   }
-  const groups = mapped.split(':');
-  return groups.slice(0, 3).join(':').toLowerCase();
+  return ipKey(mapped);
 }
 
 function buildAccountKey(nickname: string, ip: string): string {
   return `account:${normalizeNickname(nickname)}:${networkPrefix(ip)}`;
 }
 
+function buildIpFailureKey(ip: string): string {
+  return `ip-failures:${ipKey(ip)}`;
+}
+
 function buildKeyfileKey(ip: string): string {
-  return `keyfile:${ip}`;
+  return `keyfile:${ipKey(ip)}`;
 }
 
 function buildAuthParamsKey(ip: string): string {
-  return `auth-params:${ip}`;
+  return `auth-params:${ipKey(ip)}`;
 }
 
 function buildRegisterKey(ip: string): string {
-  return `register:${ip}`;
+  return `register:${ipKey(ip)}`;
 }
 
 function buildReauthKey(userId: string): string {
@@ -55,7 +60,7 @@ function buildResumeSocketKey(socketId: string): string {
 }
 
 function buildResumeIpKey(ip: string): string {
-  return `ip:${ip}`;
+  return `ip:${ipKey(ip)}`;
 }
 
 export function accountBackoffMs(attempts: number): number {
@@ -73,8 +78,23 @@ export class LoginRateLimiter {
   private readonly resumes = new SlidingWindowCounter(RESUME_WINDOW_MS);
   private readonly authParamsLookups = new SlidingWindowCounter(WINDOW_MS);
 
+  get trackedKeys(): number {
+    return this.failures.size + this.accountFailures.size + this.resumes.size + this.authParamsLookups.size;
+  }
+
+  sweep(): void {
+    this.failures.sweep();
+    this.accountFailures.sweep();
+    this.resumes.sweep();
+    this.authParamsLookups.sweep();
+  }
+
   isBlocked(nickname: string, ip: string): boolean {
-    return this.failures.count(buildKey(nickname, ip)) >= MAX_ATTEMPTS || this.isAccountBackingOff(nickname, ip);
+    return (
+      this.failures.count(buildKey(nickname, ip)) >= MAX_ATTEMPTS ||
+      this.failures.count(buildIpFailureKey(ip)) >= MAX_IP_FAILURES ||
+      this.isAccountBackingOff(nickname, ip)
+    );
   }
 
   reserveAttempt(nickname: string, ip: string): boolean {
@@ -84,17 +104,20 @@ export class LoginRateLimiter {
 
     this.failures.record(buildKey(nickname, ip));
     this.accountFailures.record(buildAccountKey(nickname, ip));
+    this.failures.record(buildIpFailureKey(ip));
     return true;
   }
 
   releaseAttempt(nickname: string, ip: string): void {
     this.failures.release(buildKey(nickname, ip));
     this.accountFailures.release(buildAccountKey(nickname, ip));
+    this.failures.release(buildIpFailureKey(ip));
   }
 
   registerSuccess(nickname: string, ip: string): void {
     this.failures.reset(buildKey(nickname, ip));
     this.accountFailures.release(buildAccountKey(nickname, ip));
+    this.failures.release(buildIpFailureKey(ip));
   }
 
   isBlockedByIp(ip: string): boolean {

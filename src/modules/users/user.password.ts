@@ -23,6 +23,64 @@ const MAX_COST = 2 ** 17;
 const MAX_BLOCK_SIZE = 32;
 const MAX_PARALLELIZATION = 16;
 
+const MAX_CONCURRENT_DERIVATIONS = 4;
+const MAX_QUEUED_VERIFICATIONS = 8;
+
+export class PasswordCapacityError extends Error {
+  constructor() {
+    super('Password verification capacity exceeded');
+    this.name = 'PasswordCapacityError';
+  }
+}
+
+export class DerivationGate {
+  private active = 0;
+  private readonly waiting: Array<() => void> = [];
+
+  constructor(
+    private readonly maxConcurrent: number,
+    private readonly maxQueued: number,
+  ) {}
+
+  get activeCount(): number {
+    return this.active;
+  }
+
+  get queuedCount(): number {
+    return this.waiting.length;
+  }
+
+  async run<T>(task: () => Promise<T>, options: { shed: boolean }): Promise<T> {
+    if (this.active >= this.maxConcurrent) {
+      if (options.shed && this.waiting.length >= this.maxQueued) {
+        throw new PasswordCapacityError();
+      }
+      await new Promise<void>((resolve) => {
+        this.waiting.push(resolve);
+      });
+    } else {
+      this.active += 1;
+    }
+
+    try {
+      return await task();
+    } finally {
+      const next = this.waiting.shift();
+      if (next) {
+        next();
+      } else {
+        this.active -= 1;
+      }
+    }
+  }
+}
+
+const derivationGate = new DerivationGate(MAX_CONCURRENT_DERIVATIONS, MAX_QUEUED_VERIFICATIONS);
+
+export function passwordDerivationGate(): DerivationGate {
+  return derivationGate;
+}
+
 const LEGACY_PARAMS: PasswordHashParams = { cost: 16384, blockSize: 8, parallelization: 1 };
 
 export const DEFAULT_PASSWORD_HASH_PARAMS: PasswordHashParams = { cost: 2 ** 16, blockSize: 8, parallelization: 1 };
@@ -101,7 +159,7 @@ function parseHash(storedHash: string): ParsedHash | null {
 
 export async function hashPassword(password: string, params: PasswordHashParams = currentPasswordHashParams()): Promise<string> {
   const salt = randomBytes(SALT_BYTES);
-  const derivedKey = await deriveKey(password, salt, params, KEY_LENGTH);
+  const derivedKey = await derivationGate.run(() => deriveKey(password, salt, params, KEY_LENGTH), { shed: false });
   return [HASH_PREFIX, params.cost, params.blockSize, params.parallelization, salt.toString('hex'), derivedKey.toString('hex')].join(
     HASH_SEPARATOR,
   );
@@ -115,8 +173,11 @@ export async function verifyPassword(password: string, storedHash: string): Prom
 
   let derivedKey: Buffer;
   try {
-    derivedKey = await deriveKey(password, parsed.salt, parsed.params, parsed.key.length);
-  } catch {
+    derivedKey = await derivationGate.run(() => deriveKey(password, parsed.salt, parsed.params, parsed.key.length), { shed: true });
+  } catch (error) {
+    if (error instanceof PasswordCapacityError) {
+      throw error;
+    }
     return false;
   }
 
