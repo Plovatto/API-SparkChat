@@ -81,7 +81,7 @@ export interface PublishE2eKeysInput {
   encryptedPrivateKeyByRecovery?: string | undefined;
 }
 
-const DEFAULT_THEME = { baseTheme: 'dark', colorTheme: 'standard' };
+const DEFAULT_THEME = { baseTheme: 'dark', colorTheme: 'duskViolet' };
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SESSION_MAX_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 export const KEYFILE_PASSWORD_RESET_WINDOW_MS = 10 * 60 * 1000;

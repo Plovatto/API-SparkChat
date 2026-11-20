@@ -595,6 +595,25 @@ describe('UserService.updateProfile', () => {
 });
 
 describe('UserService theme', () => {
+  it('gives users who never picked a theme the Violet Night default', async () => {
+    const { userService } = await buildRoomService();
+    const { user } = await registerAlice(userService);
+
+    const stored = await userService.getUser(user.id);
+
+    expect(stored && userService.toPublicUser(stored).theme).toEqual({ baseTheme: 'dark', colorTheme: 'duskViolet' });
+  });
+
+  it('keeps the theme a user picked instead of the default', async () => {
+    const { userService } = await buildRoomService();
+    const { user } = await registerAlice(userService);
+    await userService.updateTheme(user.id, { baseTheme: 'dark', colorTheme: 'standard' });
+
+    const stored = await userService.getUser(user.id);
+
+    expect(stored && userService.toPublicUser(stored).theme).toEqual({ baseTheme: 'dark', colorTheme: 'standard' });
+  });
+
   it('persists a user theme choice', async () => {
     const { userService } = await buildRoomService();
     const { user } = await registerAlice(userService);

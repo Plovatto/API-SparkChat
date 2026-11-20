@@ -43,7 +43,7 @@ describe('POST /api/users/login', () => {
         nickname: 'RouteTest',
         avatar: 0,
         status: 'online',
-        theme: { baseTheme: 'dark', colorTheme: 'standard' },
+        theme: { baseTheme: 'dark', colorTheme: 'duskViolet' },
       },
     });
     expect((response.body as { sessionToken: string }).sessionToken).toBeTruthy();
