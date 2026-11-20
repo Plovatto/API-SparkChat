@@ -88,6 +88,7 @@ function peerOf(call: CallRecord, role: CallRole): string {
 export class CallService {
   private readonly bindings = new Map<string, SocketBindings>();
   private readonly beats = new Map<string, Partial<Record<CallRole, number>>>();
+  private readonly connectedAt = new Map<string, number>();
   private readonly ringingInvites = new Map<string, IncomingCallPayload>();
   private readonly pending = new Map<string, QueuedSignal[]>();
   private readonly now: () => number;
@@ -574,6 +575,7 @@ export class CallService {
   private async afterEnd(call: CallRecord): Promise<void> {
     this.bindings.delete(call.id);
     this.beats.delete(call.id);
+    this.connectedAt.delete(call.id);
     this.ringingInvites.delete(call.id);
     this.pending.delete(call.id);
     this.limiter.forgetCall(call.id);
@@ -649,6 +651,13 @@ export class CallService {
     }
   }
 
+  private hasConnectedParticipant(call: CallRecord): boolean {
+    return (['caller', 'callee'] as const).some((role) => {
+      const bound = this.boundSocket(call, role);
+      return bound !== undefined && this.io.sockets.sockets.has(bound);
+    });
+  }
+
   private boundSocket(call: CallRecord, role: CallRole): string | undefined {
     const bound = this.bindings.get(call.id)?.[role];
     if (bound !== undefined) {
@@ -717,7 +726,15 @@ export class CallService {
         continue;
       }
 
-      const lastBeat = Date.parse(call.lastHeartbeatAt ?? call.answeredAt ?? call.createdAt);
+      if (this.hasConnectedParticipant(call)) {
+        this.connectedAt.set(call.id, current);
+        continue;
+      }
+
+      const lastBeat = Math.max(
+        Date.parse(call.lastHeartbeatAt ?? call.answeredAt ?? call.createdAt),
+        this.connectedAt.get(call.id) ?? 0,
+      );
       if (current >= this.graceUntil && current - lastBeat >= HEARTBEAT_TIMEOUT_MS) {
         await this.finish(call.id, { type: 'heartbeat-timeout' }, lastBeat);
       }
