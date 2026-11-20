@@ -113,7 +113,7 @@ describe('migration journal', () => {
     const journal = JSON.parse(await readFile(path.resolve(import.meta.dirname, '../drizzle/meta/_journal.json'), 'utf8')) as {
       entries: { idx: number; when: number; tag: string }[];
     };
-    const ours = journal.entries.find((entry) => entry.tag === '0028_key_transparency');
+    const ours = journal.entries.find((entry) => entry.tag === '0029_key_transparency');
     expect(ours).toBeDefined();
     for (const entry of journal.entries) {
       if (entry.idx < (ours?.idx ?? 0)) {

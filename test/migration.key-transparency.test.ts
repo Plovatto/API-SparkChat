@@ -9,7 +9,7 @@ import * as schema from '@/database/schema.js';
 import { TransparencyLog, TransparencyRepository, TreeHeadSigner } from '@/modules/transparency/index.js';
 
 const MIGRATIONS = path.resolve(import.meta.dirname, '../drizzle');
-const TAG = '0028_key_transparency';
+const TAG = '0029_key_transparency';
 
 let workDir: string | null = null;
 
@@ -76,6 +76,26 @@ describe(`migration ${TAG}`, () => {
     await migrate(db, { migrationsFolder: MIGRATIONS });
     await migrate(db, { migrationsFolder: MIGRATIONS });
     expect(await tableNames(client)).toHaveLength(3);
+    client.close();
+  }, 30000);
+
+  it('fails cleanly on a database that already holds the tables of the earlier numbering and recovers once they are dropped', async () => {
+    const client = createClient({ url: ':memory:' });
+    const db = drizzle(client, { schema });
+    await migrate(db, { migrationsFolder: await migrationsBefore('0028_group_integrity_rotation') });
+    await client.execute('CREATE TABLE `transparency_leaves` (`position` integer PRIMARY KEY NOT NULL)');
+    await client.execute('CREATE TABLE `transparency_nodes` (`level` integer NOT NULL)');
+    await client.execute('CREATE TABLE `transparency_meta` (`key` text PRIMARY KEY NOT NULL)');
+
+    await expect(migrate(db, { migrationsFolder: MIGRATIONS })).rejects.toThrow();
+
+    for (const table of EXPECTED_TABLES) {
+      await client.execute(`DROP TABLE ${table}`);
+    }
+    await migrate(db, { migrationsFolder: MIGRATIONS });
+    expect(await tableNames(client)).toEqual(EXPECTED_TABLES);
+    const log = new TransparencyLog(new TransparencyRepository(db), TreeHeadSigner.ephemeral());
+    expect(await log.record({ userId: 'u', publicKey: 'k'.repeat(43), signingPublicKey: null })).toBe(true);
     client.close();
   }, 30000);
 });
