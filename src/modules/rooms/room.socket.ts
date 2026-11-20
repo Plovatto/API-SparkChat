@@ -19,6 +19,7 @@ import type { RoomActionRateLimiter } from './room.rate-limiter.js';
 import type { RoomService } from './room.service.js';
 import { MAX_GROUP_MEMBERS, type RoomRecord } from './room.types.js';
 import { notifyRoomRotations } from './room.rotation.js';
+import { acceptableAttestation, attestationSchema, withAttestation } from './room.event-attestation.js';
 import { rotationAuthority } from './room.rotation-authority.js';
 
 export type OnRoomCreatedHook = (context: { io: AppServer; room: RoomRecord; locale: Locale }) => void;
@@ -62,6 +63,12 @@ const blockPayloadSchema = z.object({
 const memberActionPayloadSchema = z.object({
   roomId: z.string().trim().min(1),
   userId: z.string().trim().min(1),
+  attestation: attestationSchema,
+});
+
+const leaveGroupPayloadSchema = z.object({
+  roomId: z.string().trim().min(1),
+  attestation: attestationSchema,
 });
 
 const publishRoomKeyPayloadSchema = z.object({
@@ -111,7 +118,7 @@ registerClientEvents('rooms', {
   'room:join': roomIdPayloadSchema,
   'room:delete': roomIdPayloadSchema,
   'rooms:get': null,
-  'group:leave': roomIdPayloadSchema,
+  'group:leave': leaveGroupPayloadSchema,
   'group:remove-member': memberActionPayloadSchema,
   'group:promote-admin': memberActionPayloadSchema,
   'user:block': blockPayloadSchema,
@@ -452,7 +459,10 @@ async function handleJoinByInvite(io: AppServer, socket: AppSocket, deps: RoomSo
       if (user) {
         const systemMessage = await messageService.createSystemMessage(
           room.id,
-          systemEvent('group.memberJoined', { actor: user.nickname }),
+          withAttestation(
+            systemEvent('group.memberJoined', { actor: user.nickname }),
+            acceptableAttestation(request.attestation, { roomId: room.id, actorId: userId, type: 'group.memberJoined' }),
+          ),
         );
         io.to(room.id).emit('message:new', await messageService.toView(systemMessage));
 
@@ -603,7 +613,7 @@ async function handleLeaveGroup(io: AppServer, socket: AppSocket, deps: RoomSock
   const { roomService, userService, messageService } = deps;
 
   try {
-    const { roomId } = roomIdPayloadSchema.parse(payload);
+    const { roomId, attestation } = leaveGroupPayloadSchema.parse(payload);
     const user = await userService.getUser(userId);
     const updatedRoom = await roomService.leaveGroup(roomId, userId);
     if (!updatedRoom) {
@@ -626,7 +636,13 @@ async function handleLeaveGroup(io: AppServer, socket: AppSocket, deps: RoomSock
         participants: remaining,
       });
 
-      const systemMessage = await messageService.createSystemMessage(roomId, systemEvent('group.memberLeft', { actor: user.nickname }));
+      const systemMessage = await messageService.createSystemMessage(
+        roomId,
+        withAttestation(
+          systemEvent('group.memberLeft', { actor: user.nickname }),
+          acceptableAttestation(attestation, { roomId, actorId: userId, type: 'group.memberLeft' }),
+        ),
+      );
       io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
     }
   } catch (error) {
@@ -643,7 +659,7 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
   const { roomService, userService, messageService } = deps;
 
   try {
-    const { roomId, userId: targetUserId } = memberActionPayloadSchema.parse(payload);
+    const { roomId, userId: targetUserId, attestation } = memberActionPayloadSchema.parse(payload);
     const [actingUser, targetUser] = await Promise.all([
       userService.getUser(actingUserId),
       userService.getUser(targetUserId),
@@ -675,7 +691,10 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
 
     const systemMessage = await messageService.createSystemMessage(
       roomId,
-      systemEvent('group.memberRemoved', { target: targetUser.nickname, actor: actingUser.nickname }),
+      withAttestation(
+        systemEvent('group.memberRemoved', { target: targetUser.nickname, actor: actingUser.nickname }),
+        acceptableAttestation(attestation, { roomId, actorId: actingUserId, type: 'group.memberRemoved', targetId: targetUserId }),
+      ),
     );
     io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
   } catch (error) {
@@ -692,7 +711,7 @@ async function handlePromoteAdmin(io: AppServer, socket: AppSocket, deps: RoomSo
   const { roomService, userService, messageService } = deps;
 
   try {
-    const { roomId, userId: targetUserId } = memberActionPayloadSchema.parse(payload);
+    const { roomId, userId: targetUserId, attestation } = memberActionPayloadSchema.parse(payload);
     const [actingUser, targetUser] = await Promise.all([
       userService.getUser(actingUserId),
       userService.getUser(targetUserId),
@@ -708,7 +727,10 @@ async function handlePromoteAdmin(io: AppServer, socket: AppSocket, deps: RoomSo
 
     const systemMessage = await messageService.createSystemMessage(
       roomId,
-      systemEvent('group.adminPromoted', { target: targetUser.nickname, actor: actingUser.nickname }),
+      withAttestation(
+        systemEvent('group.adminPromoted', { target: targetUser.nickname, actor: actingUser.nickname }),
+        acceptableAttestation(attestation, { roomId, actorId: actingUserId, type: 'group.adminPromoted', targetId: targetUserId }),
+      ),
     );
     io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
   } catch (error) {
