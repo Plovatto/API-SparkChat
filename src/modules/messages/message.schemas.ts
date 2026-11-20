@@ -79,3 +79,11 @@ export const messagesListPayloadSchema = z.object({
   messages: z.array(messageViewSchema),
   hasMore: z.boolean(),
 });
+
+export const messageHiddenPayloadSchema = z.object({
+  roomId: z.string(),
+  messageIds: z.array(z.string()).openapi({ description: 'Mensagens escondidas só para quem pediu; enviado a todos os aparelhos dessa pessoa' }),
+  lastMessage: messageViewSchema.nullable().openapi({ description: 'Nova prévia da última mensagem visível da sala para essa pessoa' }),
+  unreadCount: z.number().int(),
+  mentionCount: z.number().int(),
+});

@@ -18,7 +18,7 @@ import { emitMessageUpdate } from './message.broadcast.js';
 import { resolveMessageKeyId } from './message.encrypted-fields.js';
 import { parseMentionedUserIds } from './message.mentions.js';
 import type { MessageRateLimiter } from './message.rate-limiter.js';
-import { messageViewSchema, messagesListPayloadSchema, newMessagePayloadSchema } from './message.schemas.js';
+import { messageHiddenPayloadSchema, messageViewSchema, messagesListPayloadSchema, newMessagePayloadSchema } from './message.schemas.js';
 import type { MessageService } from './message.service.js';
 import type { MessageRecord } from './message.types.js';
 import type { RecordingService } from './recording.service.js';
@@ -135,11 +135,22 @@ const messageIdPayloadSchema = z.object({
   messageId: z.string().trim().min(1),
 });
 
+export const HIDE_MESSAGES_LIMIT = 100;
+
+const hideMessagesPayloadSchema = z.object({
+  messageIds: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .max(HIDE_MESSAGES_LIMIT)
+    .refine((ids) => new Set(ids).size === ids.length, { message: 'messageIds não pode ter itens repetidos.' }),
+});
+
 registerClientEvents('messages', {
   'message:send': sendMessagePayloadSchema,
   'message:mark-read': markReadPayloadSchema,
   'messages:get': getMessagesPayloadSchema,
   'message:delete': messageIdPayloadSchema,
+  'message:hide': hideMessagesPayloadSchema,
   'typing:start': roomIdPayloadSchema,
   'typing:stop': roomIdPayloadSchema,
   'recording:start': roomIdPayloadSchema,
@@ -157,6 +168,7 @@ registerServerEvents(
     'message:read-receipt',
     'messages:list',
     'message:deleted',
+    'message:hidden',
     'message:updated',
     'typing:update',
     'recording:update',
@@ -165,6 +177,7 @@ registerServerEvents(
     'message:new': newMessagePayloadSchema,
     'messages:list': messagesListPayloadSchema,
     'message:updated': messageViewSchema,
+    'message:hidden': messageHiddenPayloadSchema,
   },
 );
 
@@ -196,6 +209,10 @@ export function registerMessageSocketHandlers(io: AppServer, socket: AppSocket, 
 
   socket.on('message:delete', (payload) => {
     runSocketHandler(socket, 'message:delete', () => handleDeleteMessage(io, socket, deps, payload));
+  });
+
+  socket.on('message:hide', (payload) => {
+    runSocketHandler(socket, 'message:hide', () => handleHideMessages(io, socket, deps, payload));
   });
 
   socket.on('typing:start', (payload) => {
@@ -424,7 +441,7 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       const after = roomService.getVisibilityCutoff(updatedRoom, newlyVisibleUserId);
       const [summary, { messages: page }] = await Promise.all([
         roomService.buildSummary(updatedRoom, newlyVisibleUserId),
-        messageService.getRoomMessagesPage(roomId, { after, limit: INITIAL_MESSAGES_LIMIT }),
+        messageService.getRoomMessagesPage(roomId, { after, limit: INITIAL_MESSAGES_LIMIT, viewerId: newlyVisibleUserId }),
       ]);
       const messages = await messageService.toViews(page);
       await joinUserSocketsToRoom(io, newlyVisibleUserId, roomId);
@@ -453,7 +470,7 @@ async function handleGetMessages(socket: AppSocket, deps: MessageSocketDeps, pay
     }
 
     const after = roomService.getVisibilityCutoff(room, userId);
-    const { messages: page, hasMore } = await messageService.getRoomMessagesPage(roomId, { after, before, limit });
+    const { messages: page, hasMore } = await messageService.getRoomMessagesPage(roomId, { after, before, limit, viewerId: userId });
     const views = await messageService.toViews(page);
     socket.emit('messages:list', { roomId, messages: views, hasMore });
   } catch (error) {
@@ -489,6 +506,47 @@ async function handleDeleteMessage(io: AppServer, socket: AppSocket, deps: Messa
     }
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
+  }
+}
+
+async function handleHideMessages(io: AppServer, socket: AppSocket, deps: MessageSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
+  if (!userId) {
+    return;
+  }
+
+  const fail = (code: ErrorCode) => socket.emit('error', { ...errorPayload(code), event: 'message:hide' });
+
+  try {
+    const { messageIds } = hideMessagesPayloadSchema.parse(payload);
+    const records = await deps.messageService.getMessages(messageIds);
+    if (records.length !== messageIds.length) {
+      fail('message.notFound');
+      return;
+    }
+
+    const roomIds = new Set(records.map((record) => record.roomId));
+    const [roomId] = roomIds;
+    if (roomIds.size !== 1 || !roomId) {
+      fail('message.hideMixedRooms');
+      return;
+    }
+
+    const room = await deps.roomService.getRoomById(roomId);
+    if (
+      !room ||
+      !deps.roomService.isParticipant(room, userId) ||
+      records.some((record) => !deps.roomService.canSeeMessage(room, userId, record.timestamp))
+    ) {
+      fail('message.notFound');
+      return;
+    }
+
+    await deps.messageService.hideMessagesForUser(userId, messageIds);
+    const { lastMessage, unreadCount, mentionCount } = await deps.roomService.buildSummary(room, userId);
+    emitToUser(io, userId).emit('message:hidden', { roomId, messageIds, lastMessage, unreadCount, mentionCount });
+  } catch (error) {
+    socket.emit('error', { ...extractErrorPayload(error), event: 'message:hide' });
   }
 }
 

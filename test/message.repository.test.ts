@@ -178,3 +178,42 @@ describe('MessageService.toViews', () => {
     ]);
   });
 });
+
+describe('MessageRepository hidden messages', () => {
+  it('leaves messages hidden by one user out of their digests, counts and pages only', async () => {
+    const services = await buildRoomService();
+    const { messageService, messageRepository, userService } = services;
+    const alice = await createUser(userService, 'Alice');
+    const bob = await createUser(userService, 'Bob');
+    const first = await messageService.sendMessage({ roomId: 'room-a', senderId: alice.id, content: 'primeira' });
+    const mention = await messageService.sendMessage({ roomId: 'room-a', senderId: alice.id, content: '@Bob', mentionedUserIds: [bob.id] });
+    const last = await messageService.sendMessage({ roomId: 'room-a', senderId: alice.id, content: 'última' });
+
+    await messageService.hideMessagesForUser(bob.id, [mention.id, last.id]);
+    await messageService.hideMessagesForUser(bob.id, [last.id]);
+
+    const bobDigest = (await messageRepository.findRoomDigests([{ roomId: 'room-a' }], bob.id)).get('room-a');
+    expect(bobDigest).toMatchObject({ lastMessage: { id: first.id }, unreadCount: 1, mentionCount: 0 });
+    expect(await messageRepository.countUnread('room-a', bob.id)).toEqual({ unreadCount: 1, mentionCount: 0 });
+    expect((await messageRepository.findRoomDigests([{ roomId: 'room-a' }], alice.id)).get('room-a')?.lastMessage?.id).toBe(last.id);
+
+    const bobPage = await messageRepository.findPageByRoomId('room-a', { limit: 1, viewerId: bob.id });
+    expect(bobPage).toMatchObject({ messages: [{ id: first.id }], hasMore: false });
+    const alicePage = await messageRepository.findPageByRoomId('room-a', { limit: 1, viewerId: alice.id });
+    expect(alicePage).toMatchObject({ messages: [{ id: last.id }], hasMore: true });
+    expect((await messageRepository.findPageByRoomId('room-a', { limit: 10 })).messages).toHaveLength(3);
+  });
+
+  it('finds messages by id across rooms, ignoring unknown and repeated ids', async () => {
+    const services = await buildRoomService();
+    const { messageService, messageRepository, userService } = services;
+    const alice = await createUser(userService, 'Alice');
+    const a = await messageService.sendMessage({ roomId: 'room-a', senderId: alice.id, content: 'a' });
+    const b = await messageService.sendMessage({ roomId: 'room-b', senderId: alice.id, content: 'b' });
+
+    const found = await messageRepository.findByIds([a.id, b.id, a.id, 'missing']);
+
+    expect(found.map((message) => message.id).sort()).toEqual([a.id, b.id].sort());
+    expect(await messageRepository.findByIds([])).toEqual([]);
+  });
+});

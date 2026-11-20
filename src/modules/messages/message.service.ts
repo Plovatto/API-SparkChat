@@ -203,7 +203,7 @@ export class MessageService {
 
   getRoomMessagesPage(
     roomId: string,
-    options: { after?: string | undefined; before?: string | undefined; limit: number },
+    options: { after?: string | undefined; before?: string | undefined; limit: number; viewerId?: string | undefined },
   ): Promise<{ messages: MessageRecord[]; hasMore: boolean }> {
     return this.repository.findPageByRoomId(roomId, options);
   }
@@ -218,6 +218,14 @@ export class MessageService {
 
   getMessage(messageId: string): Promise<MessageRecord | null> {
     return this.repository.findById(messageId);
+  }
+
+  getMessages(messageIds: string[]): Promise<MessageRecord[]> {
+    return this.repository.findByIds(messageIds);
+  }
+
+  hideMessagesForUser(userId: string, messageIds: string[]): Promise<void> {
+    return this.repository.hideForUser(userId, messageIds, new Date().toISOString());
   }
 
   async deleteMessage(messageId: string, requesterId: string): Promise<DeleteMessageResult> {

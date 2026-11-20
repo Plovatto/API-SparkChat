@@ -663,7 +663,7 @@ export class CallService {
       const after = this.roomService.getVisibilityCutoff(updated, userId);
       const [summary, { messages: page }] = await Promise.all([
         this.roomService.buildSummary(updated, userId),
-        this.messageService.getRoomMessagesPage(room.id, { after, limit: INITIAL_MESSAGES_LIMIT }),
+        this.messageService.getRoomMessagesPage(room.id, { after, limit: INITIAL_MESSAGES_LIMIT, viewerId: userId }),
       ]);
       await joinUserSocketsToRoom(this.io, userId, room.id);
       emitToUser(this.io, userId).emit('room:new', { room: summary, messages: await this.messageService.toViews(page) });

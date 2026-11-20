@@ -38,6 +38,7 @@ export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
     'message:mark-read': frequent,
     'messages:get': frequent,
     'message:delete': { capacity: 30, refillPerSecond: 5 },
+    'message:hide': { capacity: 30, refillPerSecond: 5 },
     'audio:played': frequent,
     'typing:start': frequent,
     'typing:stop': frequent,

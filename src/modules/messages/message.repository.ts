@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, inArray, lt, ne, not, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
-import { messages } from '../../database/schema.js';
+import { messageHidden, messages } from '../../database/schema.js';
 import type { MessageRecord, MessageReplySnapshot } from './message.types.js';
 
 type MessageColumns = Partial<typeof messages.$inferInsert>;
@@ -72,6 +72,10 @@ function toColumns(patch: Partial<MessageRecord>): MessageColumns {
 
 function jsonArrayContains(column: JsonArrayColumn, value: string): SQL {
   return sql`exists (select 1 from json_each(${column}) where json_each.value = ${value})`;
+}
+
+function notHiddenFor(userId: string): SQL {
+  return sql`not exists (select 1 from ${messageHidden} where ${messageHidden.userId} = ${userId} and ${messageHidden.messageId} = ${messages.id})`;
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -183,6 +187,19 @@ export class MessageRepository {
     return rows.map(toRecord);
   }
 
+  async findByIds(ids: string[]): Promise<MessageRecord[]> {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) {
+      return [];
+    }
+
+    const pages = await Promise.all(
+      chunk(unique, MAX_IN_CLAUSE_IDS).map((batch) => this.db.select().from(messages).where(inArray(messages.id, batch))),
+    );
+
+    return pages.flat().map(toRecord);
+  }
+
   async findByRoomIdAndIds(roomId: string, ids: string[]): Promise<MessageRecord[]> {
     if (ids.length === 0) {
       return [];
@@ -266,7 +283,7 @@ export class MessageRepository {
       this.db
         .select()
         .from(messages)
-        .where(and(eq(messages.roomId, roomId), after ? gt(messages.timestamp, after) : undefined))
+        .where(and(eq(messages.roomId, roomId), after ? gt(messages.timestamp, after) : undefined, notHiddenFor(userId)))
         .orderBy(desc(messages.timestamp))
         .limit(1),
     );
@@ -292,9 +309,12 @@ export class MessageRepository {
 
   async findPageByRoomId(
     roomId: string,
-    options: { after?: string | undefined; before?: string | undefined; limit: number },
+    options: { after?: string | undefined; before?: string | undefined; limit: number; viewerId?: string | undefined },
   ): Promise<{ messages: MessageRecord[]; hasMore: boolean }> {
     const conditions = [eq(messages.roomId, roomId)];
+    if (options.viewerId) {
+      conditions.push(notHiddenFor(options.viewerId));
+    }
     if (options.after) {
       conditions.push(gt(messages.timestamp, options.after));
     }
@@ -329,7 +349,19 @@ export class MessageRepository {
           ne(messages.senderId, userId),
           eq(messages.deletedForEveryone, false),
           not(jsonArrayContains(messages.readBy, userId)),
+          notHiddenFor(userId),
         ),
       );
+  }
+
+  async hideForUser(userId: string, messageIds: string[], hiddenAt: string): Promise<void> {
+    if (messageIds.length === 0) {
+      return;
+    }
+
+    await this.db
+      .insert(messageHidden)
+      .values(messageIds.map((messageId) => ({ userId, messageId, hiddenAt })))
+      .onConflictDoNothing();
   }
 }
