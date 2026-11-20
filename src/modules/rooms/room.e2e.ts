@@ -302,6 +302,22 @@ export class RoomKeyRepository {
     return row?.epoch ? { roomId: row.roomId, epoch: row.epoch } : null;
   }
 
+  async isReportedSender(roomId: string, keyId: string, senderId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ userId: roomKeyReports.userId })
+      .from(roomKeyReports)
+      .where(and(eq(roomKeyReports.roomId, roomId), eq(roomKeyReports.keyId, keyId), eq(roomKeyReports.senderId, senderId)))
+      .limit(1);
+    return row !== undefined;
+  }
+
+  async startRotationClock(roomId: string): Promise<void> {
+    await this.db.run(sql`
+      update ${rooms} set rotation_required_at = ${new Date().toISOString()}
+      where id = ${roomId} and rotation_required is not null and rotation_required_at is null
+    `);
+  }
+
   async reportBadKey(roomId: string, userId: string, keyId: string): Promise<BadKeyReportOutcome> {
     const [row] = await this.db
       .select({ senderId: roomKeys.senderId })
@@ -327,8 +343,7 @@ export class RoomKeyRepository {
       .select({ reporters: sql<number>`count(distinct ${roomKeyReports.userId})` })
       .from(roomKeyReports)
       .where(and(eq(roomKeyReports.roomId, roomId), eq(roomKeyReports.keyId, keyId), inArray(roomKeyReports.userId, memberIds)));
-    const others = memberIds.length - 1;
-    const threshold = Math.min(Math.max(2, Math.ceil(others / 2)), others);
+    const threshold = Math.max(2, Math.ceil((memberIds.length - 1) / 2));
     if (Number(counted?.reporters ?? 0) < threshold) {
       return { reported: true, rotation: null };
     }

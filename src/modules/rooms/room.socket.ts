@@ -857,8 +857,12 @@ async function handlePublishRoomKey(
     }
 
     if (groupGeneration) {
-      const decision = rotationAuthority(room, actingUserId, epoch);
+      const barred = epoch > 1 && room.currentKeyId ? await roomKeyRepository.isReportedSender(roomId, room.currentKeyId, actingUserId) : false;
+      const decision = rotationAuthority(room, actingUserId, epoch, Date.now(), barred);
       if (decision.authority === null) {
+        if (room.rotationRequired !== undefined && !room.rotationRequiredAt) {
+          await roomKeyRepository.startRotationClock(roomId);
+        }
         retryAfterMs = decision.retryAfterMs;
         await reject('e2e.rotationNotAuthorized');
         return;

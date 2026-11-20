@@ -101,9 +101,20 @@ describe('rotationAuthority', () => {
     expect(rotationAuthority(stalled, 'b', 2, at + ROTATION_STALL_MS).authority).toBe('stalled');
   });
 
-  it('lets any member rotate a room that has no admin left or whose rotation predates the timestamp column', () => {
+  it('lets any member rotate a room that has no admin left', () => {
     expect(rotationAuthority(room({ admins: [] }), 'b', 2, at).authority).toBe('adminless');
-    expect(rotationAuthority(room({}), 'b', 2, at).authority).toBe('stalled');
+  });
+
+  it('starts the clock instead of treating a missing rotation timestamp as stalled', () => {
+    expect(rotationAuthority(room({}), 'b', 2, at)).toEqual({ authority: null, retryAfterMs: ROTATION_STALL_MS });
+    expect(rotationAuthority(room({}), 'a', 2, at).authority).toBe('admin');
+  });
+
+  it('takes the shortcuts away from a barred sender until the rotation stalls', () => {
+    const pending = room({ rotationRequiredAt: started });
+    expect(rotationAuthority(pending, 'a', 2, at + 1000, true)).toEqual({ authority: null, retryAfterMs: ROTATION_STALL_MS - 1000 });
+    expect(rotationAuthority(room({ admins: [], rotationRequiredAt: started }), 'b', 2, at, true).authority).toBeNull();
+    expect(rotationAuthority(pending, 'a', 2, at + ROTATION_STALL_MS, true).authority).toBe('stalled');
   });
 });
 
@@ -180,6 +191,36 @@ describe('rotation authority over sockets', () => {
   });
 });
 
+describe('rotation clock persistence', () => {
+  it('persists a clock for a pending rotation that had none and still refuses the non-admin', async () => {
+    const { h, alice, bob, carol, bobClient, aliceClient, roomId } = await groupWithGeneration();
+    const carolClient = await h.connectAs(carol);
+    carolClient.emit('group:leave', { roomId });
+    await settle(200);
+    await h.db.update(rooms).set({ rotationRequiredAt: null }).where(eq(rooms.id, roomId));
+
+    const rejected = waitForEvent<Rejection>(bobClient, 'e2e:room-key-rejected');
+    bobClient.emit('e2e:publish-room-key', batch(roomId, bob.user.id, [alice.user.id, bob.user.id], 2));
+
+    const rejection = await rejected;
+    expect(rejection.code).toBe('e2e.rotationNotAuthorized');
+    expect(rejection.retryAfterMs).toBe(ROTATION_STALL_MS);
+    const [row] = await h.db.select({ at: rooms.rotationRequiredAt }).from(rooms).where(eq(rooms.id, roomId));
+    expect(Date.parse(row?.at ?? '')).not.toBeNaN();
+    expect(aliceClient.connected).toBe(true);
+  });
+
+  it('stamps the rotation clock when an identity change forces a rotation', async () => {
+    const { h, bob, roomId } = await groupWithGeneration();
+
+    await h.userRepository.updateIdentityRequiringRotation(bob.user.id, { e2ePublicKey: 'rotated-public-key' });
+
+    const [row] = await h.db.select({ at: rooms.rotationRequiredAt, required: rooms.rotationRequired }).from(rooms).where(eq(rooms.id, roomId));
+    expect(row?.required).toBe(2);
+    expect(Date.parse(row?.at ?? '')).not.toBeNaN();
+  });
+});
+
 describe('reporting an unusable room key', () => {
   it('drops only the reporter envelope, asks the room for a replacement and bars the poisoner from re-sending it', async () => {
     const { h, alice, bob, carol, aliceClient, bobClient, carolClient, roomId, first } = await groupWithGeneration();
@@ -220,6 +261,44 @@ describe('reporting an unusable room key', () => {
 
     await expect(notice).resolves.toMatchObject({ epoch: 2 });
     expect(await h.roomKeyRepository.getState(roomId)).toMatchObject({ currentEpoch: 1, rotationRequired: 2 });
+  });
+
+  it('never reopens the rotation from a single report, even in a two-member group', async () => {
+    const h = (harness = await startSocketHarness());
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+    const roomId = await createGroup(aliceClient);
+    const { inviteToken } = await seedInvite(h.db, roomId);
+    await join(bobClient, roomId, bob.user.id, inviteToken);
+    const first = batch(roomId, alice.user.id, [alice.user.id, bob.user.id]);
+    const delivered = waitForEvent(aliceClient, 'e2e:room-key');
+    aliceClient.emit('e2e:publish-room-key', first);
+    await delivered;
+
+    bobClient.emit('e2e:report-bad-key', { roomId, keyId: first.keyId });
+    await settle(250);
+
+    expect(await h.roomKeyRepository.getState(roomId)).toMatchObject({ currentEpoch: 1, rotationRequired: null });
+  });
+
+  it('bars the sender of a reported generation from leading the rotation it triggered until it stalls', async () => {
+    const { h, alice, bob, carol, aliceClient, bobClient, carolClient, roomId, first } = await groupWithGeneration();
+    bobClient.emit('e2e:report-bad-key', { roomId, keyId: first.keyId });
+    await settle(150);
+    carolClient.emit('e2e:report-bad-key', { roomId, keyId: first.keyId });
+    await settle(250);
+    expect(await h.roomKeyRepository.getState(roomId)).toMatchObject({ rotationRequired: 2 });
+
+    const rejected = waitForEvent<Rejection>(aliceClient, 'e2e:room-key-rejected');
+    aliceClient.emit('e2e:publish-room-key', batch(roomId, alice.user.id, [alice.user.id, bob.user.id, carol.user.id], 2));
+    expect((await rejected).code).toBe('e2e.rotationNotAuthorized');
+
+    await h.db.update(rooms).set({ rotationRequiredAt: new Date(Date.now() - ROTATION_STALL_MS - 1000).toISOString() }).where(eq(rooms.id, roomId));
+    const accepted = waitForEvent<Delivery>(aliceClient, 'e2e:room-key');
+    aliceClient.emit('e2e:publish-room-key', batch(roomId, alice.user.id, [alice.user.id, bob.user.id, carol.user.id], 2));
+    await expect(accepted).resolves.toMatchObject({ epoch: 2 });
   });
 
   it('ignores a sender reporting its own envelope and strangers', async () => {
