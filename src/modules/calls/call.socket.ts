@@ -26,6 +26,7 @@ const hangupPayloadSchema = z.object({ callId: callIdSchema, force: z.boolean().
 const signalPayloadSchema = z.object({ callId: callIdSchema, to: z.string().trim().min(1), envelope: envelopeSchema });
 const syncPayloadSchema = z.object({}).optional();
 const iceServersPayloadSchema = z.object({ callId: callIdSchema, protectIp: z.boolean() });
+const transferPayloadSchema = z.object({ callId: callIdSchema, envelope: envelopeSchema });
 
 registerClientEvents('calls', {
   'call:start': startPayloadSchema,
@@ -37,6 +38,8 @@ registerClientEvents('calls', {
   'call:heartbeat': callIdPayloadSchema,
   'call:sync': syncPayloadSchema,
   'call:ice-servers': iceServersPayloadSchema,
+  'call:transfer': transferPayloadSchema,
+  'call:transfer-accept': transferPayloadSchema,
 });
 
 registerServerEvents(
@@ -51,6 +54,9 @@ registerServerEvents(
     'call:ended',
     'call:state',
     'call:ice-servers-result',
+    'call:transferred',
+    'call:peer-transfer',
+    'call:transfer-accepted',
   ],
   {
     'call:config': z.object({ enabled: z.boolean(), relayAvailable: z.boolean(), degrade: degradeSchema }),
@@ -75,8 +81,12 @@ registerServerEvents(
         kind: kindSchema,
         peerId: z.string(),
         role: z.enum(['caller', 'callee']),
+        answeredAt: z.string().nullable(),
       })
       .nullable(),
+    'call:transferred': callIdPayloadSchema,
+    'call:peer-transfer': z.object({ callId: callIdSchema, from: z.string(), envelope: envelopeSchema }),
+    'call:transfer-accepted': z.object({ callId: callIdSchema, envelope: envelopeSchema }),
     'call:ice-servers-result': z.object({
       callId: callIdSchema,
       iceServers: z.array(iceServerSchema),
@@ -172,6 +182,14 @@ export function registerCallSocketHandlers(socket: AppSocket, deps: CallSocketDe
       syncPayloadSchema.parse(payload);
       return callService.sync(actor);
     });
+  });
+
+  socket.on('call:transfer', (payload) => {
+    handle('call:transfer', (actor) => callService.transfer(actor, transferPayloadSchema.parse(payload)));
+  });
+
+  socket.on('call:transfer-accept', (payload) => {
+    handle('call:transfer-accept', (actor) => callService.transferAccept(actor, transferPayloadSchema.parse(payload)));
   });
 
   socket.on('call:ice-servers', (payload) => {

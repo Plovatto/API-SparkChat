@@ -7,6 +7,7 @@ export interface CallStatePayload {
   kind: CallKind;
   peerId: string;
   role: CallRole;
+  answeredAt: string | null;
 }
 
 export interface CallClientToServerEvents {
@@ -19,6 +20,8 @@ export interface CallClientToServerEvents {
   'call:heartbeat': (payload: { callId: string }) => void;
   'call:sync': (payload?: Record<string, never>) => void;
   'call:ice-servers': (payload: { callId: string; protectIp: boolean }) => void;
+  'call:transfer': (payload: { callId: string; envelope: string }) => void;
+  'call:transfer-accept': (payload: { callId: string; envelope: string }) => void;
 }
 
 export interface CallServerToClientEvents {
@@ -30,6 +33,9 @@ export interface CallServerToClientEvents {
   'call:signal': (payload: { callId: string; from: string; envelope: string }) => void;
   'call:ended': (payload: { callId: string; reason: CallEndReason; endedAt: string }) => void;
   'call:state': (payload: CallStatePayload | null) => void;
+  'call:transferred': (payload: { callId: string }) => void;
+  'call:peer-transfer': (payload: { callId: string; from: string; envelope: string }) => void;
+  'call:transfer-accepted': (payload: { callId: string; envelope: string }) => void;
   'call:ice-servers-result': (payload: {
     callId: string;
     iceServers: IceServer[];
