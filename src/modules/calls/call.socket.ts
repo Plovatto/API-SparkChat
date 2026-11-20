@@ -22,6 +22,7 @@ const iceServerSchema = z.object({ urls: z.array(z.string()), username: z.string
 const startPayloadSchema = z.object({ callId: callIdSchema, roomId: z.string().trim().min(1), kind: kindSchema, envelope: envelopeSchema });
 const acceptPayloadSchema = z.object({ callId: callIdSchema, envelope: envelopeSchema });
 const callIdPayloadSchema = z.object({ callId: callIdSchema });
+const hangupPayloadSchema = z.object({ callId: callIdSchema, force: z.boolean().optional() });
 const signalPayloadSchema = z.object({ callId: callIdSchema, to: z.string().trim().min(1), envelope: envelopeSchema });
 const syncPayloadSchema = z.object({}).optional();
 const iceServersPayloadSchema = z.object({ callId: callIdSchema, protectIp: z.boolean() });
@@ -31,7 +32,7 @@ registerClientEvents('calls', {
   'call:accept': acceptPayloadSchema,
   'call:decline': callIdPayloadSchema,
   'call:silence': callIdPayloadSchema,
-  'call:hangup': callIdPayloadSchema,
+  'call:hangup': hangupPayloadSchema,
   'call:signal': signalPayloadSchema,
   'call:heartbeat': callIdPayloadSchema,
   'call:sync': syncPayloadSchema,
@@ -152,7 +153,10 @@ export function registerCallSocketHandlers(socket: AppSocket, deps: CallSocketDe
   });
 
   socket.on('call:hangup', (payload) => {
-    handle('call:hangup', (actor) => callService.hangup(actor, callIdPayloadSchema.parse(payload).callId));
+    handle('call:hangup', (actor) => {
+      const input = hangupPayloadSchema.parse(payload);
+      return callService.hangup(actor, input.callId, input.force === true);
+    });
   });
 
   socket.on('call:signal', (payload) => {

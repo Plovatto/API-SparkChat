@@ -1102,6 +1102,62 @@ describe('hardening', () => {
     expect((await stale).code).toBe('call.notAllowed');
   });
 
+  it('never lets an idle device take over a live call through sync, even after the bound socket went quiet', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const second = await h.connectAs(alice);
+    clock.now += 30_000;
+
+    const state = waitForEvent(second, 'call:state');
+    second.emit('call:sync', {});
+    await state;
+    const refused = expectError(second, 'call:signal');
+    second.emit('call:signal', { callId, to: (await callRow(h, callId)).calleeId, envelope: 'stolen' });
+    expect((await refused).code).toBe('call.notAllowed');
+  });
+
+  it('counts signals from the bound socket as liveness so a heartbeat from another socket cannot take over', async () => {
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const second = await h.connectAs(alice);
+    clock.now += 25_000;
+    const delivered = waitForEvent(bobClient, 'call:signal');
+    aliceClient.emit('call:signal', { callId, to: bob.user.id, envelope: 'alive' });
+    await delivered;
+
+    const refused = expectError(second, 'call:heartbeat');
+    second.emit('call:heartbeat', { callId });
+    expect((await refused).code).toBe('call.notAllowed');
+  });
+
+  it('ignores an automatic hangup from a device that does not hold the live call, but honours a forced one', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const second = await h.connectAs(alice);
+
+    const refused = expectError(second, 'call:hangup');
+    second.emit('call:hangup', { callId });
+    expect((await refused).code).toBe('call.notAllowed');
+    expect((await callRow(h, callId)).state).not.toBe('ended');
+
+    const ended = waitForEvent(bobClient, 'call:ended');
+    second.emit('call:hangup', { callId, force: true });
+    await ended;
+    expect((await callRow(h, callId)).state).toBe('ended');
+  });
+
+  it('still lets the bound device hang up a live call without forcing', async () => {
+    const { h, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const ended = waitForEvent(bobClient, 'call:ended');
+    aliceClient.emit('call:hangup', { callId });
+    await ended;
+  });
+
   it('only lets the bound devices signal and heartbeat, and keeps another device from taking over via sync', async () => {
     const { h, alice, bob, room, aliceClient, bobClient } = await setup();
     const bobTablet = await h.connectAs(bob);

@@ -258,13 +258,19 @@ export class CallService {
     }
   }
 
-  async hangup(actor: CallActor, callId: string): Promise<void> {
+  async hangup(actor: CallActor, callId: string, force = false): Promise<void> {
     this.requireEnabled();
     const call = await this.requireParticipant(callId, actor.userId);
     if (call.state === 'ended') {
       return;
     }
     const role = roleOf(call, actor.userId);
+    if (role && !force && (call.state === 'accepted' || call.state === 'active')) {
+      const bound = this.boundSocket(call, role);
+      if (bound !== undefined && bound !== actor.socketId && this.io.sockets.sockets.has(bound)) {
+        throw AppError.of('call.notAllowed');
+      }
+    }
     const ended = await this.finish(callId, { type: 'hangup', by: role ?? 'caller' });
     if (ended && role === 'callee' && call.state === 'ringing') {
       this.io.in(userRoom(call.calleeId)).except(actor.socketId).emit('call:declined-elsewhere', { callId });
@@ -293,6 +299,7 @@ export class CallService {
     }
 
     this.requireBoundSocket(call, role, actor.socketId);
+    this.markBeat(call.id, role);
 
     if (role === 'callee' && call.state === 'accepted') {
       await this.repository.markActive(call.id);
@@ -365,7 +372,7 @@ export class CallService {
     }
 
     if (call.state === 'accepted' || call.state === 'active') {
-      if (this.mayTakeOver(call, role, actor.socketId)) {
+      if (this.canTakeOver(call, role, actor.socketId)) {
         await this.takeOver(call, role, actor.socketId);
       }
     }
