@@ -237,17 +237,17 @@ describe('room key rotation', () => {
     expect(carolNotices).toHaveLength(0);
     expect((await listRooms(bobClient)).find((room) => room.id === group.id)).toMatchObject({ currentEpoch: 1, rotationRequiredEpoch: 2 });
 
-    const stillWithCarol = waitForEvent<Rejection>(bobClient, 'e2e:room-key-rejected');
-    bobClient.emit('e2e:publish-room-key', batch(group.id, bob.user.id, [alice.user.id, bob.user.id, carol.user.id], 2));
+    const stillWithCarol = waitForEvent<Rejection>(aliceClient, 'e2e:room-key-rejected');
+    aliceClient.emit('e2e:publish-room-key', batch(group.id, alice.user.id, [alice.user.id, bob.user.id, carol.user.id], 2));
     await expect(stillWithCarol).resolves.toMatchObject({ code: 'e2e.roomKeyIncomplete', rotationRequiredEpoch: 2, event: 'e2e:publish-room-key' });
 
-    const rotation = batch(group.id, bob.user.id, [alice.user.id, bob.user.id], 2);
+    const rotation = batch(group.id, alice.user.id, [alice.user.id, bob.user.id], 2);
     const toBob = waitForEvent<Delivery>(bobClient, 'e2e:room-key');
     const toAlice = waitForEvent<Delivery>(aliceClient, 'e2e:room-key');
-    bobClient.emit('e2e:publish-room-key', rotation);
+    aliceClient.emit('e2e:publish-room-key', rotation);
     await expect(toBob).resolves.toMatchObject({ keyId: rotation.keyId, sealedKey: rotation.keys[1]?.sealedKey });
 
-    await expect(toAlice).resolves.toMatchObject({ keyId: rotation.keyId, epoch: 2, senderId: bob.user.id });
+    await expect(toAlice).resolves.toMatchObject({ keyId: rotation.keyId, epoch: 2, senderId: alice.user.id });
     expect(await h.roomKeyRepository.getState(group.id)).toEqual({ currentEpoch: 2, currentKeyId: rotation.keyId, rotationRequired: null });
   });
 

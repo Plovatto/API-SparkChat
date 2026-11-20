@@ -53,6 +53,7 @@ function toRoomRecord(room: RoomRow, participants: ParticipantRow[]): RoomRecord
     currentEpoch: room.currentEpoch,
     currentKeyId: room.currentKeyId ?? undefined,
     rotationRequired: room.rotationRequired ?? undefined,
+    rotationRequiredAt: room.rotationRequiredAt ?? undefined,
     inviteTokenHash: room.inviteTokenHash ?? undefined,
     encryptedInvite: room.encryptedInvite ?? undefined,
     inviteKeyId: room.inviteKeyId ?? undefined,
@@ -222,6 +223,7 @@ export class RoomRepository {
       .update(rooms)
       .set({
         rotationRequired: sql`${rooms.currentEpoch} + 1`,
+        rotationRequiredAt: sql`coalesce(${rooms.rotationRequiredAt}, ${new Date().toISOString()})`,
         inviteTokenHash: null,
       })
       .where(
@@ -247,6 +249,7 @@ export class RoomRepository {
   async resetInvite(roomId: string, userId: string): Promise<InviteResetOutcome> {
     const result = await this.db.run(sql`
       update ${rooms} set rotation_required = coalesce(rotation_required, current_epoch + 1),
+        rotation_required_at = coalesce(rotation_required_at, ${new Date().toISOString()}),
         invite_token_hash = null
       where id = ${roomId}
         and type = 'group'

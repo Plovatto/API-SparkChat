@@ -29,6 +29,7 @@ export interface RoomKeyRejection {
   rotationRequiredEpoch: number | null;
   code: ErrorCode;
   message: string;
+  retryAfterMs?: number;
 }
 
 export interface RoomServerToClientEvents {
@@ -89,4 +90,5 @@ export interface RoomClientToServerEvents {
   }) => void;
   'e2e:get-room-keys': (payload: { roomIds: string[]; keyIds?: Record<string, string[]> }) => void;
   'e2e:request-room-key': (payload: { roomId: string }) => void;
+  'e2e:report-bad-key': (payload: { roomId: string; keyId: string }) => void;
 }

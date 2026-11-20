@@ -19,6 +19,7 @@ import type { RoomActionRateLimiter } from './room.rate-limiter.js';
 import type { RoomService } from './room.service.js';
 import { MAX_GROUP_MEMBERS, type RoomRecord } from './room.types.js';
 import { notifyRoomRotations } from './room.rotation.js';
+import { rotationAuthority } from './room.rotation-authority.js';
 
 export type OnRoomCreatedHook = (context: { io: AppServer; room: RoomRecord; locale: Locale }) => void;
 export type ShouldResetInsteadOfDeleteHook = (room: RoomRecord) => boolean;
@@ -89,6 +90,11 @@ const getRoomKeysPayloadSchema = z.object({
     .optional(),
 });
 
+const reportBadKeyPayloadSchema = z.object({
+  roomId: z.string().trim().min(1),
+  keyId: z.string().regex(KEY_ID_PATTERN),
+});
+
 const renameRoomPayloadSchema = z.object({
   roomId: z.string().trim().min(1),
   name: encryptedNameSchema,
@@ -114,6 +120,7 @@ registerClientEvents('rooms', {
   'e2e:share-room-key': publishRoomKeyPayloadSchema,
   'e2e:get-room-keys': getRoomKeysPayloadSchema,
   'e2e:request-room-key': roomIdPayloadSchema,
+  'e2e:report-bad-key': reportBadKeyPayloadSchema,
 });
 
 registerServerEvents('rooms', [
@@ -265,6 +272,10 @@ export function registerRoomSocketHandlers(io: AppServer, socket: AppSocket, dep
 
   socket.on('e2e:get-room-keys', (payload) => {
     runSocketHandler(socket, 'e2e:get-room-keys', () => handleGetRoomKeys(socket, deps, payload));
+  });
+
+  socket.on('e2e:report-bad-key', (payload) => {
+    runSocketHandler(socket, 'e2e:report-bad-key', () => handleReportBadKey(io, socket, deps, payload));
   });
 
   socket.on('e2e:request-room-key', (payload) => {
@@ -776,10 +787,12 @@ async function handlePublishRoomKey(
       return;
     }
 
+    let retryAfterMs = 0;
     const reject = async (
       code:
         | (typeof REJECTION_CODES)[keyof typeof REJECTION_CODES]
         | 'e2e.invalidRoomKeyEnvelope'
+        | 'e2e.rotationNotAuthorized'
         | 'e2e.inviteRequired'
         | 'e2e.rosterRequired'
         | 'e2e.nameRequired',
@@ -793,6 +806,7 @@ async function handlePublishRoomKey(
         currentEpoch: state?.currentEpoch ?? 0,
         currentKeyId: state?.currentKeyId ?? null,
         rotationRequiredEpoch: state?.rotationRequired ?? null,
+        ...(code === 'e2e.rotationNotAuthorized' ? { retryAfterMs: retryAfterMs } : {}),
         ...errorPayload(code),
       });
     };
@@ -818,6 +832,15 @@ async function handlePublishRoomKey(
     if (groupGeneration && !name) {
       await reject('e2e.nameRequired');
       return;
+    }
+
+    if (groupGeneration) {
+      const decision = rotationAuthority(room, actingUserId, epoch);
+      if (decision.authority === null) {
+        retryAfterMs = decision.retryAfterMs;
+        await reject('e2e.rotationNotAuthorized');
+        return;
+      }
     }
 
     const outcome = await roomKeyRepository.publish({
@@ -881,6 +904,40 @@ async function handleGetRoomKeys(socket: AppSocket, deps: RoomSocketDeps, payloa
     socket.emit('e2e:room-keys', truncated ? { keys, truncated } : { keys });
   } catch (error) {
     socket.emit('error', { ...extractErrorPayload(error), event: 'e2e:get-room-keys' });
+  }
+}
+
+async function handleReportBadKey(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+  const userId = requireSocketUserId(socket);
+  if (!userId) {
+    return;
+  }
+
+  try {
+    const { roomId, keyId } = reportBadKeyPayloadSchema.parse(payload);
+    const room = await deps.roomService.getRoomById(roomId);
+    if (!room || room.type !== 'group' || !deps.roomService.isParticipant(room, userId)) {
+      return;
+    }
+    if (!deps.rateLimiter.tryBadKeyReport(userId, roomId, keyId)) {
+      return;
+    }
+
+    const outcome = await deps.roomKeyRepository.reportBadKey(roomId, userId, keyId);
+    if (!outcome.reported) {
+      return;
+    }
+    if (outcome.rotation) {
+      const updated = await deps.roomService.getRoomById(roomId);
+      if (updated) {
+        await announceRotation(io, deps, updated);
+      }
+      return;
+    }
+    const proof = await deps.roomService.findInviteProof(roomId, userId);
+    socket.to(roomId).emit('e2e:key-request', { roomId, requesterId: userId, ...(proof ? { proof } : {}) });
+  } catch (error) {
+    socket.emit('error', extractErrorPayload(error));
   }
 }
 
