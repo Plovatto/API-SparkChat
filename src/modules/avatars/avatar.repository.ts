@@ -57,7 +57,7 @@ export class AvatarRepository {
       where id = ${userId}
         and profile_key_version <= ${profileKeyVersion}
         and exists (select 1 from ${uploads} up
-          where up.key = ${uploadKey} and up.uploader_id = ${userId} and up.message_id is null
+          where up.key = ${uploadKey} and up.uploader_id = ${userId} and up.message_id is null and up.expires_at is null
             and (up.avatar_owner is null or (up.avatar_owner = ${owner} and up.key = ${users.avatarUploadKey})))
     `);
     const claim = this.db.run(sql`update ${uploads} set avatar_owner = ${owner} where key = ${uploadKey} and changes() = 1`);
@@ -97,7 +97,7 @@ export class AvatarRepository {
         and ${activeMemberCount(roomId, sql`(${userId})`)} = 1
         and ${inRosterCondition(roomId, userId, keyId)}
         and exists (select 1 from ${uploads} up
-          where up.key = ${uploadKey} and up.message_id is null
+          where up.key = ${uploadKey} and up.message_id is null and up.expires_at is null
             and ((up.avatar_owner is null and up.uploader_id = ${userId})
               or (up.avatar_owner = ${owner} and up.key = ${rooms.avatarUploadKey})))
     `);
@@ -141,6 +141,7 @@ export class AvatarRepository {
           eq(roomParticipants.userId, userId),
           this.notBanned(),
           sql`exists (select 1 from ${rooms} where id = ${roomId} and current_key_id = ${keyId})`,
+          sql`(${roomParticipants.profileKeyEnvelope} is not ${envelope} or ${roomParticipants.profileKeyKeyId} is not ${keyId})`,
         ),
       );
     if (result.rowsAffected === 1) {
@@ -148,7 +149,10 @@ export class AvatarRepository {
     }
 
     const { memberIds, currentKeyId } = await this.roomState(roomId);
-    return memberIds.includes(userId) && currentKeyId !== keyId ? { status: 'stale' } : { status: 'notFound' };
+    if (!memberIds.includes(userId)) {
+      return { status: 'notFound' };
+    }
+    return currentKeyId === keyId ? { status: 'written', envelopes: {} } : { status: 'stale' };
   }
 
   async rewrapProfileKeys(roomId: string, callerId: string, keyId: string, envelopes: Record<string, string>): Promise<ProfileKeyWrite> {
@@ -180,7 +184,10 @@ export class AvatarRepository {
       set profile_key_envelope = (select v.column2 from (values ${values}) v where v.column1 = ${roomParticipants.userId}),
         profile_key_key_id = ${keyId}
       where room_id = ${roomId} and user_id in ${ids}
-        and (user_id = ${callerId} or coalesce(profile_key_key_id, '') <> ${keyId})
+        and ((user_id = ${callerId}
+            and (profile_key_key_id is not ${keyId}
+              or profile_key_envelope is not (select v.column2 from (values ${values}) v where v.column1 = ${roomParticipants.userId})))
+          or (user_id <> ${callerId} and profile_key_key_id is not ${keyId}))
         and not exists (select 1 from ${roomBans} b where b.room_id = ${roomParticipants.roomId} and b.user_id = ${roomParticipants.userId})
         and exists (select 1 from ${rooms} where id = ${roomId} and current_key_id = ${keyId})
         and ${activeMemberCount(roomId, sql`(${callerId})`)} = 1

@@ -16,6 +16,7 @@ const frequent: EventBudget = { capacity: 60, refillPerSecond: 10 };
 const keyExchange: EventBudget = { capacity: 300, refillPerSecond: 30 };
 const roomAction: EventBudget = { capacity: 20, refillPerSecond: 2 };
 const accountAction: EventBudget = { capacity: 20, refillPerSecond: 1 };
+const profileKeyAction: EventBudget = { capacity: 20, refillPerSecond: 1 };
 
 export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
   events: {
@@ -80,8 +81,8 @@ export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
     'user:clear-avatar': { capacity: 10, refillPerSecond: 0.2 },
     'room:set-avatar': { capacity: 10, refillPerSecond: 0.2 },
     'room:clear-avatar': { capacity: 10, refillPerSecond: 0.2 },
-    'room:publish-profile-key': keyExchange,
-    'room:rewrap-profile-keys': keyExchange,
+    'room:publish-profile-key': profileKeyAction,
+    'room:rewrap-profile-keys': profileKeyAction,
   },
   fallback: { capacity: 60, refillPerSecond: 10 },
 };

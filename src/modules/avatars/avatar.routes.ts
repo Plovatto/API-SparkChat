@@ -9,14 +9,20 @@ import { registry } from '../../docs/registry.js';
 import { errorPayload } from '../../lib/app-error.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { createRequireAuth } from '../../middleware/auth.js';
+import { createRateLimiter } from '../../middleware/rate-limit.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import type { StorageQuota } from '../../storage/storage-quota.js';
 import type { UploadRegistry } from '../../storage/upload-registry.js';
-import { createUploadHandler, isNeutralUpload, uploadRateLimiter } from '../messages/index.js';
+import { createUploadHandler, isNeutralUpload } from '../messages/index.js';
 import type { UserService } from '../users/index.js';
-import { MAX_AVATAR_UPLOAD_BYTES } from './avatar.limits.js';
+import { AVATAR_UPLOADS_PER_MINUTE, MAX_AVATAR_UPLOAD_BYTES } from './avatar.limits.js';
 
 const AVATAR_MAX_SIZE_LABEL = '512KB';
+
+const avatarUploadRateLimiter = createRateLimiter({
+  limit: AVATAR_UPLOADS_PER_MINUTE,
+  code: 'rateLimit.upload',
+});
 
 export const avatarUploadResponseSchema = z
   .object({
@@ -114,7 +120,7 @@ export function createAvatarRouter(
     buildResponse: (_file, url) => ({ url }),
   });
 
-  router.post('/upload', uploadRateLimiter, requireAuth, avatarUpload.single('image'), handleAvatarUploadError, asyncHandler(uploadAvatar));
+  router.post('/upload', avatarUploadRateLimiter, requireAuth, avatarUpload.single('image'), handleAvatarUploadError, asyncHandler(uploadAvatar));
 
   return router;
 }
