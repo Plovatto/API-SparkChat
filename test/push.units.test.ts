@@ -109,10 +109,15 @@ describe('message push payload', () => {
     expect(buildMessagePushPayload({ ...base, message: { id: 'm1', type: 'text', content } })).toEqual({ t: 'msg', roomId: 'r1', m: { id: 'm1', s: 'u2', k: 'text', c: content } });
   });
 
-  it('describes media by kind without their encrypted urls', () => {
+  it('carries the signed encrypted mime type of media but never their encrypted urls', () => {
+    const fileMime = cipher(40);
     for (const type of ['image', 'audio', 'file']) {
-      expect(buildMessagePushPayload({ ...base, message: { id: 'm1', type, content: cipher(300) } })).toEqual({ t: 'msg', roomId: 'r1', m: { id: 'm1', s: 'u2', k: type } });
+      const payload = buildMessagePushPayload({ ...base, message: { id: 'm1', type, content: `https://media.example/${type}`, fileMime } });
+      expect(payload).toEqual({ t: 'msg', roomId: 'r1', m: { id: 'm1', s: 'u2', k: type, c: fileMime } });
+      expect(JSON.stringify(payload)).not.toContain('media.example');
     }
+    expect(buildMessagePushPayload({ ...base, message: { id: 'm1', type: 'image', content: cipher(40), fileMime: 'image/png' } })).toEqual({ t: 'msg', roomId: 'r1', m: { id: 'm1', s: 'u2', k: 'image' } });
+    expect(buildMessagePushPayload({ ...base, message: { id: 'm1', type: 'image', content: cipher(40) } })).toEqual({ t: 'msg', roomId: 'r1', m: { id: 'm1', s: 'u2', k: 'image' } });
   });
 
   it('never forwards content that is not an end-to-end encrypted field', () => {

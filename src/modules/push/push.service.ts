@@ -57,7 +57,7 @@ export interface NewMessagePush {
   roomId: string;
   senderId: string;
   recipientIds: readonly string[];
-  message?: { id: string; type: string; content: string };
+  message?: { id: string; type: string; content: string; fileMime?: string | null };
 }
 
 const PREVIEW_KINDS: ReadonlySet<string> = new Set<PushPreviewKind>(['text', 'image', 'audio', 'file']);
@@ -73,7 +73,8 @@ export function buildMessagePushPayload(input: NewMessagePush): PushPayload {
     return base;
   }
   const preview: PushMessagePreview = { id: message.id, s: input.senderId, k: message.type as PushPreviewKind };
-  const withContent: PushPayload = { ...base, m: message.type === 'text' && message.content.startsWith(ENCRYPTED_FIELD_PREFIX) ? { ...preview, c: message.content } : preview };
+  const field = message.type === 'text' ? message.content : message.fileMime;
+  const withContent: PushPayload = { ...base, m: field?.startsWith(ENCRYPTED_FIELD_PREFIX) ? { ...preview, c: field } : preview };
   if (payloadBytes(withContent) <= MAX_PUSH_PAYLOAD_BYTES) {
     return withContent;
   }

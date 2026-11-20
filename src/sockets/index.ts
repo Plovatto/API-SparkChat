@@ -141,7 +141,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
             roomId: room.id,
             senderId: message.senderId,
             recipientIds: room.participants.filter((id) => id !== ASSISTANT_USER_ID),
-            message: { id: message.id, type: message.type, content: message.content },
+            message: { id: message.id, type: message.type, content: message.content, fileMime: message.fileMeta?.mimeType ?? null },
           });
         }
       },
