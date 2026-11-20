@@ -11,7 +11,7 @@ O id da folha é um hash do id do usuário (um UUID aleatório) e não um HMAC c
 ## Privacidade
 
 - Não existe nenhuma rota HTTP do registro. Tudo é evento de socket e exige sessão autenticada.
-- Não há listagem nem enumeração. Uma prova de inclusão só é devolvida para quem já sabe o id do usuário e as chaves exatas, e só sobre si mesmo e sobre usuários que compartilham alguma sala com quem pede. Para qualquer outro id a resposta é `found: false`, sem consulta nem correção no log.
+- Não há listagem nem enumeração. Uma prova de inclusão só é devolvida para quem já sabe o id do usuário e as chaves exatas, para qualquer usuário autenticado, o mesmo conjunto de pessoas que já consegue buscar as chaves públicas por `e2e:get-public-keys`. Restringir a prova a quem divide sala hoje não esconderia nada e quebraria ex-membros e membros banidos, cujas chaves antigas ainda precisam ser verificadas; por isso não há restrição.
 - `kt:audit` devolve apenas as entradas da própria conta de quem pede.
 - `kt:gossip` só é repassado entre contatos que dividem uma sala.
 - Todos os eventos têm limite de taxa por usuário e por socket, lotes de no máximo 50 itens e tamanhos máximos para todo campo.
@@ -79,14 +79,21 @@ Não protege contra: um servidor que mente de forma consistente para uma pessoa 
 
 A omissão de qualquer entrada não é provada. O log é uma árvore de Merkle simples, ordenada por tempo, e não um mapa ordenado por conta: uma prova de inclusão mostra que uma folha existe, nunca que ela é a última nem que não há outras da mesma conta. Um servidor pode, portanto, esconder uma entrada (a mais recente ou qualquer outra) de quem audita a própria conta, e a única garantia de completude seria uma estrutura de mapa ordenado, que esta versão não tem.
 
-Mitigações no cliente, que reduzem o risco sem eliminá-lo:
+Mitigações no cliente. Elas dificultam o ataque, mas **não provam completude** e um servidor que controla a visão de uma pessoa as contorna:
 
 - Para cada contato o app guarda a maior versão aceita e o hash da folha. Uma versão menor do que a já aceita, ou a mesma versão com chaves diferentes, é recusada.
-- Cada pessoa guarda a maior versão e as chaves que a própria auditoria viu, e as envia dentro do gossip cifrado entre contatos. O destinatário compara com o que aceitou desse contato e alerta quando há versão igual com chaves diferentes, ou quando ele aceitou uma versão mais nova que a pessoa, ao auditar depois disso, nunca viu.
+- A própria auditoria guarda a maior versão e as chaves que viu e as envia dentro do gossip cifrado entre contatos. O destinatário alerta apenas quando a mesma versão aparece com chaves diferentes das que ele aceitou. A idade da auditoria e o relógio do remetente não entram na comparação.
+- O envelope é aberto com a chave que o destinatário tem fixada para o remetente. Se essa chave é a falsa (o ataque em questão), o gossip verdadeiro do remetente não abre, e um servidor que tenha a chave falsa pode forjar um gossip "do remetente" com qualquer conteúdo. Por isso a troca é só um indício. Quando mensagens de um contato cuja chave foi aceita falham várias vezes em abrir (3 em uma hora, no máximo uma por 30 s), o app mostra um alerta limitado por contato, dizendo que a chave que se tem dele pode não ser a real.
 - A testemunha e o gossip de cabeças detectam visões diferentes do log inteiro.
+
+Trabalho futuro para uma prova real de completude: um mapa verificável (árvore de Merkle esparsa indexada pelo hash do id do usuário) cujo compromisso vai dentro da cabeça assinada, de modo que a última versão de cada conta e a ausência de outras fiquem provadas. Isso não está implementado.
 
 ### Falhas do servidor contra o cliente
 
-Erros e silêncio do servidor nos eventos `kt:*` não são tratados como "log indisponível". Com o app conectado, uma chave que não pôde ser verificada fica pendente (não utilizável) e a verificação é tentada de novo; só um socket realmente desconectado, em uma conta que nunca usou o registro, deixa a chave passar sem prova. Se um evento continua falhando enquanto os outros respondem, o app alerta. Contas que já usaram o registro, ou cujo build fixa a chave do log, recebem um alerta de rebaixamento quando o servidor deixa de enviar `kt:config` ou o envia desligado; com a chave fixada no build o app ainda recusa chaves novas ou alteradas de contatos.
+Erros e silêncio do servidor nos eventos `kt:*` não são tratados como "log indisponível". Com o app conectado, uma chave que não pôde ser verificada fica pendente (não utilizável) e a verificação é tentada de novo; só um socket realmente desconectado, em uma conta que nunca usou o registro, deixa a chave passar sem prova. A verificação inteira tem um teto de 15 s: passado esse prazo as chaves ainda não provadas são recusadas e aparece um alerta. Quando um evento falha 4 vezes seguidas com o socket conectado, o app alerta, mesmo que todos os outros eventos também falhem.
+
+A configuração anunciada pelo servidor vale por sessão: ela é descartada na desconexão e a cada nova autenticação, então um servidor que volta sem a funcionalidade (ou sem as tabelas) gera o alerta de rebaixamento depois do prazo de 5 s, em contas que já usaram o registro ou cujo build fixa a chave. Com a chave fixada no build o app ainda recusa chaves novas ou alteradas de contatos.
+
+Uma cabeça mais antiga que a guardada não gera alerta se for prefixo consistente da guardada, e nunca substitui uma cabeça maior; só uma cabeça menor sem consistência dispara o alerta de registros diferentes.
 
 Também não impede o primeiro contato (confiança no primeiro uso) se o servidor já estava comprometido quando o app fixou a chave do registro, exceto com `VITE_KT_LOG_PUBLIC_KEY`.

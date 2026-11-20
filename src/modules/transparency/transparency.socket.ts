@@ -12,7 +12,6 @@ import { MAX_GOSSIP_ENVELOPE_LENGTH, MAX_PROOF_ITEMS, type TransparencyService }
 export interface TransparencySocketDeps {
   transparencyService: TransparencyService;
   getContactIds: (userId: string) => Promise<string[]>;
-  getSharedRoomUserIds: (userId: string) => Promise<string[]>;
 }
 
 const requestIdSchema = z.string().min(1).max(64).optional();
@@ -74,10 +73,9 @@ export function registerTransparencySocketHandlers(socket: AppSocket, deps: Tran
   });
 
   socket.on('kt:get-proofs', (payload) => {
-    handle('kt:get-proofs', async (userId) => {
+    handle('kt:get-proofs', async () => {
       const input = getProofsSchema.parse(payload);
-      const entitled = new Set([...(await deps.getSharedRoomUserIds(userId)), userId]);
-      const { head, proofs } = await transparencyService.proofs(input.items, entitled);
+      const { head, proofs } = await transparencyService.proofs(input.items);
       socket.emit('kt:proofs', { ...(input.requestId ? { requestId: input.requestId } : {}), head, proofs });
     });
   });

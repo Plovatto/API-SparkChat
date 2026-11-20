@@ -78,9 +78,8 @@ export class TransparencyService {
     }
   }
 
-  async proofs(items: ProofRequestItem[], entitledIds: ReadonlySet<string>): Promise<{ head: SignedTreeHead; proofs: ProofResult[] }> {
-    const allowed = items.filter((item) => entitledIds.has(item.userId));
-    for (const item of allowed) {
+  async proofs(items: ProofRequestItem[]): Promise<{ head: SignedTreeHead; proofs: ProofResult[] }> {
+    for (const item of items) {
       await this.repairIfCurrent(item).catch((error: unknown) => {
         logger.error({ err: error }, 'Key transparency repair failed');
       });
@@ -88,10 +87,6 @@ export class TransparencyService {
     const head = await this.log.head();
     const proofs: ProofResult[] = [];
     for (const item of items) {
-      if (!entitledIds.has(item.userId)) {
-        proofs.push({ userId: item.userId, found: false });
-        continue;
-      }
       const inclusion = await this.log.inclusion({ userId: item.userId, publicKey: item.publicKey, signingPublicKey: item.signingPublicKey ?? null }, head);
       proofs.push(inclusion ? { userId: item.userId, found: true, ...inclusion } : { userId: item.userId, found: false });
     }

@@ -215,34 +215,46 @@ describe('key transparency sockets', () => {
       expect(checkInclusion(otherLog, payload, entryA)).toBe(false);
     });
 
-    it('only answers inclusion requests about the caller and the users sharing a room with the caller', async () => {
+    it('proves inclusion for any authenticated caller, including users the caller never shared a room with', async () => {
       harness = await startSocketHarness({ transparency: true });
       const alice = await harness.createAccount('Alice');
       const bob = await harness.createAccount('Bob');
-      const carol = await harness.createAccount('Carol');
       const clientA = await harness.connectAs(alice);
       const clientB = await harness.connectAs(bob);
-      const clientC = await harness.connectAs(carol);
-      const signingA = await publishKeys(clientA, alice.user.id, pk('pub-alice'));
       const signingB = await publishKeys(clientB, bob.user.id, pk('pub-bob'));
-      const signingC = await publishKeys(clientC, carol.user.id, pk('pub-carol'));
       const logKey = harness.transparency?.signer.publicKey as string;
-      const entryA = { userId: alice.user.id, publicKey: pk('pub-alice'), signingPublicKey: signingA.signingPublicKey };
       const entryB = { userId: bob.user.id, publicKey: pk('pub-bob'), signingPublicKey: signingB.signingPublicKey };
-      const entryC = { userId: carol.user.id, publicKey: pk('pub-carol'), signingPublicKey: signingC.signingPublicKey };
 
-      const stranger = await nextProofs(clientA, [entryA, entryB, entryC]);
-      expect(checkInclusion(logKey, stranger, entryA)).toBe(true);
-      expect(stranger.proofs.find((proof) => proof.userId === bob.user.id)).toEqual({ userId: bob.user.id, found: false });
-      expect(stranger.proofs.find((proof) => proof.userId === carol.user.id)).toEqual({ userId: carol.user.id, found: false });
-
-      await harness.roomService.createPrivateRoom(alice.user.id, bob.user.id);
-      const sharing = await nextProofs(clientA, [entryA, entryB, entryC]);
-      expect(checkInclusion(logKey, sharing, entryB)).toBe(true);
-      expect(sharing.proofs.find((proof) => proof.userId === carol.user.id)).toEqual({ userId: carol.user.id, found: false });
+      const payload = await nextProofs(clientA, [entryB]);
+      expect(checkInclusion(logKey, payload, entryB)).toBe(true);
     });
 
-    it('does not repair entries for users the caller is not entitled to', async () => {
+    it('still proves the keys of a former member and of a banned member', async () => {
+      harness = await startSocketHarness({ transparency: true });
+      const h = harness;
+      const owner = await h.createAccount('Owner');
+      const leaver = await h.createAccount('Leaver');
+      const banned = await h.createAccount('Banned');
+      const clientOwner = await h.connectAs(owner);
+      const clientLeaver = await h.connectAs(leaver);
+      const clientBanned = await h.connectAs(banned);
+      const signingLeaver = await publishKeys(clientLeaver, leaver.user.id, pk('pub-leaver'));
+      const signingBanned = await publishKeys(clientBanned, banned.user.id, pk('pub-banned'));
+      const group = await h.roomService.createGroupRoom(owner.user.id);
+      await h.joinGroup(group.id, leaver.user.id);
+      await h.joinGroup(group.id, banned.user.id);
+      await h.roomService.leaveGroup(group.id, leaver.user.id);
+      await h.roomService.removeMember(group.id, owner.user.id, banned.user.id);
+      const logKey = h.transparency?.signer.publicKey as string;
+      const entryLeaver = { userId: leaver.user.id, publicKey: pk('pub-leaver'), signingPublicKey: signingLeaver.signingPublicKey };
+      const entryBanned = { userId: banned.user.id, publicKey: pk('pub-banned'), signingPublicKey: signingBanned.signingPublicKey };
+
+      const payload = await nextProofs(clientOwner, [entryLeaver, entryBanned]);
+      expect(checkInclusion(logKey, payload, entryLeaver)).toBe(true);
+      expect(checkInclusion(logKey, payload, entryBanned)).toBe(true);
+    });
+
+    it('does not repair entries whose keys differ from the stored ones', async () => {
       harness = await startSocketHarness({ transparency: true });
       const alice = await harness.createAccount('Alice');
       const bob = await harness.createAccount('Bob');
@@ -250,8 +262,8 @@ describe('key transparency sockets', () => {
       const signing = signingIdentity(bob.user.id, pk('pub-bob-direct'));
       await harness.userRepository.update(bob.user.id, { e2ePublicKey: pk('pub-bob-direct'), e2eSigningPublicKey: signing.signingPublicKey, e2eKeySignature: signing.keySignature });
 
-      const result = await nextProofs(clientA, [{ userId: bob.user.id, publicKey: pk('pub-bob-direct'), signingPublicKey: signing.signingPublicKey }]);
-      expect(result.proofs[0]).toMatchObject({ found: false });
+      const forged = await nextProofs(clientA, [{ userId: bob.user.id, publicKey: pk('pub-forged'), signingPublicKey: signing.signingPublicKey }]);
+      expect(forged.proofs[0]).toMatchObject({ found: false });
       expect(await harness.transparency?.log.size()).toBe(0);
     });
 

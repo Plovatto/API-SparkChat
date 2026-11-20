@@ -342,15 +342,6 @@ export class RoomRepository {
     return new Set(rows.map((row) => row.roomId));
   }
 
-  async findSharedRoomUserIds(userId: string): Promise<string[]> {
-    const rows = await this.db
-      .selectDistinct({ userId: rp2.userId })
-      .from(roomParticipants)
-      .innerJoin(rp2, eq(rp2.roomId, roomParticipants.roomId))
-      .where(and(eq(roomParticipants.userId, userId), this.notBanned(roomParticipants.roomId, roomParticipants.userId), this.notBanned(rp2.roomId, rp2.userId)));
-    return rows.map((row) => row.userId);
-  }
-
   async findContactIds(userId: string): Promise<string[]> {
     const rows = await this.db
       .selectDistinct({ userId: rp2.userId })
