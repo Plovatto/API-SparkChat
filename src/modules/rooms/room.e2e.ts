@@ -57,6 +57,11 @@ export interface RoomKeyWithSender extends StoredRoomKey {
   senderIsMember: boolean;
 }
 
+export function reportThreshold(memberCount: number): number {
+  const eligible = Math.max(1, memberCount - 1);
+  return Math.min(Math.max(2, Math.ceil(eligible / 2)), eligible);
+}
+
 export const MAX_ROSTER_BYTES_PER_RESPONSE = 256 * 1024;
 
 export interface RosterBudgetResult {
@@ -302,13 +307,17 @@ export class RoomKeyRepository {
     return row?.epoch ? { roomId: row.roomId, epoch: row.epoch } : null;
   }
 
-  async isReportedSender(roomId: string, keyId: string, senderId: string): Promise<boolean> {
-    const [row] = await this.db
-      .select({ userId: roomKeyReports.userId })
+  async isBarredSender(roomId: string, keyId: string, senderId: string): Promise<boolean> {
+    const [state, memberIds] = await Promise.all([this.getState(roomId), this.memberIds(this.db, roomId)]);
+    if (!state || state.rotationRequired === null || state.currentKeyId !== keyId) {
+      return false;
+    }
+    const reports = await this.db
+      .select({ userId: roomKeyReports.userId, senderId: roomKeyReports.senderId })
       .from(roomKeyReports)
-      .where(and(eq(roomKeyReports.roomId, roomId), eq(roomKeyReports.keyId, keyId), eq(roomKeyReports.senderId, senderId)))
-      .limit(1);
-    return row !== undefined;
+      .where(and(eq(roomKeyReports.roomId, roomId), eq(roomKeyReports.keyId, keyId), inArray(roomKeyReports.userId, memberIds)));
+    const reporters = new Set(reports.map((report) => report.userId));
+    return reporters.size >= reportThreshold(memberIds.length) && reports.some((report) => report.senderId === senderId);
   }
 
   async startRotationClock(roomId: string): Promise<void> {
@@ -343,8 +352,7 @@ export class RoomKeyRepository {
       .select({ reporters: sql<number>`count(distinct ${roomKeyReports.userId})` })
       .from(roomKeyReports)
       .where(and(eq(roomKeyReports.roomId, roomId), eq(roomKeyReports.keyId, keyId), inArray(roomKeyReports.userId, memberIds)));
-    const threshold = Math.max(2, Math.ceil((memberIds.length - 1) / 2));
-    if (Number(counted?.reporters ?? 0) < threshold) {
+    if (Number(counted?.reporters ?? 0) < reportThreshold(memberIds.length)) {
       return { reported: true, rotation: null };
     }
     return { reported: true, rotation: await this.markRotationRequired(roomId) };

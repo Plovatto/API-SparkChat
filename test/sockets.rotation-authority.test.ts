@@ -263,7 +263,7 @@ describe('reporting an unusable room key', () => {
     expect(await h.roomKeyRepository.getState(roomId)).toMatchObject({ currentEpoch: 1, rotationRequired: 2 });
   });
 
-  it('never reopens the rotation from a single report, even in a two-member group', async () => {
+  it('lets the only possible reporter of a two-member group reopen the rotation and bars the reported sender', async () => {
     const h = (harness = await startSocketHarness());
     const alice = await h.createAccount('Alice');
     const bob = await h.createAccount('Bob');
@@ -277,10 +277,26 @@ describe('reporting an unusable room key', () => {
     aliceClient.emit('e2e:publish-room-key', first);
     await delivered;
 
+    const notice = waitForEvent(aliceClient, 'e2e:rotation-required');
+    bobClient.emit('e2e:report-bad-key', { roomId, keyId: first.keyId });
+    await notice;
+
+    expect(await h.roomKeyRepository.getState(roomId)).toMatchObject({ currentEpoch: 1, rotationRequired: 2 });
+    expect(await h.roomKeyRepository.isBarredSender(roomId, first.keyId, alice.user.id)).toBe(true);
+  });
+
+  it('does not bar a sender because of a single report below the threshold', async () => {
+    const { h, alice, bob, carol, aliceClient, bobClient, roomId, first } = await groupWithGeneration();
     bobClient.emit('e2e:report-bad-key', { roomId, keyId: first.keyId });
     await settle(250);
+    const requested = waitForEvent(aliceClient, 'e2e:rotation-required');
+    aliceClient.emit('room:reset-invite', { roomId });
+    await requested;
 
-    expect(await h.roomKeyRepository.getState(roomId)).toMatchObject({ currentEpoch: 1, rotationRequired: null });
+    expect(await h.roomKeyRepository.isBarredSender(roomId, first.keyId, alice.user.id)).toBe(false);
+    const accepted = waitForEvent<Delivery>(aliceClient, 'e2e:room-key');
+    aliceClient.emit('e2e:publish-room-key', batch(roomId, alice.user.id, [alice.user.id, bob.user.id, carol.user.id], 2));
+    await expect(accepted).resolves.toMatchObject({ epoch: 2 });
   });
 
   it('bars the sender of a reported generation from leading the rotation it triggered until it stalls', async () => {

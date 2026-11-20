@@ -857,7 +857,7 @@ async function handlePublishRoomKey(
     }
 
     if (groupGeneration) {
-      const barred = epoch > 1 && room.currentKeyId ? await roomKeyRepository.isReportedSender(roomId, room.currentKeyId, actingUserId) : false;
+      const barred = epoch > 1 && room.currentKeyId ? await roomKeyRepository.isBarredSender(roomId, room.currentKeyId, actingUserId) : false;
       const decision = rotationAuthority(room, actingUserId, epoch, Date.now(), barred);
       if (decision.authority === null) {
         if (room.rotationRequired !== undefined && !room.rotationRequiredAt) {
