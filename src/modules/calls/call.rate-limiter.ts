@@ -9,6 +9,8 @@ const ICE_SERVERS_COOLDOWN_MS = 10_000;
 const MAX_ICE_SERVERS_PER_USER = 5;
 const ICE_SERVERS_RETENTION_MS = 5 * 60 * 60 * 1000;
 const CLOSED_CALL_RETENTION_MS = 60_000;
+const TRANSFER_WINDOW_MS = 60_000;
+const MAX_TRANSFERS_PER_WINDOW = 3;
 
 interface SignalWindow {
   startedAt: number;
@@ -26,6 +28,7 @@ export class CallRateLimiter {
   private readonly signals = new Map<string, SignalWindow>();
   private readonly iceServers = new Map<string, IceServersUsage>();
   private readonly closed = new Map<string, number>();
+  private readonly transfers = new Map<string, number[]>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -79,8 +82,22 @@ export class CallRateLimiter {
     return true;
   }
 
+  tryTransfer(callId: string): boolean {
+    if (this.isClosed(callId)) {
+      return false;
+    }
+    const current = this.now();
+    const recent = (this.transfers.get(callId) ?? []).filter((timestamp) => timestamp > current - TRANSFER_WINDOW_MS);
+    if (recent.length >= MAX_TRANSFERS_PER_WINDOW) {
+      return false;
+    }
+    this.transfers.set(callId, [...recent, current]);
+    return true;
+  }
+
   forgetCall(callId: string): void {
     this.signals.delete(callId);
+    this.transfers.delete(callId);
     for (const key of this.iceServers.keys()) {
       if (key.startsWith(`${callId}:`)) {
         this.iceServers.delete(key);

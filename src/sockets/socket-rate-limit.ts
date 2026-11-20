@@ -29,6 +29,8 @@ export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
     'call:heartbeat': { capacity: 20, refillPerSecond: 1 },
     'call:sync': roomAction,
     'call:ice-servers': roomAction,
+    'call:transfer': roomAction,
+    'call:transfer-accept': roomAction,
     'push:config': accountAction,
     'push:subscribe': accountAction,
     'push:unsubscribe': accountAction,

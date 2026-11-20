@@ -848,7 +848,7 @@ describe('call sync and restart restore', () => {
     const reloaded = await h.connectAs(alice);
     const state = waitForEvent(reloaded, 'call:state');
     reloaded.emit('call:sync', {});
-    expect(await state).toEqual({ callId, state: 'accepted', roomId: room.id, kind: 'video', peerId: bob.user.id, role: 'caller' });
+    expect(await state).toEqual({ callId, state: 'accepted', roomId: room.id, kind: 'video', peerId: bob.user.id, role: 'caller', answeredAt: (await callRow(h, callId)).answeredAt });
 
     const signal = waitForEvent(reloaded, 'call:signal');
     bobClient.emit('call:signal', { callId, to: alice.user.id, envelope: 'answer' });
@@ -1224,5 +1224,106 @@ describe('hardening', () => {
     const big = expectError(aliceClient, 'call:signal');
     aliceClient.emit('call:signal', { callId: newCallId(), to: 'x', envelope: 'x'.repeat(16 * 1024 + 1) });
     expect((await big).code).toBe('call.signalTooLarge');
+  });
+});
+
+describe('call transfer between devices', () => {
+  it('moves the live call to another device of the same user without ending it', async () => {
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const alicePhone = await h.connectAs(alice);
+    const endedEvents = [...collectEvents(aliceClient, 'call:ended'), ...collectEvents(bobClient, 'call:ended')];
+    const bobEnded = collectEvents(bobClient, 'call:ended');
+
+    const transferred = waitForEvent<{ callId: string }>(aliceClient, 'call:transferred');
+    const peerTransfer = waitForEvent<{ callId: string; from: string; envelope: string }>(bobClient, 'call:peer-transfer');
+    alicePhone.emit('call:transfer', { callId, envelope: 'transfer-envelope' });
+    expect(await transferred).toEqual({ callId });
+    expect(await peerTransfer).toEqual({ callId, from: alice.user.id, envelope: 'transfer-envelope' });
+
+    const accepted = waitForEvent<{ callId: string; envelope: string }>(alicePhone, 'call:transfer-accepted');
+    bobClient.emit('call:transfer-accept', { callId, envelope: 'transfer-accept-envelope' });
+    expect(await accepted).toEqual({ callId, envelope: 'transfer-accept-envelope' });
+
+    const signal = waitForEvent<{ envelope: string }>(bobClient, 'call:signal');
+    alicePhone.emit('call:signal', { callId, to: bob.user.id, envelope: 'from-phone' });
+    expect((await signal).envelope).toBe('from-phone');
+    const toPhone = waitForEvent<{ envelope: string }>(alicePhone, 'call:signal');
+    bobClient.emit('call:signal', { callId, to: alice.user.id, envelope: 'to-phone' });
+    expect((await toPhone).envelope).toBe('to-phone');
+
+    const stale = expectError(aliceClient, 'call:signal');
+    aliceClient.emit('call:signal', { callId, to: bob.user.id, envelope: 'late' });
+    expect((await stale).code).toBe('call.notAllowed');
+    await settle(100);
+    expect((await callRow(h, callId)).state).not.toBe('ended');
+    expect(endedEvents).toHaveLength(0);
+    expect(bobEnded).toHaveLength(0);
+    expect(await systemEventTypes(h, room.id)).toEqual([]);
+  });
+
+  it('works for the callee role and keeps the timer through the call state', async () => {
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const bobLaptop = await h.connectAs(bob);
+    const state = waitForEvent<{ answeredAt: string | null; role: string }>(bobLaptop, 'call:state');
+    bobLaptop.emit('call:sync', {});
+    expect(await state).toMatchObject({ role: 'callee', answeredAt: (await callRow(h, callId)).answeredAt });
+
+    const transferred = waitForEvent(bobClient, 'call:transferred');
+    const peerTransfer = waitForEvent<{ from: string }>(aliceClient, 'call:peer-transfer');
+    bobLaptop.emit('call:transfer', { callId, envelope: 'e' });
+    await transferred;
+    expect((await peerTransfer).from).toBe(bob.user.id);
+    const heartbeatOk = collectEvents(bobLaptop, 'error');
+    bobLaptop.emit('call:heartbeat', { callId });
+    await settle(100);
+    expect(heartbeatOk).toHaveLength(0);
+    expect(alice.user.id).not.toBe(bob.user.id);
+  });
+
+  it('refuses transfers from other users, from the bound device, for ringing calls and beyond the rate limit', async () => {
+    const { h, alice, carol, room, aliceClient, bobClient } = await setup();
+    const ringingId = await ring(h, aliceClient, [bobClient], room.id);
+    const alicePhone = await h.connectAs(alice);
+    const ringing = expectError(alicePhone, 'call:transfer');
+    alicePhone.emit('call:transfer', { callId: ringingId, envelope: 'e' });
+    expect((await ringing).code).toBe('call.invalidState');
+
+    await answer(aliceClient, bobClient, ringingId);
+    const carolClient = await h.connectAs(carol);
+    const stranger = expectError(carolClient, 'call:transfer');
+    carolClient.emit('call:transfer', { callId: ringingId, envelope: 'e' });
+    expect((await stranger).code).toBe('call.notAllowed');
+
+    const self = expectError(aliceClient, 'call:transfer');
+    aliceClient.emit('call:transfer', { callId: ringingId, envelope: 'e' });
+    expect((await self).code).toBe('call.invalidState');
+
+    const devices = [alicePhone, await h.connectAs(alice), await h.connectAs(alice), await h.connectAs(alice)];
+    for (const device of devices.slice(0, 3)) {
+      const moved = waitForEvent(bobClient, 'call:peer-transfer');
+      device.emit('call:transfer', { callId: ringingId, envelope: 'e' });
+      await moved;
+    }
+    const limited = expectError(devices[3]!, 'call:transfer');
+    devices[3]!.emit('call:transfer', { callId: ringingId, envelope: 'e' });
+    expect((await limited).code).toBe('call.rateLimited');
+  });
+
+  it('only lets the bound peer device answer a transfer', async () => {
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const alicePhone = await h.connectAs(alice);
+    const bobTablet = await h.connectAs(bob);
+    const moved = waitForEvent(bobClient, 'call:peer-transfer');
+    alicePhone.emit('call:transfer', { callId, envelope: 'e' });
+    await moved;
+    const refused = expectError(bobTablet, 'call:transfer-accept');
+    bobTablet.emit('call:transfer-accept', { callId, envelope: 'forged' });
+    expect((await refused).code).toBe('call.notAllowed');
   });
 });

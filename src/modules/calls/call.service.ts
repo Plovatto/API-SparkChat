@@ -277,6 +277,56 @@ export class CallService {
     }
   }
 
+  async transfer(actor: CallActor, input: { callId: string; envelope: string }): Promise<void> {
+    this.requireEnabled();
+    assertEnvelopeSize(input.envelope);
+    const call = await this.requireParticipant(input.callId, actor.userId);
+    const role = roleOf(call, actor.userId);
+    if (!role) {
+      throw AppError.of('call.notAllowed');
+    }
+    if (call.state !== 'accepted' && call.state !== 'active') {
+      throw AppError.of('call.invalidState');
+    }
+    const previous = this.boundSocket(call, role);
+    if (previous === actor.socketId) {
+      throw AppError.of('call.invalidState');
+    }
+    const peerRole: CallRole = role === 'caller' ? 'callee' : 'caller';
+    const peerSocket = this.boundSocket(call, peerRole);
+    if (peerSocket === undefined || !this.io.sockets.sockets.has(peerSocket)) {
+      throw AppError.of('call.invalidState');
+    }
+    if (!this.limiter.tryTransfer(call.id)) {
+      throw AppError.of('call.rateLimited');
+    }
+    await this.takeOver(call, role, actor.socketId);
+    if (previous !== undefined) {
+      this.io.to(previous).emit('call:transferred', { callId: call.id });
+    }
+    this.io.to(peerSocket).emit('call:peer-transfer', { callId: call.id, from: actor.userId, envelope: input.envelope });
+  }
+
+  async transferAccept(actor: CallActor, input: { callId: string; envelope: string }): Promise<void> {
+    this.requireEnabled();
+    assertEnvelopeSize(input.envelope);
+    const call = await this.requireParticipant(input.callId, actor.userId);
+    const role = roleOf(call, actor.userId);
+    if (!role) {
+      throw AppError.of('call.notAllowed');
+    }
+    if (call.state !== 'accepted' && call.state !== 'active') {
+      throw AppError.of('call.invalidState');
+    }
+    this.requireBoundSocket(call, role, actor.socketId);
+    this.markBeat(call.id, role);
+    const target = this.boundSocket(call, role === 'caller' ? 'callee' : 'caller');
+    if (target === undefined || !this.io.sockets.sockets.has(target)) {
+      throw AppError.of('call.invalidState');
+    }
+    this.io.to(target).emit('call:transfer-accepted', { callId: call.id, envelope: input.envelope });
+  }
+
   async silence(actor: CallActor, callId: string): Promise<void> {
     this.requireEnabled();
     await this.requireParticipant(callId, actor.userId, 'callee');
@@ -384,6 +434,7 @@ export class CallService {
       kind: call.kind,
       peerId: peerOf(call, role),
       role,
+      answeredAt: call.answeredAt,
     };
     this.io.to(actor.socketId).emit('call:state', payload);
     const invite = this.ringingInvites.get(call.id);
