@@ -13,7 +13,7 @@ import {
   type UserChatSettings,
   type UserTheme,
 } from './user.model.js';
-import { deriveFakeSaltKey, fakeAuthSalt, isAuthSalt, isClientSecret } from './user.credentials.js';
+import { assertPasswordPolicy, deriveFakeSaltKey, fakeAuthSalt, isAuthSalt, isClientSecret } from './user.credentials.js';
 import { hashPassword, passwordHashNeedsRehash, verifyPassword } from './user.password.js';
 import { verifyIdentityBinding } from './user.signing-key.js';
 import type { UserRepository } from './user.repository.js';
@@ -28,6 +28,7 @@ export interface RegisterAccountInput {
   password: string;
   authSalt: string;
   recoveryVerifier: string;
+  passwordLength?: number | undefined;
   userAgent?: string;
 }
 
@@ -50,6 +51,7 @@ export interface RecoveryCredentialsInput {
 export interface ChangePasswordInput extends RecoveryCredentialsInput {
   currentPassword?: string | undefined;
   newPassword: string;
+  passwordLength?: number | undefined;
   newAuthSalt: string;
   encryptedPrivateKeyByPassword: string;
   sessionId: string;
@@ -150,6 +152,7 @@ function buildPasswordCredentialPatch(input: ChangePasswordInput): Partial<UserR
   }
   assertAuthSalt(input.newAuthSalt);
   assertClientSecret(input.newPassword);
+  assertPasswordPolicy(input.passwordLength);
   const pair = readRecoveryPair(input, false);
 
   return {
@@ -185,6 +188,7 @@ export class UserService {
       throw AppError.of('user.credentialsIncomplete');
     }
     assertClientSecret(input.password);
+    assertPasswordPolicy(input.passwordLength);
     assertAuthSalt(input.authSalt);
     assertClientSecret(input.recoveryVerifier);
 
