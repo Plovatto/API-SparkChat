@@ -761,7 +761,7 @@ describe('server owned timers', () => {
     await settle(100);
     const lastBeat = new Date(clock.now).toISOString();
 
-    clock.now += 40_000;
+    clock.now += 85_000;
     await h.callService.runMaintenance();
     expect((await callRow(h, callId)).state).toBe('accepted');
 
@@ -920,7 +920,7 @@ describe('call sync and restart restore', () => {
     await restarted.runMaintenance();
     expect((await callRow(h, callId)).state).toBe('accepted');
 
-    clock.now += 50_000;
+    clock.now += 70_000;
     await restarted.runMaintenance();
     expect((await callRow(h, callId)).endReason).toBe('connection-lost');
   });
@@ -1063,6 +1063,43 @@ describe('hardening', () => {
     await ended;
     await settle(100);
     expect(turn.revoked.sort()).toEqual(['turn-user-1', 'turn-user-2']);
+  });
+
+  it('keeps a call alive through a 60 second network outage', async () => {
+    const { h, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    bobClient.emit('call:heartbeat', { callId });
+    aliceClient.emit('call:heartbeat', { callId });
+    await settle(100);
+
+    clock.now += 60_000;
+    await h.callService.runMaintenance();
+    expect((await callRow(h, callId)).state).not.toBe('ended');
+  });
+
+  it('lets the same user take over the call from a new socket once the old one went silent, even before the server notices the drop', async () => {
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    aliceClient.emit('call:heartbeat', { callId });
+    await settle(100);
+    const reconnected = await h.connectAs(alice);
+
+    const early = expectError(reconnected, 'call:heartbeat');
+    reconnected.emit('call:heartbeat', { callId });
+    expect((await early).code).toBe('call.notAllowed');
+
+    clock.now += 21_000;
+    reconnected.emit('call:heartbeat', { callId });
+    await settle(100);
+    const signal = waitForEvent<{ envelope: string }>(bobClient, 'call:signal');
+    reconnected.emit('call:signal', { callId, to: bob.user.id, envelope: 'after-takeover' });
+    expect((await signal).envelope).toBe('after-takeover');
+
+    const stale = expectError(aliceClient, 'call:heartbeat');
+    aliceClient.emit('call:heartbeat', { callId });
+    expect((await stale).code).toBe('call.notAllowed');
   });
 
   it('only lets the bound devices signal and heartbeat, and keeps another device from taking over via sync', async () => {
