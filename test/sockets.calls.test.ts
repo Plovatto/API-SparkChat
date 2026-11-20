@@ -751,8 +751,8 @@ describe('server owned timers', () => {
     expect(await systemEventTypes(h, room.id)).toEqual(['call.missed']);
   });
 
-  it('ends calls whose heartbeat stopped at the last heartbeat time and keeps beating calls alive', async () => {
-    const { h, room, aliceClient, bobClient } = await setup();
+  it('ends calls whose heartbeat stopped and whose sockets are gone at the last heartbeat time and keeps beating calls alive', async () => {
+    const { h, bob, room, aliceClient, bobClient } = await setup();
     const callId = await ring(h, aliceClient, [bobClient], room.id);
     await answer(aliceClient, bobClient, callId);
 
@@ -761,11 +761,16 @@ describe('server owned timers', () => {
     await settle(100);
     const lastBeat = new Date(clock.now).toISOString();
 
+    aliceClient.disconnect();
+    bobClient.disconnect();
+    await settle(100);
+    const watcher = await h.connectAs(bob);
+
     clock.now += 85_000;
     await h.callService.runMaintenance();
     expect((await callRow(h, callId)).state).toBe('accepted');
 
-    const ended = waitForEvent<CallEndedEvent>(bobClient, 'call:ended');
+    const ended = waitForEvent<CallEndedEvent>(watcher, 'call:ended');
     clock.now += 6000;
     await h.callService.runMaintenance();
     const event = await ended;
@@ -775,12 +780,47 @@ describe('server owned timers', () => {
     expect(await systemEventTypes(h, room.id)).toEqual(['call.ended']);
   });
 
+  it('keeps a call alive while a bound socket stays connected even if explicit heartbeats are late', async () => {
+    const { h, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+
+    for (let minute = 0; minute < 10; minute += 1) {
+      clock.now += 60_000;
+      await h.callService.runMaintenance();
+    }
+    expect((await callRow(h, callId)).state).toBe('accepted');
+  });
+
+  it('counts the time a socket was last seen connected when the connection then drops', async () => {
+    const { h, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+
+    clock.now += 300_000;
+    await h.callService.runMaintenance();
+    aliceClient.disconnect();
+    bobClient.disconnect();
+    await settle(100);
+    const watcher = await h.connectAs(bob);
+
+    clock.now += 80_000;
+    await h.callService.runMaintenance();
+    expect((await callRow(h, callId)).state).toBe('accepted');
+
+    const ended = waitForEvent<CallEndedEvent>(watcher, 'call:ended');
+    clock.now += 11_000;
+    await h.callService.runMaintenance();
+    expect((await ended).reason).toBe('connection-lost');
+  });
+
   it('keeps the call when the last socket drops until the heartbeat expires', async () => {
     const { h, room, aliceClient, bobClient } = await setup();
     const callId = await ring(h, aliceClient, [bobClient], room.id);
     await answer(aliceClient, bobClient, callId);
 
     aliceClient.disconnect();
+    bobClient.disconnect();
     await settle(200);
     expect((await callRow(h, callId)).state).toBe('accepted');
 
@@ -920,7 +960,10 @@ describe('call sync and restart restore', () => {
     await restarted.runMaintenance();
     expect((await callRow(h, callId)).state).toBe('accepted');
 
-    clock.now += 70_000;
+    aliceClient.disconnect();
+    bobClient.disconnect();
+    await settle(100);
+    clock.now += 100_000;
     await restarted.runMaintenance();
     expect((await callRow(h, callId)).endReason).toBe('connection-lost');
   });
