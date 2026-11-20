@@ -13,6 +13,7 @@ import {
   type TypingService,
 } from '../modules/messages/index.js';
 import { registerPushSocketHandlers, type PushService } from '../modules/push/index.js';
+import { registerTransparencySocketHandlers, type TransparencyService } from '../modules/transparency/index.js';
 import {
   registerRoomSocketHandlers,
   type RoomActionRateLimiter,
@@ -53,6 +54,7 @@ export interface SocketDeps {
   callService: CallService;
   pushService: PushService;
   avatarService: AvatarService;
+  transparencyService?: TransparencyService | null;
   socketEventBudgets?: SocketEventBudgets;
   socketConnectionLimits?: SocketConnectionLimits;
 }
@@ -116,6 +118,9 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
           .then((config) => authenticated.emit('call:config', config))
           .catch(logHookFailure('onAuthenticated'));
         authenticated.emit('push:config', deps.pushService.getConfig());
+        if (deps.transparencyService) {
+          authenticated.emit('kt:config', deps.transparencyService.getConfig());
+        }
       },
     });
 
@@ -162,6 +167,12 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
     registerCallSocketHandlers(socket, { callService: deps.callService });
     registerPushSocketHandlers(socket, { pushService: deps.pushService });
     registerAvatarSocketHandlers(io, socket, { avatarService: deps.avatarService, roomService: deps.roomService });
+    if (deps.transparencyService) {
+      registerTransparencySocketHandlers(socket, {
+        transparencyService: deps.transparencyService,
+        getContactIds: (userId) => deps.roomService.getContactIds(userId),
+      });
+    }
 
     socket.on('disconnect', (reason) => {
       logger.info({ socketId: socket.id, reason }, 'Client disconnected');

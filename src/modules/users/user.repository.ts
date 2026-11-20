@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { roomParticipants, rooms, users } from '../../database/schema.js';
 import type { UserRecord } from './user.types.js';
@@ -176,6 +176,16 @@ export class UserRepository {
       cacheProfile(current);
     }
     return true;
+  }
+
+  listKeyedUsers(afterId: string, limit: number): Promise<{ id: string; publicKey: string; signingPublicKey: string | null }[]> {
+    return this.db
+      .select({ id: users.id, publicKey: users.e2ePublicKey, signingPublicKey: users.e2eSigningPublicKey })
+      .from(users)
+      .where(and(isNotNull(users.e2ePublicKey), gt(users.id, afterId)))
+      .orderBy(asc(users.id))
+      .limit(limit)
+      .then((rows) => rows.flatMap((row) => (row.publicKey ? [{ id: row.id, publicKey: row.publicKey, signingPublicKey: row.signingPublicKey }] : [])));
   }
 
   async findByNickname(nicknameNormalized: string): Promise<UserRecord | null> {

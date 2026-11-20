@@ -1,4 +1,4 @@
-import { index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import type { LinkPreviewCacheRecord } from '../modules/link-preview/link-preview.types.js';
 import type { SystemEvent } from '../modules/messages/message.system-events.js';
 import type {
@@ -277,3 +277,32 @@ export const pushSubscriptions = sqliteTable(
   },
   (table) => [index('push_subscriptions_user_id_idx').on(table.userId), index('push_subscriptions_session_id_idx').on(table.sessionId)],
 );
+
+export const transparencyLeaves = sqliteTable(
+  'transparency_leaves',
+  {
+    position: integer('position').primaryKey(),
+    leafId: text('leaf_id').notNull(),
+    version: integer('version').notNull(),
+    identityKey: text('identity_key').notNull(),
+    signingKey: text('signing_key').notNull(),
+    leafHash: text('leaf_hash').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [uniqueIndex('transparency_leaves_leaf_version_idx').on(table.leafId, table.version)],
+);
+
+export const transparencyNodes = sqliteTable(
+  'transparency_nodes',
+  {
+    level: integer('level').notNull(),
+    position: integer('position').notNull(),
+    hash: text('hash').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.level, table.position] })],
+);
+
+export const transparencyMeta = sqliteTable('transparency_meta', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+});

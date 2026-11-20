@@ -19,6 +19,7 @@ import { SOCKET_MAX_HTTP_BUFFER_SIZE } from '@/sockets/socket-options.js';
 import type { SocketConnectionLimits } from '@/sockets/connection-limits.js';
 import type { SocketEventBudgets } from '@/sockets/socket-rate-limit.js';
 import { buildRoomService } from './build-room-service.js';
+import { buildTransparency } from './build-transparency.js';
 import { establishFakeGeneration, newKeyId, TEST_KEY_ID } from './room-keys.js';
 import { TEST_V2_SIGNUP } from './test-constants.js';
 
@@ -37,6 +38,7 @@ export interface SocketHarnessOptions {
   loginRateLimiter?: LoginRateLimiter;
   calls?: { turnProvider?: TurnProvider; now?: () => number; enabled?: boolean; tierBytes?: number };
   push?: { sender?: PushSender; publicKey?: string; limiter?: PushRateLimiter };
+  transparency?: boolean;
 }
 
 export async function startSocketHarness(options: SocketHarnessOptions = {}) {
@@ -89,6 +91,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     options.calls?.turnProvider ?? null,
     { now: clock, push: pushService, ...(options.calls?.enabled === undefined ? {} : { enabled: options.calls.enabled }) },
   );
+  const transparency = options.transparency ? buildTransparency(services.db, services.userRepository, services.userService) : null;
   registerSocketHandlers(io, {
     userService: services.userService,
     roomService: services.roomService,
@@ -105,6 +108,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     callService,
     pushService,
     avatarService: services.avatarService,
+    transparencyService: transparency?.service ?? null,
     ...(options.socketEventBudgets ? { socketEventBudgets: options.socketEventBudgets } : {}),
     ...(options.socketConnectionLimits ? { socketConnectionLimits: options.socketConnectionLimits } : {}),
   });
@@ -159,7 +163,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     });
   }
 
-  return { ...services, io, callService, callRepository, pushService, pushRepository, callBudget, sessionRevocations, typingService, recordingService, presenceService, connect, connectAs, createAccount, resume, establishRoomKey, close };
+  return { ...services, transparency, io, callService, callRepository, pushService, pushRepository, callBudget, sessionRevocations, typingService, recordingService, presenceService, connect, connectAs, createAccount, resume, establishRoomKey, close };
 }
 
 export function waitForEvent<T = unknown>(

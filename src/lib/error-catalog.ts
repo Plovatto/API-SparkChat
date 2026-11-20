@@ -71,6 +71,7 @@ export const ERROR_CATALOG = {
   'e2e.keysLocked': () => 'As chaves de criptografia desta conta já estão configuradas e não podem ser substituídas.',
   'e2e.invalidSigningKey': () => 'A chave de assinatura é inválida ou não corresponde à sua chave pública.',
   'e2e.signingKeyLocked': () => 'A chave de assinatura desta conta já está configurada.',
+  'e2e.transparencyInvalid': () => 'Pedido de transparência de chaves inválido.',
   'e2e.invalidRoomKeyEnvelope': () => 'O envelope da chave da sala é inválido.',
   'e2e.roomKeyStale': () => 'Essa geração da chave da sala já foi publicada ou não é mais a atual.',
   'e2e.roomKeyIncomplete': () => 'A nova chave da sala precisa ser enviada para todos os membros atuais, e somente para eles.',

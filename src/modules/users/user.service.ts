@@ -172,6 +172,7 @@ export class UserService {
   private dummyPasswordHash: Promise<string> | null = null;
   private readonly consumedKeyfileGrants = new Map<string, number>();
   private readonly fakeSaltKey: Buffer;
+  private keysChangedListener: ((userId: string) => Promise<void>) | null = null;
 
   constructor(
     private readonly repository: UserRepository,
@@ -179,6 +180,18 @@ export class UserService {
     fakeSaltSecret: string,
   ) {
     this.fakeSaltKey = deriveFakeSaltKey(fakeSaltSecret);
+  }
+
+  onKeysChanged(listener: ((userId: string) => Promise<void>) | null): void {
+    this.keysChangedListener = listener;
+  }
+
+  private async notifyKeysChanged(userId: string): Promise<void> {
+    if (this.keysChangedListener) {
+      await this.keysChangedListener(userId).catch((error: unknown) => {
+        logger.error({ err: error }, 'Key change listener failed');
+      });
+    }
   }
 
   async registerAccount(input: RegisterAccountInput): Promise<AuthenticatedResult> {
@@ -522,10 +535,13 @@ export class UserService {
 
     const previousPublicKey = patch.e2ePublicKey === undefined ? undefined : current?.e2ePublicKey;
     if (previousPublicKey && previousPublicKey !== patch.e2ePublicKey) {
-      return this.repository.updateIdentityRequiringRotation(userId, patch);
+      const rotations = await this.repository.updateIdentityRequiringRotation(userId, patch);
+      await this.notifyKeysChanged(userId);
+      return rotations;
     }
 
     await this.repository.update(userId, patch);
+    await this.notifyKeysChanged(userId);
     return [];
   }
 
@@ -553,6 +569,9 @@ export class UserService {
     }
 
     const stored = await this.repository.setSigningKeyIfUnset(userId, current.e2ePublicKey, input.signingPublicKey, input.keySignature);
+    if (stored) {
+      await this.notifyKeysChanged(userId);
+    }
     if (!stored) {
       const latest = await this.repository.findById(userId);
       if (latest?.e2eSigningPublicKey === input.signingPublicKey && latest.e2ePublicKey === current.e2ePublicKey) {

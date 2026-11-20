@@ -19,6 +19,14 @@ import {
   RoomPresenceService,
   TypingService,
 } from './modules/messages/index.js';
+import {
+  buildWitnessTargets,
+  resolveHeadSigner,
+  TransparencyLog,
+  TransparencyRepository,
+  TransparencyService,
+  WitnessPublisher,
+} from './modules/transparency/index.js';
 import { createWebPushSender, PushRateLimiter, PushRepository, PushService } from './modules/push/index.js';
 import { notifyRoomRotations, RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
 import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
@@ -140,6 +148,30 @@ const io = new Server<
 
 notifyRoomRotations(io, assistantRotations);
 
+let transparencyService: TransparencyService | null = null;
+if (env.KEY_TRANSPARENCY_ENABLED) {
+  const transparencyRepository = new TransparencyRepository(db);
+  const transparencyLog = new TransparencyLog(transparencyRepository, await resolveHeadSigner(env, transparencyRepository));
+  transparencyService = new TransparencyService(transparencyLog, {
+    findKeys: async (userId) => {
+      const user = await userRepository.findById(userId);
+      return user?.e2ePublicKey ? { publicKey: user.e2ePublicKey, signingPublicKey: user.e2eSigningPublicKey ?? null } : null;
+    },
+    listKeyedUsers: (afterId, limit) => userRepository.listKeyedUsers(afterId, limit),
+  });
+  userService.onKeysChanged((userId) => transparencyService?.recordUser(userId) ?? Promise.resolve());
+  logger.info('Key transparency: enabled');
+  transparencyService
+    .backfill()
+    .then((backfilled) => logger.info({ backfilled }, 'Key transparency: existing keys added to the log'))
+    .catch((error: unknown) => logger.error({ err: error }, 'Key transparency: backfill failed, entries are added on demand'));
+  const witnessPublisher = new WitnessPublisher(buildWitnessTargets(env), () => (transparencyService as TransparencyService).head(), env.KT_WITNESS_INTERVAL_SECONDS * 1000);
+  witnessPublisher.start();
+  if (witnessPublisher.enabled) {
+    logger.info('Key transparency: witness publisher enabled');
+  }
+}
+
 const callRepository = new CallRepository(db);
 const turnProvider =
   env.CLOUDFLARE_TURN_KEY_ID && env.CLOUDFLARE_TURN_API_TOKEN
@@ -178,6 +210,7 @@ registerSocketHandlers(io, {
   callService,
   pushService,
   avatarService,
+  transparencyService,
 });
 
 httpServer.listen(env.PORT, () => {
