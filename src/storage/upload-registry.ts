@@ -16,6 +16,11 @@ export interface RegisterUploadOptions {
   expiresAt?: string | null;
 }
 
+export interface ReserveUploadOptions extends RegisterUploadOptions {
+  permanentLimitBytes?: number;
+  expiringLimitBytes?: number;
+}
+
 export type AvatarOwner = `user:${string}` | `room:${string}`;
 
 export function userAvatarOwner(userId: string): AvatarOwner {
@@ -47,6 +52,27 @@ export class UploadRegistry {
       expiresAt: options.expiresAt ?? null,
       avatarOwner: null,
     });
+  }
+
+  async reserve(key: string, uploaderId: string, size: number, options: ReserveUploadOptions = {}): Promise<boolean> {
+    const conditions: SQL[] = [];
+    if (options.permanentLimitBytes !== undefined) {
+      conditions.push(
+        sql`(select coalesce(sum(size), 0) from ${uploads} where uploader_id = ${uploaderId} and expires_at is null) + ${size} <= ${options.permanentLimitBytes}`,
+      );
+    }
+    if (options.expiringLimitBytes !== undefined) {
+      conditions.push(
+        sql`(select coalesce(sum(size), 0) from ${uploads} where uploader_id = ${uploaderId} and expires_at is not null) + ${size} <= ${options.expiringLimitBytes}`,
+      );
+    }
+    const guard = conditions.length > 0 ? sql`where ${sql.join(conditions, sql` and `)}` : sql``;
+    const result = await this.db.run(sql`
+      insert into uploads (key, uploader_id, size, created_at, message_id, expires_at, avatar_owner)
+      select ${key}, ${uploaderId}, ${size}, ${new Date().toISOString()}, null, ${options.expiresAt ?? null}, null
+      ${guard}
+    `);
+    return result.rowsAffected > 0;
   }
 
   async find(key: string): Promise<UploadRecord | null> {

@@ -13,7 +13,7 @@ import { createRateLimiter } from '../../middleware/rate-limit.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import type { StorageQuota } from '../../storage/storage-quota.js';
 import type { UploadRegistry } from '../../storage/upload-registry.js';
-import { createUploadHandler, isNeutralUpload } from '../messages/index.js';
+import { createUploadConcurrencyGuard, createUploadHandler, isNeutralUpload, sharedUploadLimiter, UPLOAD_PART_LIMITS } from '../messages/index.js';
 import type { UserService } from '../users/index.js';
 import { AVATAR_UPLOADS_PER_MINUTE, MAX_AVATAR_UPLOAD_BYTES } from './avatar.limits.js';
 
@@ -79,9 +79,19 @@ registry.registerPath({
   },
 });
 
+const avatarUploadGuard = createUploadConcurrencyGuard(sharedUploadLimiter, 'avatar', AVATAR_MAX_SIZE_LABEL, {
+  maxBytesPerUpload: MAX_AVATAR_UPLOAD_BYTES,
+});
+
+const avatarUploadPerUserLimiter = createRateLimiter({
+  limit: AVATAR_UPLOADS_PER_MINUTE,
+  code: 'rateLimit.upload',
+  perUser: true,
+});
+
 const avatarUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_AVATAR_UPLOAD_BYTES },
+  limits: { ...UPLOAD_PART_LIMITS, fileSize: MAX_AVATAR_UPLOAD_BYTES },
   fileFilter(_req, file, callback) {
     if (isNeutralUpload(file)) {
       callback(null, true);
@@ -120,7 +130,7 @@ export function createAvatarRouter(
     buildResponse: (_file, url) => ({ url }),
   });
 
-  router.post('/upload', avatarUploadRateLimiter, requireAuth, avatarUpload.single('image'), handleAvatarUploadError, asyncHandler(uploadAvatar));
+  router.post('/upload', avatarUploadRateLimiter, requireAuth, avatarUploadPerUserLimiter, avatarUploadGuard, avatarUpload.single('image'), handleAvatarUploadError, asyncHandler(uploadAvatar));
 
   return router;
 }

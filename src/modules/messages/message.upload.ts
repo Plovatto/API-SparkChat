@@ -1,5 +1,6 @@
 import path from 'node:path';
 import multer from 'multer';
+import { UPLOAD_PART_LIMITS } from './upload-concurrency.js';
 
 export const NEUTRAL_UPLOAD_MIME_TYPE = 'application/octet-stream';
 export const NEUTRAL_UPLOAD_EXTENSION = '.bin';
@@ -11,7 +12,7 @@ export function isNeutralUpload(file: Pick<Express.Multer.File, 'mimetype' | 'or
 function createMediaUpload(allowedMimeTypes: Set<string>, allowedExtensions: Set<string>, maxFileSizeBytes: number) {
   return multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: maxFileSizeBytes },
+    limits: { ...UPLOAD_PART_LIMITS, fileSize: maxFileSizeBytes },
     fileFilter(_req, file, callback) {
       if (isNeutralUpload(file)) {
         callback(null, true);
@@ -83,9 +84,9 @@ const allowedFileExtensions = new Set([
   '.csv',
 ]);
 
-const maxImageSizeBytes = 5 * 1024 * 1024;
-const maxAudioSizeBytes = 8 * 1024 * 1024;
-const maxFileSizeBytes = 50 * 1024 * 1024;
+export const maxImageSizeBytes = 5 * 1024 * 1024;
+export const maxAudioSizeBytes = 8 * 1024 * 1024;
+export const maxFileSizeBytes = 50 * 1024 * 1024;
 
 export const imageUpload = createMediaUpload(allowedImageMimeTypes, allowedImageExtensions, maxImageSizeBytes);
 export const audioUpload = createMediaUpload(allowedAudioMimeTypes, allowedAudioExtensions, maxAudioSizeBytes);
@@ -102,9 +103,11 @@ export function isAllowedGifUploadSize(size: number): boolean {
   return GIF_UPLOAD_SIZES.includes(size);
 }
 
+export const maxGifUploadBytes = Math.max(...GIF_UPLOAD_SIZES);
+
 export const gifUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: Math.max(...GIF_UPLOAD_SIZES) },
+  limits: { ...UPLOAD_PART_LIMITS, fileSize: Math.max(...GIF_UPLOAD_SIZES) },
   fileFilter(_req, file, callback) {
     if (isNeutralUpload(file)) {
       callback(null, true);

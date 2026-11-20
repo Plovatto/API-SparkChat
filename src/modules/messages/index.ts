@@ -5,6 +5,7 @@ export { MessageRepository } from './message.repository.js';
 export { createUploadHandler, MAX_USER_STORAGE_BYTES } from './message.controller.js';
 export { createMessageRouter } from './message.routes.js';
 export { isNeutralUpload } from './message.upload.js';
+export { createUploadConcurrencyGuard, sharedUploadLimiter, UPLOAD_PART_LIMITS, UploadConcurrencyLimiter } from './upload-concurrency.js';
 export { MessageService } from './message.service.js';
 export { INITIAL_MESSAGES_LIMIT, registerMessageSocketHandlers, releaseSocketActivity } from './message.socket.js';
 export { systemEvent } from './message.system-events.js';

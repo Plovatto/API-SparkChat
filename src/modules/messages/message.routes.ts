@@ -18,11 +18,27 @@ import {
   fileUploadResponseSchema,
   mediaUploadResponseSchema,
 } from './message.controller.js';
-import { audioUpload, fileUpload, gifUpload, imageUpload } from './message.upload.js';
+import {
+  audioUpload,
+  fileUpload,
+  gifUpload,
+  imageUpload,
+  maxAudioSizeBytes,
+  maxFileSizeBytes,
+  maxGifUploadBytes,
+  maxImageSizeBytes,
+} from './message.upload.js';
+import { createUploadConcurrencyGuard, sharedUploadLimiter } from './upload-concurrency.js';
 
 const uploadRateLimiter = createRateLimiter({
   limit: 20,
   code: 'rateLimit.upload',
+});
+
+const uploadPerUserLimiter = createRateLimiter({
+  limit: 20,
+  code: 'rateLimit.upload',
+  perUser: true,
 });
 
 const gifUploadPerMinuteLimiter = createRateLimiter({
@@ -130,6 +146,14 @@ function createUploadErrorHandler(kind: UploadKind, maxSize: string) {
   };
 }
 
+const imageUploadGuard = createUploadConcurrencyGuard(sharedUploadLimiter, 'image', '5MB', { maxBytesPerUpload: maxImageSizeBytes });
+const audioUploadGuard = createUploadConcurrencyGuard(sharedUploadLimiter, 'audio', '8MB', { maxBytesPerUpload: maxAudioSizeBytes });
+const fileUploadGuard = createUploadConcurrencyGuard(sharedUploadLimiter, 'file', '50MB', { maxBytesPerUpload: maxFileSizeBytes });
+const gifUploadGuard = createUploadConcurrencyGuard(sharedUploadLimiter, 'gif', '2MB', {
+  maxBytesPerUpload: maxGifUploadBytes,
+  oversizeCode: 'upload.invalidGifSize',
+});
+
 const handleImageUploadError = createUploadErrorHandler('image', '5MB');
 const handleAudioUploadError = createUploadErrorHandler('audio', '8MB');
 const handleFileUploadError = createUploadErrorHandler('file', '50MB');
@@ -162,6 +186,8 @@ export function createMessageRouter(
     '/upload-image',
     uploadRateLimiter,
     requireAuth,
+    uploadPerUserLimiter,
+    imageUploadGuard,
     imageUpload.single('image'),
     handleImageUploadError,
     asyncHandler(controller.uploadImage),
@@ -171,6 +197,8 @@ export function createMessageRouter(
     '/upload-audio',
     uploadRateLimiter,
     requireAuth,
+    uploadPerUserLimiter,
+    audioUploadGuard,
     audioUpload.single('audio'),
     handleAudioUploadError,
     asyncHandler(controller.uploadAudio),
@@ -180,6 +208,8 @@ export function createMessageRouter(
     '/upload-file',
     uploadRateLimiter,
     requireAuth,
+    uploadPerUserLimiter,
+    fileUploadGuard,
     fileUpload.single('file'),
     handleFileUploadError,
     asyncHandler(controller.uploadFile),
@@ -190,6 +220,7 @@ export function createMessageRouter(
     requireAuth,
     gifUploadPerMinuteLimiter,
     gifUploadPerDayLimiter,
+    gifUploadGuard,
     gifUpload.single('gif'),
     handleGifUploadError,
     asyncHandler(controller.uploadGif),
