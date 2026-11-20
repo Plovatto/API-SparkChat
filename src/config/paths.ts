@@ -19,3 +19,7 @@ export function gifObjectKey(filename: string): string {
 export function isGifObjectKey(key: string): boolean {
   return key.startsWith(`${uploadedMediaKeyPrefix}/gifs/`);
 }
+
+export function avatarObjectKey(filename: string): string {
+  return `${uploadedMediaKeyPrefix}/avatars/${filename}`;
+}

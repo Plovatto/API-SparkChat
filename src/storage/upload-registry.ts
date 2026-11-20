@@ -1,5 +1,5 @@
-import { and, eq, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
-import { uploads } from '../database/schema.js';
+import { and, eq, inArray, isNotNull, isNull, lt, sql, type SQL } from 'drizzle-orm';
+import { roomParticipants, rooms, uploads, users } from '../database/schema.js';
 import type { Database } from '../database/turso-client.js';
 
 export interface UploadRecord {
@@ -9,10 +9,29 @@ export interface UploadRecord {
   createdAt: string;
   messageId: string | null;
   expiresAt: string | null;
+  avatarOwner: string | null;
 }
 
 export interface RegisterUploadOptions {
   expiresAt?: string | null;
+}
+
+export type AvatarOwner = `user:${string}` | `room:${string}`;
+
+export function userAvatarOwner(userId: string): AvatarOwner {
+  return `user:${userId}`;
+}
+
+export function roomAvatarOwner(roomId: string): AvatarOwner {
+  return `room:${roomId}`;
+}
+
+function avatarUnreferenced(): SQL {
+  return sql`not exists (select 1 from ${users} u
+      where substr(${uploads.avatarOwner}, 1, 5) = 'user:' and u.id = substr(${uploads.avatarOwner}, 6) and u.avatar_upload_key = ${uploads.key})
+    and not exists (select 1 from ${rooms} r
+      where substr(${uploads.avatarOwner}, 1, 5) = 'room:' and r.id = substr(${uploads.avatarOwner}, 6) and r.avatar_upload_key = ${uploads.key}
+        and exists (select 1 from ${roomParticipants} p where p.room_id = r.id))`;
 }
 
 export class UploadRegistry {
@@ -26,6 +45,7 @@ export class UploadRegistry {
       createdAt: new Date().toISOString(),
       messageId: null,
       expiresAt: options.expiresAt ?? null,
+      avatarOwner: null,
     });
   }
 
@@ -62,7 +82,7 @@ export class UploadRegistry {
     const claimed = await this.db
       .update(uploads)
       .set({ messageId })
-      .where(and(inArray(uploads.key, keys), eq(uploads.uploaderId, uploaderId), isNull(uploads.messageId)))
+      .where(and(inArray(uploads.key, keys), eq(uploads.uploaderId, uploaderId), isNull(uploads.messageId), isNull(uploads.avatarOwner)))
       .returning({ key: uploads.key });
 
     if (claimed.length === new Set(keys).size) {
@@ -85,16 +105,32 @@ export class UploadRegistry {
   async removeIfUnattached(key: string): Promise<boolean> {
     const removed = await this.db
       .delete(uploads)
-      .where(and(eq(uploads.key, key), isNull(uploads.messageId)))
+      .where(and(eq(uploads.key, key), isNull(uploads.messageId), isNull(uploads.avatarOwner)))
       .returning({ key: uploads.key });
     return removed.length > 0;
+  }
+
+  async removeUnreferencedAvatar(key: string): Promise<number | null> {
+    const [removed] = await this.db
+      .delete(uploads)
+      .where(and(eq(uploads.key, key), isNotNull(uploads.avatarOwner), avatarUnreferenced()))
+      .returning({ size: uploads.size });
+    return removed ? removed.size : null;
+  }
+
+  findUnreferencedAvatars(limit: number): Promise<UploadRecord[]> {
+    return this.db
+      .select()
+      .from(uploads)
+      .where(and(isNotNull(uploads.avatarOwner), avatarUnreferenced()))
+      .limit(limit);
   }
 
   findUnattachedBefore(cutoff: string, limit: number): Promise<UploadRecord[]> {
     return this.db
       .select()
       .from(uploads)
-      .where(and(isNull(uploads.messageId), lt(uploads.createdAt, cutoff)))
+      .where(and(isNull(uploads.messageId), isNull(uploads.avatarOwner), lt(uploads.createdAt, cutoff)))
       .limit(limit);
   }
 
@@ -102,14 +138,14 @@ export class UploadRegistry {
     return this.db
       .select()
       .from(uploads)
-      .where(and(isNotNull(uploads.expiresAt), lt(uploads.expiresAt, cutoff)))
+      .where(and(isNotNull(uploads.expiresAt), isNull(uploads.avatarOwner), lt(uploads.expiresAt, cutoff)))
       .limit(limit);
   }
 
   async removeIfExpired(key: string, cutoff: string): Promise<boolean> {
     const removed = await this.db
       .delete(uploads)
-      .where(and(eq(uploads.key, key), isNotNull(uploads.expiresAt), lt(uploads.expiresAt, cutoff)))
+      .where(and(eq(uploads.key, key), isNotNull(uploads.expiresAt), isNull(uploads.avatarOwner), lt(uploads.expiresAt, cutoff)))
       .returning({ key: uploads.key });
     return removed.length > 0;
   }

@@ -33,6 +33,27 @@ export class OrphanUploadSweeper {
       }
     }
 
+    return removed + (await this.sweepUnreferencedAvatars());
+  }
+
+  private async sweepUnreferencedAvatars(): Promise<number> {
+    const stale = await this.registry.findUnreferencedAvatars(SWEEP_BATCH_SIZE);
+    let removed = 0;
+
+    for (const avatar of stale) {
+      try {
+        const size = await this.registry.removeUnreferencedAvatar(avatar.key);
+        if (size === null) {
+          continue;
+        }
+        await this.objectStorage.deleteObject(avatar.key);
+        await this.storageQuota.releaseUsage(size);
+        removed += 1;
+      } catch (err) {
+        logger.error({ err, key: avatar.key }, 'Failed to remove an unreferenced avatar upload');
+      }
+    }
+
     return removed;
   }
 
