@@ -1,8 +1,14 @@
 import 'dotenv/config';
 import { z } from 'zod';
+import { validateKeyTransparencyEnv } from './key-transparency-env.js';
 import { validateWebPushEnv } from './web-push-env.js';
 
 const optionalSecret = z.preprocess((value) => (value === '' ? undefined : value), z.string().min(1).optional());
+
+const booleanFlag = z.preprocess(
+  (value) => (typeof value === 'string' ? ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase()) : value),
+  z.boolean().default(false),
+);
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -37,6 +43,15 @@ const envSchema = z.object({
   WEB_PUSH_VAPID_PRIVATE_KEY: optionalSecret,
   WEB_PUSH_SUBJECT: optionalSecret,
   KLIPY_API_KEY: optionalSecret,
+  KEY_TRANSPARENCY_ENABLED: booleanFlag,
+  KT_LOG_SIGNING_KEY: optionalSecret,
+  KT_WITNESS_INTERVAL_SECONDS: optionalSecret,
+  KT_WITNESS_GITHUB_REPOSITORY: optionalSecret,
+  KT_WITNESS_GITHUB_PATH: optionalSecret,
+  KT_WITNESS_GITHUB_BRANCH: optionalSecret,
+  KT_WITNESS_GITHUB_TOKEN: optionalSecret,
+  KT_WITNESS_WEBHOOK_URL: optionalSecret,
+  KT_WITNESS_WEBHOOK_TOKEN: optionalSecret,
   GIF_PROVIDER: z.preprocess((value) => (value === '' ? undefined : value), z.enum(['klipy', 'fake']).default('klipy')),
 }).refine((value) => Boolean(value.CLOUDFLARE_TURN_KEY_ID) === Boolean(value.CLOUDFLARE_TURN_API_TOKEN), {
   message: 'CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_API_TOKEN must be set together',
@@ -45,6 +60,9 @@ const envSchema = z.object({
   const issue = validateWebPushEnv(value);
   if (issue) {
     ctx.addIssue({ code: 'custom', message: issue.message, path: [issue.path] });
+  }
+  for (const keyTransparencyIssue of validateKeyTransparencyEnv(value, process.env.NODE_ENV)) {
+    ctx.addIssue({ code: 'custom', message: keyTransparencyIssue.message, path: [keyTransparencyIssue.path] });
   }
 });
 

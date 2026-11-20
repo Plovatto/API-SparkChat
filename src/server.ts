@@ -19,6 +19,7 @@ import {
   RoomPresenceService,
   TypingService,
 } from './modules/messages/index.js';
+import { setupTransparency } from './modules/transparency/index.js';
 import { createWebPushSender, PushRateLimiter, PushRepository, PushService } from './modules/push/index.js';
 import { notifyRoomRotations, RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
 import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
@@ -140,6 +141,20 @@ const io = new Server<
 
 notifyRoomRotations(io, assistantRotations);
 
+const transparency = await setupTransparency(
+  { ...env, nodeEnv: process.env.NODE_ENV },
+  db,
+  {
+    findKeys: async (userId) => {
+      const user = await userRepository.findById(userId);
+      return user?.e2ePublicKey ? { publicKey: user.e2ePublicKey, signingPublicKey: user.e2eSigningPublicKey ?? null } : null;
+    },
+    listKeyedUsers: (afterId, limit) => userRepository.listKeyedUsers(afterId, limit),
+  },
+  (listener) => userService.onKeysChanged(listener),
+);
+const transparencyService = transparency?.service ?? null;
+
 const callRepository = new CallRepository(db);
 const turnProvider =
   env.CLOUDFLARE_TURN_KEY_ID && env.CLOUDFLARE_TURN_API_TOKEN
@@ -178,6 +193,7 @@ registerSocketHandlers(io, {
   callService,
   pushService,
   avatarService,
+  transparencyService,
 });
 
 httpServer.listen(env.PORT, () => {

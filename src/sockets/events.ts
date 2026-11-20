@@ -4,6 +4,7 @@ import type { AvatarClientToServerEvents, AvatarServerToClientEvents } from '../
 import type { CallClientToServerEvents, CallServerToClientEvents } from '../modules/calls/index.js';
 import type { MessageClientToServerEvents, MessageServerToClientEvents } from '../modules/messages/index.js';
 import type { PushClientToServerEvents, PushServerToClientEvents } from '../modules/push/index.js';
+import type { TransparencyClientToServerEvents, TransparencyServerToClientEvents } from '../modules/transparency/index.js';
 import type { RoomClientToServerEvents, RoomServerToClientEvents } from '../modules/rooms/index.js';
 import type { AuthMethod, UserClientToServerEvents, UserServerToClientEvents } from '../modules/users/index.js';
 
@@ -12,14 +13,16 @@ export type ServerToClientEvents = UserServerToClientEvents &
   MessageServerToClientEvents &
   CallServerToClientEvents &
   PushServerToClientEvents &
-  AvatarServerToClientEvents;
+  AvatarServerToClientEvents &
+  TransparencyServerToClientEvents;
 
 export type ClientToServerEvents = UserClientToServerEvents &
   RoomClientToServerEvents &
   MessageClientToServerEvents &
   CallClientToServerEvents &
   PushClientToServerEvents &
-  AvatarClientToServerEvents;
+  AvatarClientToServerEvents &
+  TransparencyClientToServerEvents;
 
 export type InterServerEvents = Record<string, never>;
 

@@ -125,6 +125,8 @@ GIF_PROVIDER=
 
 `KLIPY_API_KEY` (opcional) liga a galeria de GIFs usando a API do KLIPY; sem ela a galeria fica desligada (`GET /api/gifs/status` responde `enabled: false`). `GIF_PROVIDER` aceita `klipy` (padrão) ou `fake`, um provedor falso e determinístico para testes e E2E locais que nunca é aceito com `NODE_ENV=production` (a API não inicia).
 
+`KEY_TRANSPARENCY_ENABLED` (padrão desligado) liga o registro de transparência de chaves: um log de Merkle somente de acréscimo com as chaves de identidade e de assinatura das contas, consultável apenas por sessões autenticadas via socket (`kt:*`). Exige `KT_LOG_SIGNING_KEY` em produção (gere com `npm run kt:keygen`). Com a variável desligada nada muda. `KT_WITNESS_*` (opcionais) publicam só a cabeça assinada do registro em um repositório do GitHub ou em um webhook. Veja [docs/key-transparency.md](docs/key-transparency.md) para o roteiro de ativação, backup e testemunha.
+
 `PASSWORD_SCRYPT_COST` é o custo do scrypt usado nos hashes de senha (potência de 2, padrão `65536`, máximo `131072`). Cada login usa cerca de 128 × o valor em bytes de memória (64 MB no padrão); aumente só se a hospedagem tiver memória sobrando para logins simultâneos.
 
 `TRUST_PROXY_HOPS` é o número de proxies reversos na frente da API (por exemplo, `1` atrás de um balanceador da hospedagem). Com o valor certo, os limites de requisição e de cadastro usam o IP de cada usuário em vez do IP do proxy. Mantenha `0` quando a API recebe as conexões diretamente.
