@@ -240,3 +240,15 @@ describe('cloudflare turn provider', () => {
     expect(stripPort53([{ urls: ['turn:a:530'] }, { urls: ['turn:a:153?transport=tcp'] }])).toHaveLength(2);
   });
 });
+
+describe('ice servers bypass after a transfer', () => {
+  it('lets only the device that received the call skip the cooldown once', () => {
+    const limiter = new CallRateLimiter(() => 1_000);
+    expect(limiter.tryIceServers('c', 'u', 'old')).toBe(true);
+    expect(limiter.tryIceServers('c', 'u', 'new')).toBe(false);
+    limiter.allowNextIceServers('c', 'u', 'new');
+    expect(limiter.tryIceServers('c', 'u', 'old')).toBe(false);
+    expect(limiter.tryIceServers('c', 'u', 'new')).toBe(true);
+    expect(limiter.tryIceServers('c', 'u', 'new')).toBe(false);
+  });
+});

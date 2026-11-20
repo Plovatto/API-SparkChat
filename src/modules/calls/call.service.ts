@@ -13,6 +13,7 @@ import { transition, type CallEvent } from './call.state.js';
 import {
   HEARTBEAT_TIMEOUT_MS,
   TAKEOVER_SILENCE_MS,
+  TRANSFER_PENDING_MS,
   MAX_CALL_DURATION_MS,
   MAX_ENVELOPE_LENGTH,
   RESTART_GRACE_MS,
@@ -89,6 +90,7 @@ export class CallService {
   private readonly bindings = new Map<string, SocketBindings>();
   private readonly beats = new Map<string, Partial<Record<CallRole, number>>>();
   private readonly connectedAt = new Map<string, number>();
+  private readonly pendingTransfers = new Map<string, { role: CallRole; socketId: string; startedAt: number }>();
   private readonly ringingInvites = new Map<string, IncomingCallPayload>();
   private readonly pending = new Map<string, QueuedSignal[]>();
   private readonly now: () => number;
@@ -131,6 +133,7 @@ export class CallService {
   }
 
   async runMaintenance(): Promise<void> {
+    this.expirePendingTransfers();
     await this.sweepOpenCalls();
     await this.sweepCredentials();
     this.limiter.purge();
@@ -298,14 +301,31 @@ export class CallService {
     if (peerSocket === undefined || !this.io.sockets.sockets.has(peerSocket)) {
       throw AppError.of('call.invalidState');
     }
+    this.expirePendingTransfers();
+    const pending = this.pendingTransfers.get(call.id);
+    if (pending && this.io.sockets.sockets.has(pending.socketId)) {
+      throw AppError.of('call.invalidState');
+    }
     if (!this.limiter.tryTransfer(call.id)) {
       throw AppError.of('call.rateLimited');
     }
-    await this.takeOver(call, role, actor.socketId);
-    if (previous !== undefined) {
-      this.io.to(previous).emit('call:transferred', { callId: call.id });
-    }
+    this.clearPendingTransfer(call.id);
+    this.pendingTransfers.set(call.id, { role, socketId: actor.socketId, startedAt: this.now() });
     this.io.to(peerSocket).emit('call:peer-transfer', { callId: call.id, from: actor.userId, envelope: input.envelope });
+  }
+
+  private expirePendingTransfers(): void {
+    const current = this.now();
+    for (const [callId, pending] of this.pendingTransfers) {
+      if (current - pending.startedAt >= TRANSFER_PENDING_MS) {
+        this.pendingTransfers.delete(callId);
+        this.io.to(pending.socketId).emit('call:transfer-failed', { callId });
+      }
+    }
+  }
+
+  private clearPendingTransfer(callId: string): void {
+    this.pendingTransfers.delete(callId);
   }
 
   async transferAccept(actor: CallActor, input: { callId: string; envelope: string }): Promise<void> {
@@ -321,11 +341,25 @@ export class CallService {
     }
     this.requireBoundSocket(call, role, actor.socketId);
     this.markBeat(call.id, role);
-    const target = this.boundSocket(call, role === 'caller' ? 'callee' : 'caller');
-    if (target === undefined || !this.io.sockets.sockets.has(target)) {
+    const movingRole: CallRole = role === 'caller' ? 'callee' : 'caller';
+    this.expirePendingTransfers();
+    const pending = this.pendingTransfers.get(call.id);
+    if (!pending || pending.role !== movingRole || !this.io.sockets.sockets.has(pending.socketId)) {
+      this.clearPendingTransfer(call.id);
       throw AppError.of('call.invalidState');
     }
-    this.io.to(target).emit('call:transfer-accepted', { callId: call.id, envelope: input.envelope });
+    this.clearPendingTransfer(call.id);
+    const previous = this.boundSocket(call, movingRole);
+    await this.takeOver(call, movingRole, pending.socketId);
+    this.limiter.allowNextIceServers(call.id, roleUserId(call, movingRole), pending.socketId);
+    if (previous !== undefined && previous !== pending.socketId) {
+      this.io.to(previous).emit('call:transferred', { callId: call.id });
+    }
+    this.io.to(pending.socketId).emit('call:transfer-accepted', { callId: call.id, envelope: input.envelope });
+    const oldUsernames = splitUsernames(movingRole === 'caller' ? call.turnUsername : call.calleeTurnUsername);
+    if (this.turnProvider && oldUsernames.length > 0) {
+      void this.revokeUsernames(this.turnProvider, oldUsernames).catch(() => undefined);
+    }
   }
 
   async silence(actor: CallActor, callId: string): Promise<void> {
@@ -454,7 +488,7 @@ export class CallService {
     if (call.state !== 'accepted' && call.state !== 'active') {
       throw AppError.of('call.invalidState');
     }
-    if (!this.limiter.tryIceServers(call.id, actor.userId)) {
+    if (!this.limiter.tryIceServers(call.id, actor.userId, actor.socketId)) {
       throw AppError.of('call.rateLimited');
     }
 
@@ -576,6 +610,7 @@ export class CallService {
     this.bindings.delete(call.id);
     this.beats.delete(call.id);
     this.connectedAt.delete(call.id);
+    this.clearPendingTransfer(call.id);
     this.ringingInvites.delete(call.id);
     this.pending.delete(call.id);
     this.limiter.forgetCall(call.id);
@@ -755,6 +790,10 @@ export class CallService {
 }
 
 type IncomingCallPayload = Parameters<CallServerToClientEvents['call:incoming']>[0];
+
+function roleUserId(call: CallRecord, role: CallRole): string {
+  return role === 'caller' ? call.callerId : call.calleeId;
+}
 
 function assertEnvelopeSize(envelope: string): void {
   if (envelope.length > MAX_ENVELOPE_LENGTH) {
