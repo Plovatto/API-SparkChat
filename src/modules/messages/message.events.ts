@@ -1,4 +1,4 @@
-import type { MessageFileMeta, MessageType, MessageView } from './message.types.js';
+import type { MessageFileMeta, MessageReaction, MessageType, MessageView } from './message.types.js';
 
 export interface MessageServerToClientEvents {
   'message:new': (payload: MessageView & { clientTempId?: string | undefined }) => void;
@@ -14,6 +14,7 @@ export interface MessageServerToClientEvents {
     mentionCount: number;
   }) => void;
   'message:updated': (payload: MessageView) => void;
+  'message:reactions-updated': (payload: { roomId: string; messageId: string; messageTimestamp: string; reactions: MessageReaction[] }) => void;
   'typing:update': (payload: { roomId: string; users: string[] }) => void;
   'recording:update': (payload: { roomId: string; users: string[] }) => void;
 }
@@ -34,6 +35,7 @@ export interface MessageClientToServerEvents {
   'messages:get': (payload: { roomId: string; before?: string; limit?: number }) => void;
   'message:delete': (payload: { messageId: string } | { messageIds: string[] }) => void;
   'message:hide': (payload: { messageIds: string[] }) => void;
+  'message:react': (payload: { messageId: string; emoji: string | null }) => void;
   'typing:start': (payload: { roomId: string }) => void;
   'typing:stop': (payload: { roomId: string }) => void;
   'recording:start': (payload: { roomId: string }) => void;

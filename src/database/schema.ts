@@ -204,6 +204,19 @@ export const messageHidden = sqliteTable(
   (table) => [primaryKey({ columns: [table.userId, table.messageId] }), index('message_hidden_message_id_idx').on(table.messageId)],
 );
 
+export const messageReactions = sqliteTable(
+  'message_reactions',
+  {
+    messageId: text('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    emoji: text('emoji').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.messageId, table.userId] })],
+);
+
 export const uploads = sqliteTable(
   'uploads',
   {

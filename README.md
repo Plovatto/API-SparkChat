@@ -18,6 +18,7 @@ API backend do SparkChat, desenvolvida com Node.js, TypeScript, Express e Socket
 - Recuperação de sessão do socket em reconexões, preservando autenticação e salas
 - Upload de imagens, áudios e arquivos no Cloudflare R2, com verificação de assinatura de bytes
 - Galeria de GIFs (KLIPY) com proxy de miniaturas e GIFs enviados criptografados que expiram em 30 dias
+- Reações às mensagens, uma por pessoa, com o emoji cifrado de ponta a ponta: o servidor só guarda e repassa o campo cifrado
 - Limite de armazenamento aplicado no próprio serviço, independente do provedor
 - Configuração centralizada por variáveis de ambiente
 - Tratamento de rotas não encontradas e erros da aplicação

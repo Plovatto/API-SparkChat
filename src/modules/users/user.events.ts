@@ -39,7 +39,12 @@ export interface UserServerToClientEvents {
     authVersion: AuthVersion;
   }) => void;
   error: (
-    payload: ErrorPayload & { clientTempId?: string | undefined; event?: string | undefined; messageIds?: string[] | undefined },
+    payload: ErrorPayload & {
+      clientTempId?: string | undefined;
+      event?: string | undefined;
+      messageId?: string | undefined;
+      messageIds?: string[] | undefined;
+    },
   ) => void;
 }
 

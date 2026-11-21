@@ -39,6 +39,7 @@ export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
     'messages:get': frequent,
     'message:delete': { capacity: 30, refillPerSecond: 5 },
     'message:hide': { capacity: 30, refillPerSecond: 5 },
+    'message:react': { capacity: 30, refillPerSecond: 5 },
     'audio:played': frequent,
     'typing:start': frequent,
     'typing:stop': frequent,
