@@ -208,7 +208,7 @@ const PUBLISH_EVENTS = {
 
 async function getInitialMessageViews(deps: RoomSocketDeps, room: RoomRecord, userId: string): Promise<MessageView[]> {
   const after = deps.roomService.getVisibilityCutoff(room, userId);
-  const { messages } = await deps.messageService.getRoomMessagesPage(room.id, { after, limit: INITIAL_MESSAGES_LIMIT });
+  const { messages } = await deps.messageService.getRoomMessagesPage(room.id, { after, limit: INITIAL_MESSAGES_LIMIT, viewerId: userId });
   return deps.messageService.toViews(messages);
 }
 

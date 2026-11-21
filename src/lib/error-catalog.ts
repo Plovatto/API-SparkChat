@@ -62,6 +62,7 @@ export const ERROR_CATALOG = {
   'room.groupFull': ({ maxMembers }: { maxMembers: number }) => `Este grupo está cheio. O limite é de ${maxMembers} membros.`,
   'message.notFound': () => 'Mensagem não encontrada.',
   'message.deleteForbidden': () => 'Você não tem permissão para deletar esta mensagem.',
+  'message.hideMixedRooms': () => 'Só é possível apagar para você mensagens de uma mesma conversa por vez.',
   'message.invalidMedia': () => 'Conteúdo de mídia inválido.',
   'message.blocked': () => 'Você não pode enviar mensagens nesta conversa devido a bloqueios.',
   'message.unsupportedEncryption': () => 'Formato de criptografia não suportado. Atualize o aplicativo e tente novamente.',
