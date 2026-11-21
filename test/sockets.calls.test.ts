@@ -37,6 +37,7 @@ function newCallId(): string {
 interface FakeTurn extends TurnProvider {
   failGenerate: boolean;
   failRevoke: boolean;
+  holdNextRevoke: Promise<void> | null;
   generated: number;
   revoked: string[];
   generateSpy: ReturnType<typeof vi.fn<(ttlSeconds: number) => void>>;
@@ -46,6 +47,7 @@ function fakeTurn(): FakeTurn {
   const turn: FakeTurn = {
     failGenerate: false,
     failRevoke: false,
+    holdNextRevoke: null,
     generated: 0,
     revoked: [],
     generateSpy: vi.fn<(ttlSeconds: number) => void>(),
@@ -61,12 +63,16 @@ function fakeTurn(): FakeTurn {
         iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }, { urls: ['turn:turn.cloudflare.com:3478'], username, credential: `secret-${turn.generated}` }],
       });
     },
-    revoke(username: string): Promise<void> {
+    async revoke(username: string): Promise<void> {
+      const hold = turn.holdNextRevoke;
+      turn.holdNextRevoke = null;
+      if (hold) {
+        await hold;
+      }
       if (turn.failRevoke) {
-        return Promise.reject(new Error('cloudflare down'));
+        throw new Error('cloudflare down');
       }
       turn.revoked.push(username);
-      return Promise.resolve();
     },
   };
   return turn;
@@ -810,6 +816,61 @@ describe('TURN credentials', () => {
     expect(row.callerRelaySince).not.toBeNull();
     h.callBudget.invalidate();
     expect((await h.callBudget.snapshot()).usedBytes).toBe(60 * 187_500);
+  });
+
+  it('keeps the window open and the new username when credentials are reissued while a direct route report is revoking the old ones', async () => {
+    const turn = fakeTurn();
+    const { h, alice, room, aliceClient, bobClient } = await setup({ turn });
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const issued = waitForEvent(aliceClient, 'call:ice-servers-result');
+    aliceClient.emit('call:ice-servers', { callId, protectIp: false });
+    await issued;
+    const other = await h.connectAs(alice);
+    const closing = vi.spyOn(h.callRepository, 'closeRelayWindow');
+    let release = (): void => undefined;
+    turn.holdNextRevoke = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    clock.now += 20 * 60 * 1000;
+    aliceClient.emit('call:heartbeat', { callId, relayed: false });
+    await vi.waitFor(() => expect(turn.holdNextRevoke).toBeNull());
+    const reissued = waitForEvent(other, 'call:ice-servers-result');
+    other.emit('call:ice-servers', { callId, protectIp: false });
+    await reissued;
+    release();
+    await vi.waitFor(() => expect(closing).toHaveBeenCalledTimes(1));
+    expect(await closing.mock.results[0]?.value).toBe(false);
+    const row = await callRow(h, callId);
+    expect(row.turnUsername).toBe('turn-user-2');
+    expect(row.callerRelaySince).not.toBeNull();
+    expect(row.callerRelayMs).toBe(0);
+
+    clock.now += 10 * 60 * 1000;
+    const ended = waitForEvent(bobClient, 'call:ended');
+    aliceClient.emit('call:hangup', { callId });
+    await ended;
+    expect(turn.revoked).toContain('turn-user-2');
+    expect(await h.callRepository.getUsage(monthKey(clock.now))).toBe(30 * 60 * 187_500);
+  });
+
+  it('only closes a relay window when the stored usernames still match the ones that were revoked', async () => {
+    const { h, alice, bob, room } = await setup();
+    const callId = newCallId();
+    const nowIso = new Date(clock.now).toISOString();
+    await h.callRepository.insertIfBothFree({ id: callId, roomId: room.id, callerId: alice.user.id, calleeId: bob.user.id, kind: 'voice', createdAt: nowIso });
+    await h.callRepository.accept(callId, bob.user.id, 'dev', nowIso, new Date(clock.now - 1000).toISOString());
+    await h.callRepository.recordTurnIssued(callId, 'callee', 'u1', nowIso);
+    await h.callRepository.recordTurnIssued(callId, 'callee', 'u2', new Date(clock.now + 1000).toISOString());
+    const later = new Date(clock.now + 60_000).toISOString();
+
+    expect(await h.callRepository.closeRelayWindow(callId, 'callee', later, 'u1', null)).toBe(false);
+    let row = await callRow(h, callId);
+    expect([row.calleeTurnUsername, row.calleeRelaySince, row.calleeRelayMs]).toEqual(['u2', nowIso, 0]);
+
+    expect(await h.callRepository.closeRelayWindow(callId, 'callee', later, 'u2', null)).toBe(true);
+    row = await callRow(h, callId);
+    expect([row.calleeTurnUsername, row.calleeRelaySince, row.calleeRelayMs]).toEqual([null, null, 60_000]);
   });
 
   it('ignores a direct route report from a device that is not bound to the call', async () => {

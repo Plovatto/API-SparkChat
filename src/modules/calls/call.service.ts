@@ -675,13 +675,14 @@ export class CallService {
 
   private async dropRelayCredentials(call: CallRecord, role: CallRole): Promise<void> {
     const provider = this.turnProvider;
-    const usernames = splitUsernames(role === 'caller' ? call.turnUsername : call.calleeTurnUsername);
+    const stored = role === 'caller' ? call.turnUsername : call.calleeTurnUsername;
+    const usernames = splitUsernames(stored);
     const since = role === 'caller' ? call.callerRelaySince : call.calleeRelaySince;
-    if (!provider || usernames.length === 0 || since === null) {
+    if (!provider || stored === null || usernames.length === 0 || since === null) {
       return;
     }
     const failed = await this.revokeUsernames(provider, usernames);
-    await this.repository.closeRelayWindow(call.id, role, new Date(this.now()).toISOString(), failed.length > 0 ? failed.join(',') : null);
+    await this.repository.closeRelayWindow(call.id, role, new Date(this.now()).toISOString(), stored, failed.length > 0 ? failed.join(',') : null);
     this.budget.invalidate();
   }
 

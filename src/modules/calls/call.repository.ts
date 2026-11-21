@@ -112,8 +112,9 @@ export class CallRepository {
       .where(and(eq(calls.id, id), inArray(calls.state, ['accepted', 'active'])));
   }
 
-  async closeRelayWindow(id: string, role: CallRole, nowIso: string, remaining: string | null): Promise<void> {
+  async closeRelayWindow(id: string, role: CallRole, nowIso: string, expected: string, remaining: string | null): Promise<boolean> {
     const since = role === 'caller' ? calls.callerRelaySince : calls.calleeRelaySince;
+    const username = role === 'caller' ? calls.turnUsername : calls.calleeTurnUsername;
     const ms = role === 'caller' ? calls.callerRelayMs : calls.calleeRelayMs;
     const closed = sql`${ms} + MAX(0, CAST(ROUND((julianday(${nowIso}) - julianday(${since})) * 86400000) AS INTEGER))`;
     const values =
@@ -124,10 +125,12 @@ export class CallRepository {
         : role === 'caller'
           ? { turnUsername: remaining }
           : { calleeTurnUsername: remaining };
-    await this.db
+    const rows = await this.db
       .update(calls)
       .set(values)
-      .where(and(eq(calls.id, id), inArray(calls.state, ['accepted', 'active']), isNotNull(since)));
+      .where(and(eq(calls.id, id), inArray(calls.state, ['accepted', 'active']), isNotNull(since), eq(username, expected)))
+      .returning({ id: calls.id });
+    return rows.length > 0;
   }
 
   async end(id: string, fromState: CallState, reason: CallEndReason, endedAtIso: string, options: EndOptions = {}): Promise<CallRecord | null> {
