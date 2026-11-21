@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "1d8a2408-2363-43b8-8318-b18d7982a9a5",
+  "id": "8e5d93d3-cfa1-427d-ad82-2aabe90eaeed",
   "prevId": "08a6de78-6f15-4ec8-8e63-3188fb015647",
   "tables": {
     "call_usage": {
@@ -144,6 +144,36 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "caller_relay_ms": {
+          "name": "caller_relay_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "callee_relay_ms": {
+          "name": "callee_relay_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "caller_relay_since": {
+          "name": "caller_relay_since",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "callee_relay_since": {
+          "name": "callee_relay_since",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -230,66 +260,6 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "message_reactions": {
-      "name": "message_reactions",
-      "columns": {
-        "message_id": {
-          "name": "message_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "emoji": {
-          "name": "emoji",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "message_reactions_message_id_messages_id_fk": {
-          "name": "message_reactions_message_id_messages_id_fk",
-          "tableFrom": "message_reactions",
-          "tableTo": "messages",
-          "columnsFrom": [
-            "message_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "message_reactions_message_id_user_id_pk": {
-          "columns": [
-            "message_id",
-            "user_id"
-          ],
-          "name": "message_reactions_message_id_user_id_pk"
-        }
-      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     },

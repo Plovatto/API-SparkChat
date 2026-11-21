@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as schema from '@/database/schema.js';
 
 const MIGRATIONS = path.resolve(import.meta.dirname, '../drizzle');
-const TAG = '0030_message_reactions';
+const TAG = '0031_message_reactions';
 
 let workDir: string | null = null;
 
