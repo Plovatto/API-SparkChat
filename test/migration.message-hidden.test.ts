@@ -46,10 +46,12 @@ describe(`migration ${TAG}`, () => {
       sql: `INSERT INTO messages (id, room_id, sender_id, content, type, timestamp, delivered_to, read_by, played_by) VALUES ('m1', 'r1', 'u1', 'oi', 'text', ?, '[]', '[]', '[]')`,
       args: [now],
     });
+    await client.execute({ sql: `INSERT INTO message_reactions (message_id, user_id, emoji, updated_at) VALUES ('m1', 'u2', 'e2e:v2:x', ?)`, args: [now] });
 
     await migrate(db, { migrationsFolder: MIGRATIONS });
 
     expect(await rows(client, 'SELECT id, content FROM messages')).toEqual([['m1', 'oi']]);
+    expect(await rows(client, 'SELECT message_id, user_id FROM message_reactions')).toEqual([['m1', 'u2']]);
     expect(await rows(client, `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'message_hidden_message_id_idx'`)).toEqual([['message_hidden_message_id_idx']]);
     await client.execute({ sql: `INSERT INTO message_hidden (user_id, message_id, hidden_at) VALUES ('u2', 'm1', ?)`, args: [now] });
     await expect(client.execute({ sql: `INSERT INTO message_hidden (user_id, message_id, hidden_at) VALUES ('u2', 'm1', ?)`, args: [now] })).rejects.toThrow();
@@ -58,6 +60,7 @@ describe(`migration ${TAG}`, () => {
     await client.execute('PRAGMA foreign_keys = ON');
     await client.execute(`DELETE FROM messages WHERE id = 'm1'`);
     expect(await rows(client, 'SELECT COUNT(*) FROM message_hidden')).toEqual([[0]]);
+    expect(await rows(client, 'SELECT COUNT(*) FROM message_reactions')).toEqual([[0]]);
     client.close();
   }, 30000);
 });

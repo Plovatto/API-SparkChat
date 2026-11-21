@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "6511e379-50b3-48f5-b6b3-eb4df14dafd6",
-  "prevId": "08a6de78-6f15-4ec8-8e63-3188fb015647",
+  "id": "ebab1408-7144-499f-a815-874dadafd36d",
+  "prevId": "1d8a2408-2363-43b8-8318-b18d7982a9a5",
   "tables": {
     "call_usage": {
       "name": "call_usage",
@@ -258,7 +258,15 @@
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "message_hidden_message_id_idx": {
+          "name": "message_hidden_message_id_idx",
+          "columns": [
+            "message_id"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {
         "message_hidden_message_id_messages_id_fk": {
           "name": "message_hidden_message_id_messages_id_fk",
@@ -281,6 +289,66 @@
             "message_id"
           ],
           "name": "message_hidden_user_id_message_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "message_reactions": {
+      "name": "message_reactions",
+      "columns": {
+        "message_id": {
+          "name": "message_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "emoji": {
+          "name": "emoji",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "message_reactions_message_id_messages_id_fk": {
+          "name": "message_reactions_message_id_messages_id_fk",
+          "tableFrom": "message_reactions",
+          "tableTo": "messages",
+          "columnsFrom": [
+            "message_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "message_reactions_message_id_user_id_pk": {
+          "columns": [
+            "message_id",
+            "user_id"
+          ],
+          "name": "message_reactions_message_id_user_id_pk"
         }
       },
       "uniqueConstraints": {},
