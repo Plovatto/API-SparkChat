@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, lt, ne, not, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
-import { messages } from '../../database/schema.js';
-import type { MessageRecord, MessageReplySnapshot } from './message.types.js';
+import { messageReactions, messages } from '../../database/schema.js';
+import type { MessageReaction, MessageRecord, MessageReplySnapshot } from './message.types.js';
 
 type MessageColumns = Partial<typeof messages.$inferInsert>;
 type MessageRow = typeof messages.$inferSelect;
@@ -161,6 +161,56 @@ export class MessageRepository {
     );
 
     return new Set(pages.flat().map((row) => row.id));
+  }
+
+  async findReactions(messageIds: string[]): Promise<Map<string, MessageReaction[]>> {
+    const unique = [...new Set(messageIds)];
+    const reactions = new Map<string, MessageReaction[]>();
+    if (unique.length === 0) {
+      return reactions;
+    }
+
+    const pages = await Promise.all(
+      chunk(unique, MAX_IN_CLAUSE_IDS).map((batch) =>
+        this.db
+          .select()
+          .from(messageReactions)
+          .where(inArray(messageReactions.messageId, batch))
+          .orderBy(asc(messageReactions.updatedAt), asc(messageReactions.userId)),
+      ),
+    );
+
+    for (const row of pages.flat()) {
+      const reaction: MessageReaction = { userId: row.userId, emoji: row.emoji, updatedAt: row.updatedAt };
+      const bucket = reactions.get(row.messageId);
+      if (bucket) {
+        bucket.push(reaction);
+      } else {
+        reactions.set(row.messageId, [reaction]);
+      }
+    }
+
+    return reactions;
+  }
+
+  async upsertReaction(messageId: string, reaction: MessageReaction): Promise<void> {
+    await this.db
+      .insert(messageReactions)
+      .values({ messageId, ...reaction })
+      .onConflictDoUpdate({
+        target: [messageReactions.messageId, messageReactions.userId],
+        set: { emoji: reaction.emoji, updatedAt: reaction.updatedAt },
+      });
+  }
+
+  async deleteReaction(messageId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(messageReactions)
+      .where(and(eq(messageReactions.messageId, messageId), eq(messageReactions.userId, userId)));
+  }
+
+  async deleteReactions(messageId: string): Promise<void> {
+    await this.db.delete(messageReactions).where(eq(messageReactions.messageId, messageId));
   }
 
   async findRepliesTo(roomId: string, messageId: string): Promise<MessageRecord[]> {

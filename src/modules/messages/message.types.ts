@@ -40,6 +40,12 @@ export interface MessageReplySnapshot {
   deleted: boolean;
 }
 
+export interface MessageReaction {
+  userId: string;
+  emoji: string;
+  updatedAt: string;
+}
+
 export interface MessageRecord {
   id: string;
   roomId: string;
@@ -80,4 +86,5 @@ export interface MessageView {
   caption: string | null;
   linkPreview: MessageLinkPreview | null;
   systemEvent: SystemEvent | null;
+  reactions: MessageReaction[];
 }

@@ -107,7 +107,8 @@ const authFailedPayloadSchema = errorPayloadSchema.extend({
 
 const errorEventPayloadSchema = errorPayloadSchema.extend({
   clientTempId: z.string().optional().openapi({ description: 'Presente quando o erro se refere a um message:send que trouxe clientTempId' }),
-  event: z.string().optional().openapi({ description: 'Evento de origem, presente nos erros das consultas de chaves E2EE, de e2e:publish-keys, e de e2e:publish-signing-key' }),
+  event: z.string().optional().openapi({ description: 'Evento de origem, presente nos erros das consultas de chaves E2EE, de e2e:publish-keys, de e2e:publish-signing-key e de message:react' }),
+  messageId: z.string().optional().openapi({ description: 'Presente quando o erro se refere a um message:react; identifica a mensagem cuja reação falhou' }),
 });
 
 registerClientEvents('users', {
