@@ -17,3 +17,12 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+docs/superpowers/
+.superpowers/
+.impeccable/
+.worktrees/
+AGENTS.md
+GEMINI.md
+.cursor/
+.codex/
