@@ -402,7 +402,7 @@ export class CallService {
     this.enqueueSignal(call.id, peerRole, payload);
   }
 
-  async heartbeat(actor: CallActor, callId: string): Promise<void> {
+  async heartbeat(actor: CallActor, callId: string, relayed?: boolean): Promise<void> {
     this.requireEnabled();
     const call = await this.requireParticipant(callId, actor.userId);
     if (call.state === 'accepted' || call.state === 'active') {
@@ -419,6 +419,9 @@ export class CallService {
       }
       this.markBeat(call.id, role);
       await this.repository.touchHeartbeat(callId, new Date(this.now()).toISOString());
+      if (relayed === false) {
+        await this.dropRelayCredentials(call, role);
+      }
     }
   }
 
@@ -526,7 +529,7 @@ export class CallService {
 
     const previous = splitUsernames(role === 'caller' ? call.turnUsername : call.calleeTurnUsername);
     const stillPending = previous.length > 0 ? await this.revokeUsernames(provider, previous) : [];
-    const recorded = await this.repository.recordTurnIssued(call.id, role, [credential.username, ...stillPending].join(','));
+    const recorded = await this.repository.recordTurnIssued(call.id, role, [credential.username, ...stillPending].join(','), new Date(this.now()).toISOString());
     this.budget.invalidate();
     if (!recorded) {
       await provider.revoke(credential.username).catch(() => undefined);
@@ -642,7 +645,7 @@ export class CallService {
         return;
       }
       const message = await this.messageService.createSystemMessage(call.roomId, event);
-      this.io.to(call.roomId).emit('message:new', await this.messageService.toView(message));
+      this.io.to(call.roomId).emit('message:new', await this.messageService.toNewView(message));
       await this.revealRoom(room, message.timestamp);
     } catch (err) {
       logger.error({ err, callId: call.id }, 'Failed to record call system message');
@@ -663,11 +666,24 @@ export class CallService {
       const after = this.roomService.getVisibilityCutoff(updated, userId);
       const [summary, { messages: page }] = await Promise.all([
         this.roomService.buildSummary(updated, userId),
-        this.messageService.getRoomMessagesPage(room.id, { after, limit: INITIAL_MESSAGES_LIMIT }),
+        this.messageService.getRoomMessagesPage(room.id, { after, limit: INITIAL_MESSAGES_LIMIT, viewerId: userId }),
       ]);
       await joinUserSocketsToRoom(this.io, userId, room.id);
       emitToUser(this.io, userId).emit('room:new', { room: summary, messages: await this.messageService.toViews(page) });
     }
+  }
+
+  private async dropRelayCredentials(call: CallRecord, role: CallRole): Promise<void> {
+    const provider = this.turnProvider;
+    const stored = role === 'caller' ? call.turnUsername : call.calleeTurnUsername;
+    const usernames = splitUsernames(stored);
+    const since = role === 'caller' ? call.callerRelaySince : call.calleeRelaySince;
+    if (!provider || stored === null || usernames.length === 0 || since === null) {
+      return;
+    }
+    const failed = await this.revokeUsernames(provider, usernames);
+    await this.repository.closeRelayWindow(call.id, role, new Date(this.now()).toISOString(), stored, failed.length > 0 ? failed.join(',') : null);
+    this.budget.invalidate();
   }
 
   private async revokeUsernames(provider: TurnProvider, usernames: string[]): Promise<string[]> {

@@ -22,6 +22,7 @@ const iceServerSchema = z.object({ urls: z.array(z.string()), username: z.string
 const startPayloadSchema = z.object({ callId: callIdSchema, roomId: z.string().trim().min(1), kind: kindSchema, envelope: envelopeSchema });
 const acceptPayloadSchema = z.object({ callId: callIdSchema, envelope: envelopeSchema });
 const callIdPayloadSchema = z.object({ callId: callIdSchema });
+const heartbeatPayloadSchema = z.object({ callId: callIdSchema, relayed: z.boolean().optional().openapi({ description: 'Rota atual da mídia deste aparelho. false (conexão direta) faz o servidor revogar as credenciais TURN deste aparelho; um novo call:ice-servers emite outras quando precisar do relay' }) });
 const hangupPayloadSchema = z.object({ callId: callIdSchema, force: z.boolean().optional() });
 const signalPayloadSchema = z.object({ callId: callIdSchema, to: z.string().trim().min(1), envelope: envelopeSchema });
 const syncPayloadSchema = z.object({}).optional();
@@ -35,7 +36,7 @@ registerClientEvents('calls', {
   'call:silence': callIdPayloadSchema,
   'call:hangup': hangupPayloadSchema,
   'call:signal': signalPayloadSchema,
-  'call:heartbeat': callIdPayloadSchema,
+  'call:heartbeat': heartbeatPayloadSchema,
   'call:sync': syncPayloadSchema,
   'call:ice-servers': iceServersPayloadSchema,
   'call:transfer': transferPayloadSchema,
@@ -176,7 +177,10 @@ export function registerCallSocketHandlers(socket: AppSocket, deps: CallSocketDe
   });
 
   socket.on('call:heartbeat', (payload) => {
-    handle('call:heartbeat', (actor) => callService.heartbeat(actor, callIdPayloadSchema.parse(payload).callId));
+    handle('call:heartbeat', (actor) => {
+      const input = heartbeatPayloadSchema.parse(payload);
+      return callService.heartbeat(actor, input.callId, input.relayed);
+    });
   });
 
   socket.on('call:sync', (payload) => {

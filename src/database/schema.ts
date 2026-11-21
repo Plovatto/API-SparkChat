@@ -192,6 +192,31 @@ export const messages = sqliteTable(
   (table) => [index('messages_room_id_timestamp_idx').on(table.roomId, table.timestamp)],
 );
 
+export const messageHidden = sqliteTable(
+  'message_hidden',
+  {
+    userId: text('user_id').notNull(),
+    messageId: text('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    hiddenAt: text('hidden_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.messageId] }), index('message_hidden_message_id_idx').on(table.messageId)],
+);
+
+export const messageReactions = sqliteTable(
+  'message_reactions',
+  {
+    messageId: text('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    emoji: text('emoji').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.messageId, table.userId] })],
+);
+
 export const uploads = sqliteTable(
   'uploads',
   {
@@ -245,6 +270,10 @@ export const calls = sqliteTable(
     turnUsername: text('turn_username'),
     calleeTurnUsername: text('callee_turn_username'),
     turnRevokedAt: text('turn_revoked_at'),
+    callerRelayMs: integer('caller_relay_ms').notNull().default(0),
+    calleeRelayMs: integer('callee_relay_ms').notNull().default(0),
+    callerRelaySince: text('caller_relay_since'),
+    calleeRelaySince: text('callee_relay_since'),
   },
   (table) => [
     index('calls_state_idx').on(table.state),

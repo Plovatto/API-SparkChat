@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { budgetStep, estimateRelayBytes, FREE_TIER_BYTES } from '@/modules/calls/call-budget.js';
+import { budgetStep, callRelayBytes, FREE_TIER_BYTES, relaySecondsOf } from '@/modules/calls/call-budget.js';
 import { CallRateLimiter } from '@/modules/calls/call.rate-limiter.js';
 import { transition, type CallEvent } from '@/modules/calls/call.state.js';
 import { MAX_CALL_DURATION_MS, TURN_TTL_SECONDS } from '@/modules/calls/call.types.js';
-import type { CallState } from '@/modules/calls/call.types.js';
+import type { CallRecord, CallState } from '@/modules/calls/call.types.js';
 import { createCloudflareTurnProvider, stripPort53 } from '@/modules/calls/turn-credentials.js';
 
 describe('call state transitions', () => {
@@ -150,13 +150,41 @@ describe('call budget steps', () => {
     expect(budgetStep(ratio * tier, tier)).toEqual({ degrade, relayAvailable });
   });
 
-  it('estimates the worst case from the bitrate ceiling and the credentials issued', () => {
-    expect(estimateRelayBytes(3_600_000, 1)).toBe(675_000_000);
-    expect(estimateRelayBytes(3_600_000, 2)).toBe(1_350_000_000);
-    expect(estimateRelayBytes(3_600_000, 9)).toBe(1_350_000_000);
-    expect(estimateRelayBytes(0, 2)).toBe(0);
-    expect(estimateRelayBytes(1000, 0)).toBe(0);
-    expect(estimateRelayBytes(-5, 1)).toBe(0);
+});
+
+describe('relay seconds per participant', () => {
+  const answeredAt = '2026-11-20T10:00:00.000Z';
+  const base: CallRecord = {
+    id: 'c', roomId: 'r', callerId: 'a', calleeId: 'b', kind: 'video', state: 'active', createdAt: answeredAt, answeredAt, endedAt: null, endReason: null,
+    lastHeartbeatAt: null, acceptedDeviceId: null, relayUsed: 2, turnUsername: 'tu-a', calleeTurnUsername: 'tu-b', turnRevokedAt: null,
+    callerRelayMs: 0, calleeRelayMs: 0, callerRelaySince: null, calleeRelaySince: null,
+  };
+  const threeHoursLater = Date.parse(answeredAt) + 3 * 3_600_000;
+
+  it('counts nothing once the relay credentials of both devices were dropped', () => {
+    const call = { ...base, turnUsername: null, calleeTurnUsername: null, callerRelayMs: 3_000, calleeRelayMs: 2_000 };
+    expect(relaySecondsOf(call, 'caller', threeHoursLater)).toBe(3);
+    expect(relaySecondsOf(call, 'callee', threeHoursLater)).toBe(2);
+    expect(callRelayBytes(call, threeHoursLater)).toBe(Math.ceil(5 * 187_500));
+  });
+
+  it('adds closed windows and the window still open up to now', () => {
+    const call = { ...base, callerRelayMs: 600_000, callerRelaySince: '2026-11-20T12:50:00.000Z' };
+    expect(relaySecondsOf(call, 'caller', threeHoursLater)).toBe(1200);
+  });
+
+  it('closes the open window at the end of the call', () => {
+    const call = { ...base, state: 'ended' as const, endedAt: '2026-11-20T12:55:00.000Z', callerRelaySince: '2026-11-20T12:50:00.000Z' };
+    expect(relaySecondsOf(call, 'caller', threeHoursLater)).toBe(300);
+  });
+
+  it('keeps counting the whole call while the credentials stay live, as for clients that never report', () => {
+    expect(relaySecondsOf({ ...base, calleeRelaySince: answeredAt }, 'callee', threeHoursLater)).toBe(3 * 3600);
+  });
+
+  it('never goes negative when the window starts after the end', () => {
+    const call = { ...base, endedAt: '2026-11-20T10:00:00.000Z', callerRelaySince: '2026-11-20T11:00:00.000Z' };
+    expect(relaySecondsOf(call, 'caller', threeHoursLater)).toBe(0);
   });
 });
 

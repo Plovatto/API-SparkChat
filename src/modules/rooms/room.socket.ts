@@ -208,7 +208,7 @@ const PUBLISH_EVENTS = {
 
 async function getInitialMessageViews(deps: RoomSocketDeps, room: RoomRecord, userId: string): Promise<MessageView[]> {
   const after = deps.roomService.getVisibilityCutoff(room, userId);
-  const { messages } = await deps.messageService.getRoomMessagesPage(room.id, { after, limit: INITIAL_MESSAGES_LIMIT });
+  const { messages } = await deps.messageService.getRoomMessagesPage(room.id, { after, limit: INITIAL_MESSAGES_LIMIT, viewerId: userId });
   return deps.messageService.toViews(messages);
 }
 
@@ -364,7 +364,7 @@ async function handleCreateGroupRoom(io: AppServer, socket: AppSocket, deps: Roo
     );
 
     const summary = await roomService.buildSummary(room, userId);
-    socket.emit('room:created', { room: summary, messages: [await messageService.toView(systemMessage)] });
+    socket.emit('room:created', { room: summary, messages: [await messageService.toNewView(systemMessage)] });
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
@@ -464,7 +464,7 @@ async function handleJoinByInvite(io: AppServer, socket: AppSocket, deps: RoomSo
             acceptableAttestation(request.attestation, { roomId: room.id, actorId: userId, type: 'group.memberJoined' }),
           ),
         );
-        io.to(room.id).emit('message:new', await messageService.toView(systemMessage));
+        io.to(room.id).emit('message:new', await messageService.toNewView(systemMessage));
 
         const participants = await roomService.buildParticipantViews(current);
         socket.to(room.id).emit('group:user-joined', { roomId: room.id, participants });
@@ -643,7 +643,7 @@ async function handleLeaveGroup(io: AppServer, socket: AppSocket, deps: RoomSock
           acceptableAttestation(attestation, { roomId, actorId: userId, type: 'group.memberLeft' }),
         ),
       );
-      io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
+      io.to(roomId).emit('message:new', await messageService.toNewView(systemMessage));
     }
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
@@ -696,7 +696,7 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
         acceptableAttestation(attestation, { roomId, actorId: actingUserId, type: 'group.memberRemoved', targetId: targetUserId }),
       ),
     );
-    io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
+    io.to(roomId).emit('message:new', await messageService.toNewView(systemMessage));
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
@@ -732,7 +732,7 @@ async function handlePromoteAdmin(io: AppServer, socket: AppSocket, deps: RoomSo
         acceptableAttestation(attestation, { roomId, actorId: actingUserId, type: 'group.adminPromoted', targetId: targetUserId }),
       ),
     );
-    io.to(roomId).emit('message:new', await messageService.toView(systemMessage));
+    io.to(roomId).emit('message:new', await messageService.toNewView(systemMessage));
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }

@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, lt, ne, not, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
-import { messages } from '../../database/schema.js';
-import type { MessageRecord, MessageReplySnapshot } from './message.types.js';
+import { messageHidden, messageReactions, messages } from '../../database/schema.js';
+import type { MessageReaction, MessageRecord, MessageReplySnapshot } from './message.types.js';
 
 type MessageColumns = Partial<typeof messages.$inferInsert>;
 type MessageRow = typeof messages.$inferSelect;
@@ -72,6 +72,10 @@ function toColumns(patch: Partial<MessageRecord>): MessageColumns {
 
 function jsonArrayContains(column: JsonArrayColumn, value: string): SQL {
   return sql`exists (select 1 from json_each(${column}) where json_each.value = ${value})`;
+}
+
+function notHiddenFor(userId: string): SQL {
+  return sql`not exists (select 1 from ${messageHidden} where ${messageHidden.userId} = ${userId} and ${messageHidden.messageId} = ${messages.id})`;
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -163,6 +167,56 @@ export class MessageRepository {
     return new Set(pages.flat().map((row) => row.id));
   }
 
+  async findReactions(messageIds: string[]): Promise<Map<string, MessageReaction[]>> {
+    const unique = [...new Set(messageIds)];
+    const reactions = new Map<string, MessageReaction[]>();
+    if (unique.length === 0) {
+      return reactions;
+    }
+
+    const pages = await Promise.all(
+      chunk(unique, MAX_IN_CLAUSE_IDS).map((batch) =>
+        this.db
+          .select()
+          .from(messageReactions)
+          .where(inArray(messageReactions.messageId, batch))
+          .orderBy(asc(messageReactions.updatedAt), asc(messageReactions.userId)),
+      ),
+    );
+
+    for (const row of pages.flat()) {
+      const reaction: MessageReaction = { userId: row.userId, emoji: row.emoji, updatedAt: row.updatedAt };
+      const bucket = reactions.get(row.messageId);
+      if (bucket) {
+        bucket.push(reaction);
+      } else {
+        reactions.set(row.messageId, [reaction]);
+      }
+    }
+
+    return reactions;
+  }
+
+  async upsertReaction(messageId: string, reaction: MessageReaction): Promise<void> {
+    await this.db
+      .insert(messageReactions)
+      .values({ messageId, ...reaction })
+      .onConflictDoUpdate({
+        target: [messageReactions.messageId, messageReactions.userId],
+        set: { emoji: reaction.emoji, updatedAt: reaction.updatedAt },
+      });
+  }
+
+  async deleteReaction(messageId: string, userId: string): Promise<void> {
+    await this.db
+      .delete(messageReactions)
+      .where(and(eq(messageReactions.messageId, messageId), eq(messageReactions.userId, userId)));
+  }
+
+  async deleteReactions(messageId: string): Promise<void> {
+    await this.db.delete(messageReactions).where(eq(messageReactions.messageId, messageId));
+  }
+
   async findRepliesTo(roomId: string, messageId: string): Promise<MessageRecord[]> {
     const rows = await this.db
       .select()
@@ -181,6 +235,19 @@ export class MessageRepository {
       .orderBy(asc(messages.timestamp));
 
     return rows.map(toRecord);
+  }
+
+  async findByIds(ids: string[]): Promise<MessageRecord[]> {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) {
+      return [];
+    }
+
+    const pages = await Promise.all(
+      chunk(unique, MAX_IN_CLAUSE_IDS).map((batch) => this.db.select().from(messages).where(inArray(messages.id, batch))),
+    );
+
+    return pages.flat().map(toRecord);
   }
 
   async findByRoomIdAndIds(roomId: string, ids: string[]): Promise<MessageRecord[]> {
@@ -266,7 +333,7 @@ export class MessageRepository {
       this.db
         .select()
         .from(messages)
-        .where(and(eq(messages.roomId, roomId), after ? gt(messages.timestamp, after) : undefined))
+        .where(and(eq(messages.roomId, roomId), after ? gt(messages.timestamp, after) : undefined, notHiddenFor(userId)))
         .orderBy(desc(messages.timestamp))
         .limit(1),
     );
@@ -292,9 +359,12 @@ export class MessageRepository {
 
   async findPageByRoomId(
     roomId: string,
-    options: { after?: string | undefined; before?: string | undefined; limit: number },
+    options: { after?: string | undefined; before?: string | undefined; limit: number; viewerId?: string | undefined },
   ): Promise<{ messages: MessageRecord[]; hasMore: boolean }> {
     const conditions = [eq(messages.roomId, roomId)];
+    if (options.viewerId) {
+      conditions.push(notHiddenFor(options.viewerId));
+    }
     if (options.after) {
       conditions.push(gt(messages.timestamp, options.after));
     }
@@ -329,7 +399,19 @@ export class MessageRepository {
           ne(messages.senderId, userId),
           eq(messages.deletedForEveryone, false),
           not(jsonArrayContains(messages.readBy, userId)),
+          notHiddenFor(userId),
         ),
       );
+  }
+
+  async hideForUser(userId: string, messageIds: string[], hiddenAt: string): Promise<void> {
+    if (messageIds.length === 0) {
+      return;
+    }
+
+    await this.db
+      .insert(messageHidden)
+      .values(messageIds.map((messageId) => ({ userId, messageId, hiddenAt })))
+      .onConflictDoNothing();
   }
 }

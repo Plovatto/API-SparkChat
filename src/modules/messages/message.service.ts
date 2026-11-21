@@ -15,6 +15,7 @@ import { renderSystemEvent, type SystemEvent } from './message.system-events.js'
 import type {
   MessageFileMeta,
   MessageLinkPreview,
+  MessageReaction,
   MessageRecord,
   MessageReplySnapshot,
   MessageSender,
@@ -37,6 +38,19 @@ export interface SendMessageInput {
   caption?: string | null | undefined;
   linkPreview?: MessageLinkPreview | null | undefined;
   attachmentUrls?: string[] | undefined;
+}
+
+export interface ReactToMessageResult {
+  message: MessageRecord;
+  reactions: MessageReaction[];
+}
+
+const NO_REACTIONS: ReadonlyMap<string, MessageReaction[]> = new Map();
+
+const NON_REACTABLE_TYPES: ReadonlySet<MessageType> = new Set(['system', 'error']);
+
+export function isReactableMessage(message: MessageRecord): boolean {
+  return !message.deletedForEveryone && !NON_REACTABLE_TYPES.has(message.type);
 }
 
 export interface DeleteMessageResult {
@@ -203,7 +217,7 @@ export class MessageService {
 
   getRoomMessagesPage(
     roomId: string,
-    options: { after?: string | undefined; before?: string | undefined; limit: number },
+    options: { after?: string | undefined; before?: string | undefined; limit: number; viewerId?: string | undefined },
   ): Promise<{ messages: MessageRecord[]; hasMore: boolean }> {
     return this.repository.findPageByRoomId(roomId, options);
   }
@@ -218,6 +232,14 @@ export class MessageService {
 
   getMessage(messageId: string): Promise<MessageRecord | null> {
     return this.repository.findById(messageId);
+  }
+
+  getMessages(messageIds: string[]): Promise<MessageRecord[]> {
+    return this.repository.findByIds(messageIds);
+  }
+
+  hideMessagesForUser(userId: string, messageIds: string[]): Promise<void> {
+    return this.repository.hideForUser(userId, messageIds, new Date().toISOString());
   }
 
   async deleteMessage(messageId: string, requesterId: string): Promise<DeleteMessageResult> {
@@ -246,6 +268,7 @@ export class MessageService {
       throw AppError.of('message.notFound');
     }
 
+    await this.repository.deleteReactions(messageId);
     await this.deleteAttachmentObjects(message);
     const affectedReplies = await this.neutralizeRepliesTo(message.roomId, messageId);
 
@@ -391,8 +414,36 @@ export class MessageService {
     ).length;
   }
 
-  async toView(message: MessageRecord, deletedReplyIds?: ReadonlySet<string>): Promise<MessageView> {
-    const resolvedDeletedReplyIds = deletedReplyIds ?? (await this.findDeletedReplyIds([message]));
+  async reactToMessage(message: MessageRecord, userId: string, emoji: string | null): Promise<ReactToMessageResult> {
+    if (!isReactableMessage(message)) {
+      throw AppError.of('message.reactionUnavailable');
+    }
+
+    if (emoji === null) {
+      await this.repository.deleteReaction(message.id, userId);
+    } else {
+      await this.repository.upsertReaction(message.id, { userId, emoji, updatedAt: new Date().toISOString() });
+    }
+
+    const current = await this.repository.findById(message.id);
+    if (!current || !isReactableMessage(current)) {
+      await this.repository.deleteReactions(message.id);
+      throw AppError.of('message.reactionUnavailable');
+    }
+
+    const reactions = await this.repository.findReactions([message.id]);
+    return { message: current, reactions: reactions.get(message.id) ?? [] };
+  }
+
+  async toView(
+    message: MessageRecord,
+    deletedReplyIds?: ReadonlySet<string>,
+    reactionsByMessage?: ReadonlyMap<string, MessageReaction[]>,
+  ): Promise<MessageView> {
+    const [resolvedDeletedReplyIds, resolvedReactions] = await Promise.all([
+      deletedReplyIds ?? this.findDeletedReplyIds([message]),
+      reactionsByMessage ?? this.findReactions([message]),
+    ]);
 
     return {
       id: message.id,
@@ -413,15 +464,26 @@ export class MessageService {
       caption: message.deletedForEveryone ? null : message.caption,
       linkPreview: message.deletedForEveryone ? null : message.linkPreview,
       systemEvent: message.deletedForEveryone ? null : message.systemEvent,
+      reactions: isReactableMessage(message) ? (resolvedReactions.get(message.id) ?? []) : [],
     };
   }
 
+  toNewView(message: MessageRecord): Promise<MessageView> {
+    return this.toView(message, undefined, NO_REACTIONS);
+  }
+
   async toViews(messages: MessageRecord[]): Promise<MessageView[]> {
-    const [deletedReplyIds] = await Promise.all([
+    const [deletedReplyIds, reactions] = await Promise.all([
       this.findDeletedReplyIds(messages),
+      this.findReactions(messages),
       this.warmSenderProfiles(messages.map((message) => message.senderId)),
     ]);
-    return Promise.all(messages.map((message) => this.toView(message, deletedReplyIds)));
+    return Promise.all(messages.map((message) => this.toView(message, deletedReplyIds, reactions)));
+  }
+
+  private findReactions(messages: MessageRecord[]): Promise<Map<string, MessageReaction[]>> {
+    const ids = messages.filter(isReactableMessage).map((message) => message.id);
+    return ids.length > 0 ? this.repository.findReactions(ids) : Promise.resolve(new Map<string, MessageReaction[]>());
   }
 
   private resolveReplyView(message: MessageRecord, deletedReplyIds: ReadonlySet<string>): MessageReplySnapshot | null {

@@ -38,6 +38,8 @@ export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
     'message:mark-read': frequent,
     'messages:get': frequent,
     'message:delete': { capacity: 30, refillPerSecond: 5 },
+    'message:hide': { capacity: 30, refillPerSecond: 5 },
+    'message:react': { capacity: 30, refillPerSecond: 5 },
     'audio:played': frequent,
     'typing:start': frequent,
     'typing:stop': frequent,
@@ -190,6 +192,18 @@ function readClientTempId(args: unknown[]): string | undefined {
   return typeof value === 'string' && value.length > 0 && value.length <= 200 ? value : undefined;
 }
 
+function readMessageIds(args: unknown[]): string[] | undefined {
+  const [payload] = args;
+  if (typeof payload !== 'object' || payload === null) {
+    return undefined;
+  }
+  const value = (payload as { messageIds?: unknown }).messageIds;
+  if (!Array.isArray(value) || value.length === 0 || value.length > 100) {
+    return undefined;
+  }
+  return value.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 200) ? (value as string[]) : undefined;
+}
+
 export function applySocketRateLimit(
   socket: AppSocket,
   budgets: SocketEventBudgets = DEFAULT_SOCKET_EVENT_BUDGETS,
@@ -222,10 +236,12 @@ export function applySocketRateLimit(
     lastNoticeAt.set(noticeKey, current);
     logger.warn({ socketId: socket.id, userId: socket.data.userId, event: noticeKey }, 'Socket event rate limit exceeded');
     const clientTempId = readClientTempId(args);
+    const messageIds = readMessageIds(args);
     socket.emit('error', {
       ...errorPayload('rateLimit.socket'),
       ...(noticeKey === FALLBACK_KEY ? {} : { event }),
       ...(clientTempId ? { clientTempId } : {}),
+      ...(messageIds ? { messageIds } : {}),
     });
   });
 }
