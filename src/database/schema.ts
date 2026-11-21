@@ -270,6 +270,10 @@ export const calls = sqliteTable(
     turnUsername: text('turn_username'),
     calleeTurnUsername: text('callee_turn_username'),
     turnRevokedAt: text('turn_revoked_at'),
+    callerRelayMs: integer('caller_relay_ms').notNull().default(0),
+    calleeRelayMs: integer('callee_relay_ms').notNull().default(0),
+    callerRelaySince: text('caller_relay_since'),
+    calleeRelaySince: text('callee_relay_since'),
   },
   (table) => [
     index('calls_state_idx').on(table.state),
