@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import { callUsage, calls } from '../../database/schema.js';
 import type { Database } from '../../database/turso-client.js';
-import { BITRATE_CEILING_BYTES_PER_SECOND } from './call-budget.js';
+import { BITRATE_CEILING_BYTES_PER_SECOND, relaySecondsOf } from './call-budget.js';
 import type { CallEndReason, CallKind, CallRecord, CallRole, CallState } from './call.types.js';
 
 type CallRow = typeof calls.$inferSelect;
@@ -23,6 +23,12 @@ export interface NewCall {
   kind: CallKind;
   createdAt: string;
 }
+
+function relaySecondsSql(prefix: 'caller' | 'callee'): string {
+  return `(${prefix}_relay_ms + CASE WHEN ${prefix}_relay_since IS NOT NULL THEN MAX(0, ROUND((julianday(ended_at) - julianday(${prefix}_relay_since)) * 86400000)) ELSE 0 END) / 1000.0`;
+}
+
+const ENDED_RELAY_SECONDS = sql.raw(`(${relaySecondsSql('caller')}) + (${relaySecondsSql('callee')})`);
 
 export interface EndOptions {
   markRevoked?: boolean;
@@ -106,6 +112,27 @@ export class CallRepository {
       .where(and(eq(calls.id, id), inArray(calls.state, ['accepted', 'active'])));
   }
 
+  async closeRelayWindow(id: string, role: CallRole, nowIso: string, expected: string, remaining: string | null): Promise<boolean> {
+    const since = role === 'caller' ? calls.callerRelaySince : calls.calleeRelaySince;
+    const username = role === 'caller' ? calls.turnUsername : calls.calleeTurnUsername;
+    const ms = role === 'caller' ? calls.callerRelayMs : calls.calleeRelayMs;
+    const closed = sql`${ms} + MAX(0, CAST(ROUND((julianday(${nowIso}) - julianday(${since})) * 86400000) AS INTEGER))`;
+    const values =
+      remaining === null
+        ? role === 'caller'
+          ? { turnUsername: null, callerRelayMs: closed, callerRelaySince: null }
+          : { calleeTurnUsername: null, calleeRelayMs: closed, calleeRelaySince: null }
+        : role === 'caller'
+          ? { turnUsername: remaining }
+          : { calleeTurnUsername: remaining };
+    const rows = await this.db
+      .update(calls)
+      .set(values)
+      .where(and(eq(calls.id, id), inArray(calls.state, ['accepted', 'active']), isNotNull(since), eq(username, expected)))
+      .returning({ id: calls.id });
+    return rows.length > 0;
+  }
+
   async end(id: string, fromState: CallState, reason: CallEndReason, endedAtIso: string, options: EndOptions = {}): Promise<CallRecord | null> {
     const endStatement = this.db
       .update(calls)
@@ -115,9 +142,9 @@ export class CallRepository {
     const usageStatement = this.db.run(sql`
       INSERT INTO call_usage (month, estimated_bytes)
       SELECT substr(ended_at, 1, 7),
-        CAST((CAST(strftime('%s', ended_at) AS INTEGER) - CAST(strftime('%s', answered_at) AS INTEGER)) * ${BITRATE_CEILING_BYTES_PER_SECOND} * MIN(2, relay_used) AS INTEGER)
+        CAST((${ENDED_RELAY_SECONDS}) * ${BITRATE_CEILING_BYTES_PER_SECOND} AS INTEGER)
       FROM calls
-      WHERE id = ${id} AND changes() > 0 AND relay_used > 0 AND answered_at IS NOT NULL AND ended_at IS NOT NULL
+      WHERE id = ${id} AND changes() > 0 AND (caller_relay_ms > 0 OR callee_relay_ms > 0 OR caller_relay_since IS NOT NULL OR callee_relay_since IS NOT NULL) AND answered_at IS NOT NULL AND ended_at IS NOT NULL
       ON CONFLICT(month) DO UPDATE SET estimated_bytes = estimated_bytes + excluded.estimated_bytes
     `);
     const markerStatement = options.markRevoked
@@ -131,13 +158,13 @@ export class CallRepository {
     return row ? toRecord(row) : null;
   }
 
-  async recordTurnIssued(id: string, role: CallRole, stored: string): Promise<boolean> {
+  async recordTurnIssued(id: string, role: CallRole, stored: string, nowIso: string): Promise<boolean> {
     const rows = await this.db
       .update(calls)
       .set(
         role === 'caller'
-          ? { turnUsername: stored, relayUsed: sql`1 + (${calls.calleeTurnUsername} IS NOT NULL)` }
-          : { calleeTurnUsername: stored, relayUsed: sql`(${calls.turnUsername} IS NOT NULL) + 1` },
+          ? { turnUsername: stored, relayUsed: sql`1 + (${calls.calleeTurnUsername} IS NOT NULL)`, callerRelaySince: sql`COALESCE(${calls.callerRelaySince}, ${nowIso})` }
+          : { calleeTurnUsername: stored, relayUsed: sql`(${calls.turnUsername} IS NOT NULL) + 1`, calleeRelaySince: sql`COALESCE(${calls.calleeRelaySince}, ${nowIso})` },
       )
       .where(and(eq(calls.id, id), inArray(calls.state, ['accepted', 'active'])))
       .returning({ id: calls.id });
@@ -151,17 +178,13 @@ export class CallRepository {
       .where(
         and(
           sql`${calls.answeredAt} >= ${monthStartIso}`,
-          or(
-            and(eq(calls.callerId, userId), isNotNull(calls.turnUsername)),
-            and(eq(calls.calleeId, userId), isNotNull(calls.calleeTurnUsername)),
-          ),
+          or(eq(calls.callerId, userId), eq(calls.calleeId, userId)),
         ),
       );
+    const nowMs = Date.parse(nowIso);
     return rows.reduce((total, row) => {
-      if (!row.answeredAt) {
-        return total;
-      }
-      return total + Math.max(0, (Date.parse(row.endedAt ?? nowIso) - Date.parse(row.answeredAt)) / 1000);
+      const record = toRecord(row);
+      return total + (record.callerId === userId ? relaySecondsOf(record, 'caller', nowMs) : 0) + (record.calleeId === userId ? relaySecondsOf(record, 'callee', nowMs) : 0);
     }, 0);
   }
 

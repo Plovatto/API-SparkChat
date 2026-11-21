@@ -35,6 +35,10 @@ export interface CallRecord {
   turnUsername: string | null;
   calleeTurnUsername: string | null;
   turnRevokedAt: string | null;
+  callerRelayMs: number;
+  calleeRelayMs: number;
+  callerRelaySince: string | null;
+  calleeRelaySince: string | null;
 }
 
 export interface IceServer {
