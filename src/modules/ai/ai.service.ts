@@ -155,7 +155,7 @@ export class AiService {
       viewingUserIds: this.presenceService.getViewers(room.id),
     });
 
-    io.to(room.id).emit('message:new', await this.messageService.toView(message));
+    io.to(room.id).emit('message:new', await this.messageService.toNewView(message));
   }
 
   handleIncomingMessage(io: AppServer, room: RoomRecord, message: MessageRecord, locale: Locale): void {
@@ -226,7 +226,7 @@ export class AiService {
         viewingUserIds: this.presenceService.getViewers(room.id),
       });
 
-      io.to(room.id).emit('message:new', await this.messageService.toView(reply));
+      io.to(room.id).emit('message:new', await this.messageService.toNewView(reply));
     } catch (error) {
       logger.error({ err: error, roomId: room.id }, 'Falha ao gerar resposta da IA');
       await this.sendErrorMessage(io, room.id, 'ai.replyFailed');
@@ -248,7 +248,7 @@ export class AiService {
     type: Extract<SystemEventType, `ai.${string}`>,
   ): Promise<void> {
     const message = await this.messageService.createErrorMessage(roomId, systemEvent(type));
-    io.to(roomId).emit('message:new', await this.messageService.toView(message));
+    io.to(roomId).emit('message:new', await this.messageService.toNewView(message));
   }
 
   private sealText(text: string, roomKey: CurrentRoomKey, roomId: string, messageId: string): Promise<string> {

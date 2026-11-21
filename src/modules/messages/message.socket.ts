@@ -435,7 +435,7 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
     const reactivatedBefore = new Date(new Date(message.timestamp).getTime() - 1000).toISOString();
     const updatedRoom = (await roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;
 
-    const view = await messageService.toView(message);
+    const view = await messageService.toNewView(message);
     io.to(roomId).emit('message:new', clientTempId ? { ...view, clientTempId } : view);
     deps.onMessageSent?.({ io, room, message, locale: socketLocale(socket) });
 

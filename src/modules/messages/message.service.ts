@@ -45,6 +45,8 @@ export interface ReactToMessageResult {
   reactions: MessageReaction[];
 }
 
+const NO_REACTIONS: ReadonlyMap<string, MessageReaction[]> = new Map();
+
 const NON_REACTABLE_TYPES: ReadonlySet<MessageType> = new Set(['system', 'error']);
 
 export function isReactableMessage(message: MessageRecord): boolean {
@@ -456,6 +458,10 @@ export class MessageService {
       systemEvent: message.deletedForEveryone ? null : message.systemEvent,
       reactions: isReactableMessage(message) ? (resolvedReactions.get(message.id) ?? []) : [],
     };
+  }
+
+  toNewView(message: MessageRecord): Promise<MessageView> {
+    return this.toView(message, undefined, NO_REACTIONS);
   }
 
   async toViews(messages: MessageRecord[]): Promise<MessageView[]> {

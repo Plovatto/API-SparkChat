@@ -24,6 +24,17 @@ describe('message reactions', () => {
     }
   });
 
+  it('does not query reactions for a message that was just created', async () => {
+    const { messageService, messageRepository } = await buildRoomService();
+    const message = await messageService.sendMessage({ roomId: 'room-1', senderId: 'u1', content: fakeField('novo') });
+    const spy = vi.spyOn(messageRepository, 'findReactions');
+
+    const view = await messageService.toNewView(message);
+
+    expect(view.reactions).toEqual([]);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it('keeps one reaction per user, ordered by when it last changed', async () => {
     const { messageService } = await buildRoomService();
     const message = await messageService.sendMessage({ roomId: 'room-1', senderId: 'u1', content: fakeField('oi') });

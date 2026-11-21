@@ -642,7 +642,7 @@ export class CallService {
         return;
       }
       const message = await this.messageService.createSystemMessage(call.roomId, event);
-      this.io.to(call.roomId).emit('message:new', await this.messageService.toView(message));
+      this.io.to(call.roomId).emit('message:new', await this.messageService.toNewView(message));
       await this.revealRoom(room, message.timestamp);
     } catch (err) {
       logger.error({ err, callId: call.id }, 'Failed to record call system message');
