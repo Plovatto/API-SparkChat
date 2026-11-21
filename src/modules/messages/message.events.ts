@@ -32,7 +32,7 @@ export interface MessageClientToServerEvents {
   }) => void;
   'message:mark-read': (payload: { roomId: string; messageIds?: string[] }) => void;
   'messages:get': (payload: { roomId: string; before?: string; limit?: number }) => void;
-  'message:delete': (payload: { messageId: string }) => void;
+  'message:delete': (payload: { messageId: string } | { messageIds: string[] }) => void;
   'message:hide': (payload: { messageIds: string[] }) => void;
   'typing:start': (payload: { roomId: string }) => void;
   'typing:stop': (payload: { roomId: string }) => void;

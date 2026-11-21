@@ -38,7 +38,9 @@ export interface UserServerToClientEvents {
     keySignature: string | null;
     authVersion: AuthVersion;
   }) => void;
-  error: (payload: ErrorPayload & { clientTempId?: string | undefined; event?: string | undefined }) => void;
+  error: (
+    payload: ErrorPayload & { clientTempId?: string | undefined; event?: string | undefined; messageIds?: string[] | undefined },
+  ) => void;
 }
 
 export interface UserClientToServerEvents {

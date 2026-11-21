@@ -135,21 +135,33 @@ const messageIdPayloadSchema = z.object({
   messageId: z.string().trim().min(1),
 });
 
-export const HIDE_MESSAGES_LIMIT = 100;
+export const MESSAGE_BATCH_LIMIT = 100;
+
+const messageIdsSchema = z
+  .array(z.string().trim().min(1))
+  .min(1)
+  .max(MESSAGE_BATCH_LIMIT)
+  .refine((ids) => new Set(ids).size === ids.length, { message: 'messageIds não pode ter itens repetidos.' });
 
 const hideMessagesPayloadSchema = z.object({
-  messageIds: z
-    .array(z.string().trim().min(1))
-    .min(1)
-    .max(HIDE_MESSAGES_LIMIT)
-    .refine((ids) => new Set(ids).size === ids.length, { message: 'messageIds não pode ter itens repetidos.' }),
+  messageIds: messageIdsSchema,
 });
+
+const deleteMessagesPayloadSchema = z.union([messageIdPayloadSchema, z.object({ messageIds: messageIdsSchema })]);
+
+function readMessageIds(payload: unknown): string[] | undefined {
+  if (typeof payload !== 'object' || payload === null) {
+    return undefined;
+  }
+  const value = (payload as { messageIds?: unknown }).messageIds;
+  return Array.isArray(value) && value.length <= MESSAGE_BATCH_LIMIT && value.every((id) => typeof id === 'string') ? value : undefined;
+}
 
 registerClientEvents('messages', {
   'message:send': sendMessagePayloadSchema,
   'message:mark-read': markReadPayloadSchema,
   'messages:get': getMessagesPayloadSchema,
-  'message:delete': messageIdPayloadSchema,
+  'message:delete': deleteMessagesPayloadSchema,
   'message:hide': hideMessagesPayloadSchema,
   'typing:start': roomIdPayloadSchema,
   'typing:stop': roomIdPayloadSchema,
@@ -484,28 +496,50 @@ async function handleDeleteMessage(io: AppServer, socket: AppSocket, deps: Messa
     return;
   }
 
+  const isBatch = readMessageIds(payload) !== undefined;
+  let messageIds: string[];
   try {
-    const { messageId } = messageIdPayloadSchema.parse(payload);
-    const { message: updated, affectedReplies } = await deps.messageService.deleteMessage(messageId, userId);
-    io.to(updated.roomId).emit('message:deleted', { messageId, roomId: updated.roomId });
-
-    if (affectedReplies.length === 0) {
-      return;
-    }
-
-    const [room, views] = await Promise.all([
-      deps.roomService.getRoomById(updated.roomId),
-      deps.messageService.toViews(affectedReplies),
-    ]);
-    if (!room) {
-      return;
-    }
-
-    for (const view of views) {
-      emitMessageUpdate(io, deps.roomService, room, view);
-    }
+    const parsed = deleteMessagesPayloadSchema.parse(payload);
+    messageIds = 'messageIds' in parsed ? parsed.messageIds : [parsed.messageId];
   } catch (error) {
-    socket.emit('error', extractErrorPayload(error));
+    socket.emit('error', isBatch ? { ...extractErrorPayload(error), event: 'message:delete', messageIds: readMessageIds(payload) } : extractErrorPayload(error));
+    return;
+  }
+
+  const failed: string[] = [];
+  let firstError: unknown = null;
+  for (const messageId of messageIds) {
+    try {
+      await deleteOneMessage(io, deps, messageId, userId);
+    } catch (error) {
+      failed.push(messageId);
+      firstError ??= error;
+    }
+  }
+
+  if (failed.length > 0) {
+    socket.emit('error', isBatch ? { ...extractErrorPayload(firstError), event: 'message:delete', messageIds: failed } : extractErrorPayload(firstError));
+  }
+}
+
+async function deleteOneMessage(io: AppServer, deps: MessageSocketDeps, messageId: string, userId: string): Promise<void> {
+  const { message: updated, affectedReplies } = await deps.messageService.deleteMessage(messageId, userId);
+  io.to(updated.roomId).emit('message:deleted', { messageId, roomId: updated.roomId });
+
+  if (affectedReplies.length === 0) {
+    return;
+  }
+
+  const [room, views] = await Promise.all([
+    deps.roomService.getRoomById(updated.roomId),
+    deps.messageService.toViews(affectedReplies),
+  ]);
+  if (!room) {
+    return;
+  }
+
+  for (const view of views) {
+    emitMessageUpdate(io, deps.roomService, room, view);
   }
 }
 
@@ -515,7 +549,8 @@ async function handleHideMessages(io: AppServer, socket: AppSocket, deps: Messag
     return;
   }
 
-  const fail = (code: ErrorCode) => socket.emit('error', { ...errorPayload(code), event: 'message:hide' });
+  const requestedIds = readMessageIds(payload);
+  const fail = (code: ErrorCode) => socket.emit('error', { ...errorPayload(code), event: 'message:hide', messageIds: requestedIds });
 
   try {
     const { messageIds } = hideMessagesPayloadSchema.parse(payload);
@@ -525,20 +560,26 @@ async function handleHideMessages(io: AppServer, socket: AppSocket, deps: Messag
       return;
     }
 
-    const roomIds = new Set(records.map((record) => record.roomId));
-    const [roomId] = roomIds;
-    if (roomIds.size !== 1 || !roomId) {
-      fail('message.hideMixedRooms');
+    const roomIds = [...new Set(records.map((record) => record.roomId))];
+    const rooms = await Promise.all(roomIds.map((id) => deps.roomService.getRoomById(id)));
+    const roomById = new Map(rooms.flatMap((candidate) => (candidate ? [[candidate.id, candidate] as const] : [])));
+    const visible = records.every((record) => {
+      const candidate = roomById.get(record.roomId);
+      return (
+        candidate !== undefined &&
+        deps.roomService.isParticipant(candidate, userId) &&
+        deps.roomService.canSeeMessage(candidate, userId, record.timestamp)
+      );
+    });
+    if (!visible) {
+      fail('message.notFound');
       return;
     }
 
-    const room = await deps.roomService.getRoomById(roomId);
-    if (
-      !room ||
-      !deps.roomService.isParticipant(room, userId) ||
-      records.some((record) => !deps.roomService.canSeeMessage(room, userId, record.timestamp))
-    ) {
-      fail('message.notFound');
+    const [roomId] = roomIds;
+    const room = roomId ? roomById.get(roomId) : undefined;
+    if (roomIds.length !== 1 || !roomId || !room) {
+      fail('message.hideMixedRooms');
       return;
     }
 
@@ -546,7 +587,7 @@ async function handleHideMessages(io: AppServer, socket: AppSocket, deps: Messag
     const { lastMessage, unreadCount, mentionCount } = await deps.roomService.buildSummary(room, userId);
     emitToUser(io, userId).emit('message:hidden', { roomId, messageIds, lastMessage, unreadCount, mentionCount });
   } catch (error) {
-    socket.emit('error', { ...extractErrorPayload(error), event: 'message:hide' });
+    socket.emit('error', { ...extractErrorPayload(error), event: 'message:hide', messageIds: requestedIds });
   }
 }
 

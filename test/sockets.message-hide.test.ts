@@ -3,11 +3,22 @@ import { listSocketEvents } from '@/docs/socket-registry.js';
 import { DEFAULT_SOCKET_EVENT_BUDGETS } from '@/sockets/socket-rate-limit.js';
 import { collectEvents, settle, startSocketHarness, waitForEvent, type TestClient } from './support/socket-harness.js';
 
+async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      throw new Error('condition not met in time');
+    }
+    await settle(20);
+  }
+}
+
 type Harness = Awaited<ReturnType<typeof startSocketHarness>>;
 
 interface ErrorEvent {
   code: string;
   event?: string;
+  messageIds?: string[];
 }
 
 interface HiddenEvent {
@@ -30,8 +41,8 @@ interface RoomsList {
 
 let harness: Harness | null = null;
 
-async function start(): Promise<Harness> {
-  harness = await startSocketHarness();
+async function start(options: Parameters<typeof startSocketHarness>[0] = {}): Promise<Harness> {
+  harness = await startSocketHarness(options);
   return harness;
 }
 
@@ -206,7 +217,7 @@ describe('message:hide permissions', () => {
     const error = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.event === 'message:hide');
     aliceClient.emit('message:hide', { messageIds: [here.id, there.id] });
 
-    await expect(error).resolves.toMatchObject({ code: 'message.hideMixedRooms' });
+    await expect(error).resolves.toMatchObject({ code: 'message.hideMixedRooms', messageIds: [here.id, there.id] });
     const view = await getMessages(aliceClient, { roomId: room.id });
     expect(view.messages.map((message) => message.id)).toEqual([here.id]);
   });
@@ -226,6 +237,36 @@ describe('message:hide permissions', () => {
     malloryClient.emit('message:hide', { messageIds: [old.id] });
 
     await expect(error).resolves.toMatchObject({ code: 'message.notFound' });
+  });
+
+  it('answers not found instead of revealing that an id lives in a room the requester is not part of', async () => {
+    const h = await start();
+    const { alice, room, aliceClient } = await setupPair(h);
+    const carol = await h.createAccount('Carol');
+    const dave = await h.createAccount('Dave');
+    const foreignRoom = await h.roomService.createPrivateRoom(carol.user.id, dave.user.id);
+    const here = await h.messageService.sendMessage({ roomId: room.id, senderId: alice.user.id, content: 'aqui' });
+    const foreign = await h.messageService.sendMessage({ roomId: foreignRoom.id, senderId: carol.user.id, content: 'privada' });
+
+    const error = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.event === 'message:hide');
+    aliceClient.emit('message:hide', { messageIds: [here.id, foreign.id] });
+
+    await expect(error).resolves.toMatchObject({ code: 'message.notFound', messageIds: [here.id, foreign.id] });
+  });
+
+  it('returns the requested ids with every error so the client can undo exactly that request', async () => {
+    const h = await start({ socketEventBudgets: { events: { 'message:hide': { capacity: 1, refillPerSecond: 0.001 } }, fallback: { capacity: 100, refillPerSecond: 100 } } });
+    const { alice, room, aliceClient } = await setupPair(h);
+    const first = await h.messageService.sendMessage({ roomId: room.id, senderId: alice.user.id, content: 'um' });
+    const second = await h.messageService.sendMessage({ roomId: room.id, senderId: alice.user.id, content: 'dois' });
+
+    const done = waitForEvent(aliceClient, 'message:hidden');
+    aliceClient.emit('message:hide', { messageIds: [first.id] });
+    await done;
+
+    const limited = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.event === 'message:hide');
+    aliceClient.emit('message:hide', { messageIds: [second.id] });
+    await expect(limited).resolves.toMatchObject({ code: 'rateLimit.socket', messageIds: [second.id] });
   });
 
   it('rejects unknown ids, empty, duplicated or oversized batches', async () => {
@@ -259,6 +300,60 @@ describe('message:hide permissions', () => {
     anonymous.emit('message:hide', { messageIds: ['x'] });
 
     await expect(error).resolves.toMatchObject({ code: 'auth.unauthenticated' });
+  });
+});
+
+describe('message:delete batches', () => {
+  it('deletes many own messages for everyone in one request, beyond the per-event burst', async () => {
+    const h = await start();
+    const { alice, room, aliceClient, bobClient } = await setupPair(h);
+    const own = [];
+    for (let index = 0; index < 35; index += 1) {
+      own.push(await h.messageService.sendMessage({ roomId: room.id, senderId: alice.user.id, content: `m${index}` }));
+    }
+    const deleted = collectEvents<{ messageId: string }>(bobClient, 'message:deleted');
+    const errors = collectEvents<ErrorEvent>(aliceClient, 'error');
+
+    aliceClient.emit('message:delete', { messageIds: own.map((message) => message.id) });
+
+    await waitFor(() => deleted.length === own.length);
+    expect(new Set(deleted.map((event) => event.messageId))).toEqual(new Set(own.map((message) => message.id)));
+    expect(errors).toHaveLength(0);
+    const stored = await Promise.all(own.map((message) => h.messageService.getMessage(message.id)));
+    expect(stored.every((message) => message?.deletedForEveryone)).toBe(true);
+  });
+
+  it('deletes the allowed messages and reports exactly the ones it could not delete', async () => {
+    const h = await start();
+    const { alice, bob, room, aliceClient } = await setupPair(h);
+    const own = await h.messageService.sendMessage({ roomId: room.id, senderId: alice.user.id, content: 'minha' });
+    const other = await h.messageService.sendMessage({ roomId: room.id, senderId: bob.user.id, content: 'do bob' });
+
+    const error = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.event === 'message:delete');
+    aliceClient.emit('message:delete', { messageIds: [own.id, other.id] });
+
+    await expect(error).resolves.toMatchObject({ code: 'message.deleteForbidden', messageIds: [other.id] });
+    expect((await h.messageService.getMessage(own.id))?.deletedForEveryone).toBe(true);
+    expect((await h.messageService.getMessage(other.id))?.deletedForEveryone).toBe(false);
+  });
+
+  it('keeps the single id payload of older clients and rejects malformed batches', async () => {
+    const h = await start();
+    const { alice, room, aliceClient, bobClient } = await setupPair(h);
+    const own = await h.messageService.sendMessage({ roomId: room.id, senderId: alice.user.id, content: 'antiga' });
+
+    const deleted = waitForEvent<{ messageId: string }>(bobClient, 'message:deleted');
+    aliceClient.emit('message:delete', { messageId: own.id });
+    await expect(deleted).resolves.toMatchObject({ messageId: own.id });
+
+    const tooMany = Array.from({ length: 101 }, (_, index) => `id-${index}`);
+    const invalid = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.event === 'message:delete');
+    aliceClient.emit('message:delete', { messageIds: [own.id, own.id] });
+    await expect(invalid).resolves.toMatchObject({ code: 'validation.invalidPayload', messageIds: [own.id, own.id] });
+
+    const oversized = waitForEvent<ErrorEvent>(aliceClient, 'error', (event) => event.code === 'validation.invalidPayload' && event.event === undefined);
+    aliceClient.emit('message:delete', { messageIds: tooMany });
+    await expect(oversized).resolves.toMatchObject({ code: 'validation.invalidPayload' });
   });
 });
 
