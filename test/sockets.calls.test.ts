@@ -90,6 +90,13 @@ async function setup(options: { turn?: FakeTurn; enabled?: boolean; hiddenRoom?:
   return { h, alice, bob, carol, room, aliceClient, bobClient };
 }
 
+async function beat(client: TestClient, callId: string, relayed: boolean): Promise<void> {
+  client.emit('call:heartbeat', { callId, relayed });
+  const synced = waitForEvent(client, 'call:state');
+  client.emit('call:sync', {});
+  await synced;
+}
+
 function expectError(client: TestClient, event: string): Promise<ErrorEvent> {
   return waitForEvent<ErrorEvent>(client, 'error', (payload) => payload.event === event);
 }
@@ -717,6 +724,110 @@ describe('TURN credentials', () => {
     expect((await h.callBudget.snapshot()).usedBytes).toBe(675_000_000);
   });
 
+  it('drops relay credentials as soon as a device reports a direct route, so a long direct call costs nothing', async () => {
+    const turn = fakeTurn();
+    const { h, alice, room, aliceClient, bobClient } = await setup({ turn });
+    const first = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, first);
+    for (const client of [aliceClient, bobClient]) {
+      const issued = waitForEvent(client, 'call:ice-servers-result');
+      client.emit('call:ice-servers', { callId: first, protectIp: false });
+      await issued;
+    }
+    clock.now += 3_000;
+    for (const client of [aliceClient, bobClient]) {
+      await beat(client, first, false);
+    }
+    expect(turn.revoked.sort()).toEqual(['turn-user-1', 'turn-user-2']);
+    const row = await callRow(h, first);
+    expect([row.turnUsername, row.calleeTurnUsername, row.callerRelaySince, row.calleeRelaySince]).toEqual([null, null, null, null]);
+    expect([row.callerRelayMs, row.calleeRelayMs]).toEqual([3_000, 3_000]);
+
+    clock.now += 7 * 60 * 60 * 1000;
+    for (const client of [aliceClient, bobClient]) {
+      await beat(client, first, false);
+    }
+    expect(turn.revoked).toHaveLength(2);
+    h.callBudget.invalidate();
+    expect((await h.callBudget.snapshot()).usedBytes).toBe(6 * 187_500);
+    const ended = waitForEvent(bobClient, 'call:ended');
+    aliceClient.emit('call:hangup', { callId: first });
+    await ended;
+    expect(await h.callRepository.getUsage(monthKey(clock.now))).toBe(6 * 187_500);
+    expect(await h.callRepository.relaySecondsForUser(alice.user.id, '2000-01-01T00:00:00.000Z', new Date(clock.now).toISOString())).toBe(3);
+
+    const second = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, second);
+    const again = waitForEvent<Record<string, unknown>>(aliceClient, 'call:ice-servers-result');
+    aliceClient.emit('call:ice-servers', { callId: second, protectIp: false });
+    expect(await again).toMatchObject({ iceServers: [{ urls: ['stun:stun.cloudflare.com:3478'] }, { urls: ['turn:turn.cloudflare.com:3478'] }] });
+  });
+
+  it('counts every minute relay credentials are live, whatever the device claims, and reopens the window on a new request', async () => {
+    const turn = fakeTurn();
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup({ turn });
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    for (const client of [aliceClient, bobClient]) {
+      const issued = waitForEvent(client, 'call:ice-servers-result');
+      client.emit('call:ice-servers', { callId, protectIp: false });
+      await issued;
+    }
+    await beat(bobClient, callId, false);
+    await beat(aliceClient, callId, true);
+    clock.now += 35 * 60 * 1000;
+    await beat(aliceClient, callId, true);
+    h.callBudget.invalidate();
+    expect((await h.callBudget.snapshot()).usedBytes).toBe(35 * 60 * 187_500);
+    await beat(aliceClient, callId, false);
+    clock.now += 20 * 60 * 1000;
+    const reissued = waitForEvent(aliceClient, 'call:ice-servers-result');
+    aliceClient.emit('call:ice-servers', { callId, protectIp: false });
+    await reissued;
+    clock.now += 5 * 60 * 1000;
+
+    const ended = waitForEvent(bobClient, 'call:ended');
+    aliceClient.emit('call:hangup', { callId });
+    await ended;
+    expect(await h.callRepository.getUsage(monthKey(clock.now))).toBe(40 * 60 * 187_500);
+    expect(await h.callRepository.relaySecondsForUser(alice.user.id, '2000-01-01T00:00:00.000Z', new Date(clock.now).toISOString())).toBe(40 * 60);
+    expect(await h.callRepository.relaySecondsForUser(bob.user.id, '2000-01-01T00:00:00.000Z', new Date(clock.now).toISOString())).toBe(0);
+  });
+
+  it('keeps counting while a revocation fails and keeps the username for the sweeper', async () => {
+    const turn = fakeTurn();
+    const { h, room, aliceClient, bobClient } = await setup({ turn });
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const issued = waitForEvent(aliceClient, 'call:ice-servers-result');
+    aliceClient.emit('call:ice-servers', { callId, protectIp: false });
+    await issued;
+    turn.failRevoke = true;
+    clock.now += 60_000;
+    await beat(aliceClient, callId, false);
+    const row = await callRow(h, callId);
+    expect(row.turnUsername).toBe('turn-user-1');
+    expect(row.callerRelaySince).not.toBeNull();
+    h.callBudget.invalidate();
+    expect((await h.callBudget.snapshot()).usedBytes).toBe(60 * 187_500);
+  });
+
+  it('ignores a direct route report from a device that is not bound to the call', async () => {
+    const turn = fakeTurn();
+    const { h, alice, room, aliceClient, bobClient } = await setup({ turn });
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const issued = waitForEvent(aliceClient, 'call:ice-servers-result');
+    aliceClient.emit('call:ice-servers', { callId, protectIp: false });
+    await issued;
+    const other = await h.connectAs(alice);
+    const refused = expectError(other, 'call:heartbeat');
+    other.emit('call:heartbeat', { callId, relayed: false });
+    await refused;
+    expect(turn.revoked).toHaveLength(0);
+    expect((await callRow(h, callId)).turnUsername).toBe('turn-user-1');
+  });
+
   it('revokes credentials when the call ends and retries failures in the sweeper', async () => {
     const turn = fakeTurn();
     const { h, room, aliceClient, bobClient } = await setup({ turn });
@@ -1045,7 +1156,7 @@ describe('event ordering', () => {
 });
 
 describe('hardening', () => {
-  it('caps the worst-case estimate at two credentials per call however often they are reissued', async () => {
+  it('counts each device once from its first credential however often credentials are reissued', async () => {
     const turn = fakeTurn();
     const { h, room, aliceClient, bobClient } = await setup({ turn });
     const callId = await ring(h, aliceClient, [bobClient], room.id);
@@ -1068,7 +1179,7 @@ describe('hardening', () => {
     const ended = waitForEvent(bobClient, 'call:ended');
     aliceClient.emit('call:hangup', { callId });
     await ended;
-    expect(await h.callRepository.getUsage(monthKey(clock.now))).toBe(1_350_000_000);
+    expect(await h.callRepository.getUsage(monthKey(clock.now))).toBe((3600 + 3600 - 33) * 187_500);
   });
 
   it('serves STUN only to a user who used more than twenty relayed hours this month', async () => {
@@ -1078,7 +1189,7 @@ describe('hardening', () => {
     const earlierEnd = new Date(clock.now - 3_600_000 * 4).toISOString();
     await h.callRepository.insertEnded({ id: newCallId(), roomId: room.id, callerId: alice.user.id, calleeId: bob.user.id, kind: 'voice', createdAt: earlier }, 'completed');
     await h.db.run(
-      sql`UPDATE calls SET answered_at = ${earlier}, ended_at = ${earlierEnd}, turn_username = 'old', relay_used = 1 WHERE state = 'ended'`,
+      sql`UPDATE calls SET answered_at = ${earlier}, ended_at = ${earlierEnd}, turn_username = 'old', relay_used = 1, caller_relay_ms = ${21 * 3_600_000} WHERE state = 'ended'`,
     );
     clock.now += 60_000;
     const callId = await ring(h, aliceClient, [bobClient], room.id);
@@ -1104,7 +1215,7 @@ describe('hardening', () => {
     const callId = newCallId();
     await h.callRepository.insertIfBothFree({ id: callId, roomId: room.id, callerId: alice.user.id, calleeId: bob.user.id, kind: 'voice', createdAt: new Date(clock.now).toISOString() });
     await h.callRepository.accept(callId, bob.user.id, 'dev', new Date(clock.now).toISOString(), new Date(clock.now - 1000).toISOString());
-    await h.callRepository.recordTurnIssued(callId, 'caller', 'u1');
+    await h.callRepository.recordTurnIssued(callId, 'caller', 'u1', new Date(clock.now).toISOString());
     const endedAt = new Date(clock.now + 100_000).toISOString();
 
     const ended = await h.callRepository.end(callId, 'accepted', 'completed', endedAt, { markRevoked: true });
