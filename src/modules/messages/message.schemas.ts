@@ -82,6 +82,7 @@ export const messageViewSchema = z.object({
 export const messageReactionsUpdatedPayloadSchema = z.object({
   roomId: z.string(),
   messageId: z.string(),
+  messageTimestamp: z.string().openapi({ description: 'Horário da mensagem reagida; nenhuma reação é anterior a ele' }),
   reactions: z.array(messageReactionSchema),
 });
 

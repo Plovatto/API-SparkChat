@@ -7,7 +7,7 @@ export interface MessageServerToClientEvents {
   'messages:list': (payload: { roomId: string; messages: MessageView[]; hasMore: boolean }) => void;
   'message:deleted': (payload: { messageId: string; roomId: string }) => void;
   'message:updated': (payload: MessageView) => void;
-  'message:reactions-updated': (payload: { roomId: string; messageId: string; reactions: MessageReaction[] }) => void;
+  'message:reactions-updated': (payload: { roomId: string; messageId: string; messageTimestamp: string; reactions: MessageReaction[] }) => void;
   'typing:update': (payload: { roomId: string; users: string[] }) => void;
   'recording:update': (payload: { roomId: string; users: string[] }) => void;
 }

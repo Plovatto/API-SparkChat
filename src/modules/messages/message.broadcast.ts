@@ -24,6 +24,7 @@ export function emitReactionsUpdate(
   toMessageViewers(io, roomService, room, message.timestamp).emit('message:reactions-updated', {
     roomId: room.id,
     messageId: message.id,
+    messageTimestamp: message.timestamp,
     reactions,
   });
 }

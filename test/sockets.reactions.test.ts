@@ -9,6 +9,7 @@ type Harness = Awaited<ReturnType<typeof startSocketHarness>>;
 interface ReactionsEvent {
   roomId: string;
   messageId: string;
+  messageTimestamp: string;
   reactions: { userId: string; emoji: string; updatedAt: string }[];
 }
 
@@ -83,7 +84,13 @@ describe('message:react', () => {
     const laptopSaw = reactionFor(aliceLaptop, message.id);
     aliceClient.emit('message:react', { messageId: message.id, emoji: heart });
 
-    await expect(bobSaw).resolves.toMatchObject({ roomId: room.id, messageId: message.id, reactions: [{ userId: alice.user.id, emoji: heart }] });
+    const stored = await h.messageService.getMessage(message.id);
+    await expect(bobSaw).resolves.toMatchObject({
+      roomId: room.id,
+      messageId: message.id,
+      messageTimestamp: stored?.timestamp,
+      reactions: [{ userId: alice.user.id, emoji: heart }],
+    });
     await expect(laptopSaw).resolves.toMatchObject({ reactions: [{ userId: alice.user.id, emoji: heart }] });
 
     const laugh = fakeField('laugh');
