@@ -265,15 +265,7 @@
           "autoincrement": false
         }
       },
-      "indexes": {
-        "message_reactions_message_id_idx": {
-          "name": "message_reactions_message_id_idx",
-          "columns": [
-            "message_id"
-          ],
-          "isUnique": false
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "message_reactions_message_id_messages_id_fk": {
           "name": "message_reactions_message_id_messages_id_fk",

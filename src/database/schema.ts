@@ -202,10 +202,7 @@ export const messageReactions = sqliteTable(
     emoji: text('emoji').notNull(),
     updatedAt: text('updated_at').notNull(),
   },
-  (table) => [
-    primaryKey({ columns: [table.messageId, table.userId] }),
-    index('message_reactions_message_id_idx').on(table.messageId),
-  ],
+  (table) => [primaryKey({ columns: [table.messageId, table.userId] })],
 );
 
 export const uploads = sqliteTable(

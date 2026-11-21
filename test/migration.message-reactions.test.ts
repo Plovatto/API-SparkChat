@@ -53,7 +53,7 @@ describe(`migration ${TAG}`, () => {
     expect(await rows(client, 'SELECT * FROM message_reactions')).toEqual([]);
     await client.execute({ sql: `INSERT INTO message_reactions (message_id, user_id, emoji, updated_at) VALUES ('m1', 'u2', 'e', ?)`, args: [now] });
     await expect(client.execute({ sql: `INSERT INTO message_reactions (message_id, user_id, emoji, updated_at) VALUES ('m1', 'u2', 'f', ?)`, args: [now] })).rejects.toThrow();
-    expect(await rows(client, `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'message_reactions_message_id_idx'`)).toEqual([['message_reactions_message_id_idx']]);
+    expect(await rows(client, `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'message_reactions' AND sql IS NOT NULL`)).toEqual([]);
     client.close();
   }, 30000);
 });
