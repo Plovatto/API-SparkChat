@@ -50,6 +50,7 @@ describe(`migration ${TAG}`, () => {
     await migrate(db, { migrationsFolder: MIGRATIONS });
 
     expect(await rows(client, 'SELECT id, content FROM messages')).toEqual([['m1', 'oi']]);
+    expect(await rows(client, `SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'message_hidden_message_id_idx'`)).toEqual([['message_hidden_message_id_idx']]);
     await client.execute({ sql: `INSERT INTO message_hidden (user_id, message_id, hidden_at) VALUES ('u2', 'm1', ?)`, args: [now] });
     await expect(client.execute({ sql: `INSERT INTO message_hidden (user_id, message_id, hidden_at) VALUES ('u2', 'm1', ?)`, args: [now] })).rejects.toThrow();
     expect(await rows(client, 'SELECT user_id, message_id FROM message_hidden')).toEqual([['u2', 'm1']]);

@@ -201,7 +201,7 @@ export const messageHidden = sqliteTable(
       .references(() => messages.id, { onDelete: 'cascade' }),
     hiddenAt: text('hidden_at').notNull(),
   },
-  (table) => [primaryKey({ columns: [table.userId, table.messageId] })],
+  (table) => [primaryKey({ columns: [table.userId, table.messageId] }), index('message_hidden_message_id_idx').on(table.messageId)],
 );
 
 export const uploads = sqliteTable(
