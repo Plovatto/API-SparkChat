@@ -42,7 +42,7 @@ describe('upload registration', () => {
       .attach('image', PNG_BYTES, { filename: 'photo.png', contentType: 'image/png' });
 
     expect(response.status).toBe(507);
-    expect(response.body).toMatchObject({ code: 'upload.userQuotaExceeded' });
+    expect(response.body).toMatchObject({ code: 'upload.newAccountQuotaExceeded' });
   });
 });
 
