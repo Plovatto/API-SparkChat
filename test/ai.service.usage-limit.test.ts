@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AI_DAILY_MESSAGE_LIMIT } from '@/modules/ai/ai.model.js';
 import { AiRouter } from '@/modules/ai/ai.provider.js';
-import { AiUsageLimiter } from '@/modules/ai/ai.usage-limiter.js';
+import { AiUsageLimiter, AiUsageRepository } from '@/modules/ai/ai.usage-limiter.js';
 import { createFakeServer, setupAssistantRoom } from './support/ai-fixture.js';
+import { createTestDb } from './support/create-test-db.js';
+
+const TEST_DAILY_LIMIT = 4;
 
 async function setup() {
   const generateReply = vi.fn(() => Promise.resolve('ok'));
-  const usageLimiter = new AiUsageLimiter();
+  const usageLimiter = new AiUsageLimiter(new AiUsageRepository(await createTestDb()), TEST_DAILY_LIMIT);
   const context = await setupAssistantRoom({ router: new AiRouter([{ generateReply }]), usageLimiter });
   return { ...context, generateReply, usageLimiter };
 }
@@ -25,30 +27,32 @@ describe('AiService daily usage limit', () => {
     const { aiService, room, alice, usageLimiter, sendFromAlice } = await setup();
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     const io = createFakeServer();
-    for (let index = 0; index < AI_DAILY_MESSAGE_LIMIT - 3; index += 1) {
-      usageLimiter.registerUsage(alice.id);
+    for (let index = 0; index < TEST_DAILY_LIMIT - 3; index += 1) {
+      await usageLimiter.tryConsume(alice.id);
     }
 
     for (const content of ['um', 'dois', 'três']) {
       const message = await sendFromAlice(content);
-      aiService.handleIncomingMessage(io, room, message, 'pt');
+      await aiService.handleIncomingMessage(io, room, message, 'pt');
     }
 
-    expect(usageLimiter.isBlocked(alice.id)).toBe(true);
+    await vi.waitFor(async () => {
+      expect(await usageLimiter.isBlocked(alice.id)).toBe(true);
+    });
   });
 
   it('stops a user who reaches the limit in the middle of a batch and sends the daily limit notice', async () => {
     const { aiService, messageService, room, alice, generateReply, usageLimiter, sendFromAlice } = await setup();
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     const io = createFakeServer();
-    for (let index = 0; index < AI_DAILY_MESSAGE_LIMIT - 1; index += 1) {
-      usageLimiter.registerUsage(alice.id);
+    for (let index = 0; index < TEST_DAILY_LIMIT - 1; index += 1) {
+      await usageLimiter.tryConsume(alice.id);
     }
 
     const allowed = await sendFromAlice('última permitida');
-    aiService.handleIncomingMessage(io, room, allowed, 'pt');
+    await aiService.handleIncomingMessage(io, room, allowed, 'pt');
     const blocked = await sendFromAlice('passou do limite');
-    aiService.handleIncomingMessage(io, room, blocked, 'pt');
+    await aiService.handleIncomingMessage(io, room, blocked, 'pt');
 
     await vi.waitFor(async () => {
       expect(await listSystemEventTypes(messageService, room.id)).toEqual(['ai.dailyLimitReached']);
@@ -66,12 +70,12 @@ describe('AiService daily usage limit', () => {
   it('does not start a batch once the limit was already reached', async () => {
     const { aiService, messageService, room, alice, generateReply, usageLimiter, sendFromAlice } = await setup();
     vi.useFakeTimers({ toFake: ['setTimeout'] });
-    for (let index = 0; index < AI_DAILY_MESSAGE_LIMIT; index += 1) {
-      usageLimiter.registerUsage(alice.id);
+    for (let index = 0; index < TEST_DAILY_LIMIT; index += 1) {
+      await usageLimiter.tryConsume(alice.id);
     }
 
     const message = await sendFromAlice('oi');
-    aiService.handleIncomingMessage(createFakeServer(), room, message, 'pt');
+    await aiService.handleIncomingMessage(createFakeServer(), room, message, 'pt');
     await vi.advanceTimersByTimeAsync(3000);
 
     await vi.waitFor(async () => {

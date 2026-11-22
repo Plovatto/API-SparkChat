@@ -232,6 +232,13 @@
       "when": 1795277240473,
       "tag": "0032_message_hidden",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1795371240288,
+      "tag": "0033_ai_daily_usage",
+      "breakpoints": true
     }
   ]
 }

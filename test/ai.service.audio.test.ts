@@ -48,7 +48,7 @@ describe('AiService audio attachments', () => {
         key,
       },
     });
-    aiService.handleIncomingMessage(createFakeServer(), room, message, 'pt');
+    await aiService.handleIncomingMessage(createFakeServer(), room, message, 'pt');
 
     expect(await lastInlineMimeType(generateReply)).toBe('audio/ogg');
   });
@@ -73,7 +73,7 @@ describe('AiService audio attachments', () => {
         key,
       },
     });
-    aiService.handleIncomingMessage(createFakeServer(), room, message, 'pt');
+    await aiService.handleIncomingMessage(createFakeServer(), room, message, 'pt');
 
     expect(await lastInlineMimeType(generateReply)).toBe('audio/webm');
   });

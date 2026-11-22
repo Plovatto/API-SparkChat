@@ -83,6 +83,12 @@ export function createUserController(
     const ip = req.ip ?? 'unknown';
 
     if (!loginRateLimiter.reserveAttempt(nickname, ip)) {
+      const accountRetryAfterMs = loginRateLimiter.isBlockedForNetwork(nickname, ip) ? 0 : loginRateLimiter.accountRetryAfterMs(nickname, ip);
+      if (accountRetryAfterMs > 0) {
+        res.setHeader('Retry-After', String(Math.ceil(accountRetryAfterMs / 1000)));
+        res.status(429).json(errorPayload('rateLimit.accountAttempts'));
+        return;
+      }
       res.status(429).json(errorPayload('rateLimit.loginAttempts'));
       return;
     }

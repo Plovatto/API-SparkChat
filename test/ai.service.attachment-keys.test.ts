@@ -49,7 +49,7 @@ describe('AiService per-attachment keys', () => {
     const { url, key } = await context.storeSealedAttachment('uploads/files/notes.txt', Buffer.from('segredo do arquivo'), messageId);
 
     const message = await sendTextFile(context, messageId, url, key);
-    context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
+    await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
 
     expect((await lastTurn(context.generateReply))?.text).toContain('segredo do arquivo');
   });
@@ -77,7 +77,7 @@ describe('AiService per-attachment keys', () => {
         key,
       },
     });
-    context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
+    await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
 
     expect((await lastTurn(context.generateReply))?.inlineData).toHaveLength(1);
   });
@@ -89,7 +89,7 @@ describe('AiService per-attachment keys', () => {
     const { url } = await context.storeSealedAttachment('uploads/files/notes.txt', Buffer.from('segredo do arquivo'), messageId);
 
     const message = await sendTextFile(context, messageId, url, undefined);
-    context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
+    await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
 
     const turn = await lastTurn(context.generateReply);
     expect(turn?.text).not.toContain('segredo do arquivo');
@@ -104,7 +104,7 @@ describe('AiService per-attachment keys', () => {
     const keyForAnotherMessage = await context.sealFromAlice(rawKey, randomUUID(), 'file-key');
 
     const message = await sendTextFile(context, messageId, url, keyForAnotherMessage);
-    context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
+    await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
 
     expect((await lastTurn(context.generateReply))?.text).not.toContain('segredo do arquivo');
   });
@@ -117,7 +117,7 @@ describe('AiService per-attachment keys', () => {
     const url = `${await context.storeUpload(context.alice.id, 'uploads/files/moved.txt', sealed.bytes)}?e2e=1`;
 
     const message = await sendTextFile(context, messageId, url, await context.sealFromAlice(sealed.fileKey, messageId, 'file-key'));
-    context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
+    await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
 
     expect((await lastTurn(context.generateReply))?.text).not.toContain('segredo do arquivo');
   });

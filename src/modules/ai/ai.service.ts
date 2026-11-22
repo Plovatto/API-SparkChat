@@ -69,6 +69,7 @@ export class AiService {
   private readonly pendingBatchByRoom = new Map<string, PendingBatch>();
   private readonly pendingWelcomeByRoom = new Map<string, { locale: Locale; timer: ReturnType<typeof setTimeout> }>();
   private readonly roomKeyCache = new Map<string, Uint8Array>();
+  private readonly intakeByRoom = new Map<string, Promise<void>>();
 
   constructor(
     private readonly identity: AssistantIdentity,
@@ -158,14 +159,34 @@ export class AiService {
     io.to(room.id).emit('message:new', await this.messageService.toNewView(message));
   }
 
-  handleIncomingMessage(io: AppServer, room: RoomRecord, message: MessageRecord, locale: Locale): void {
+  handleIncomingMessage(io: AppServer, room: RoomRecord, message: MessageRecord, locale: Locale): Promise<void> {
     void this.markAsReadByAssistant(io, room, [message.id]);
 
-    if (this.usageLimiter.isBlocked(message.senderId)) {
-      void this.sendErrorMessage(io, room.id, 'ai.dailyLimitReached');
+    const previous = this.intakeByRoom.get(room.id) ?? Promise.resolve();
+    const next = previous.then(() => this.admitMessage(io, room, message, locale));
+    this.intakeByRoom.set(room.id, next);
+    void next.then(() => {
+      if (this.intakeByRoom.get(room.id) === next) {
+        this.intakeByRoom.delete(room.id);
+      }
+    });
+    return next;
+  }
+
+  private async admitMessage(io: AppServer, room: RoomRecord, message: MessageRecord, locale: Locale): Promise<void> {
+    let allowed: boolean;
+    try {
+      allowed = await this.usageLimiter.tryConsume(message.senderId);
+    } catch (error) {
+      logger.error({ err: error, roomId: room.id }, 'Falha ao registrar o uso diário do SparkAI');
+      await this.sendErrorMessage(io, room.id, 'ai.replyFailed').catch(() => undefined);
       return;
     }
-    this.usageLimiter.registerUsage(message.senderId);
+
+    if (!allowed) {
+      await this.sendErrorMessage(io, room.id, 'ai.dailyLimitReached').catch(() => undefined);
+      return;
+    }
 
     const existing = this.pendingBatchByRoom.get(room.id);
 

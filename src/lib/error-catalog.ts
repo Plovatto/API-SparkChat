@@ -121,6 +121,7 @@ export const ERROR_CATALOG = {
   'rateLimit.gifs': () => 'Muitas buscas de GIF em pouco tempo. Aguarde um momento e tente novamente.',
   'rateLimit.gifUpload': () => 'Muitos GIFs enviados em pouco tempo. Aguarde e tente novamente.',
   'rateLimit.loginAttempts': () => 'Muitas tentativas de login. Tente novamente mais tarde.',
+  'rateLimit.accountAttempts': () => 'Muitas tentativas de login nesta conta. Aguarde alguns segundos e tente novamente.',
   'rateLimit.passwordAttempts': () => 'Muitas tentativas de senha. Tente novamente mais tarde.',
   'rateLimit.resumeAttempts': () => 'Muitas tentativas de reconexão. Aguarde um instante.',
   'rateLimit.registrations': () => 'Muitas contas criadas a partir deste endereço. Tente novamente mais tarde.',

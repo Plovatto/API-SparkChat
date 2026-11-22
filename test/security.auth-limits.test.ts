@@ -180,6 +180,21 @@ describe('per-IP login failure budget', () => {
     }
 
     expect(limited?.body).toMatchObject({ code: 'rateLimit.loginAttempts' });
+  }, 30_000);
+});
+
+describe('cross-network account ceiling', () => {
+  it('answers 429 with an account code and Retry-After once many networks failed the same nickname', async () => {
+    const { app, loginRateLimiter } = await buildTestApp();
+    for (let i = 0; i < 20; i += 1) {
+      loginRateLimiter.reserveAttempt('ada', `198.51.${i}.1`);
+    }
+
+    const response = await request(app).post('/api/users/login').send({ nickname: 'ada', password: PASSWORD });
+
+    expect(response.status).toBe(429);
+    expect(response.body).toMatchObject({ code: 'rateLimit.accountAttempts' });
+    expect(Number(response.headers['retry-after'])).toBeGreaterThan(0);
   });
 });
 
