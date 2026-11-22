@@ -110,6 +110,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       loginRateLimiter: deps.loginRateLimiter,
       onSessionReleased: ({ socket: released, userId }) => {
         releaseSocketActivity(io, released, activityServices, userId);
+        deps.callService.releaseSocket(released.id, userId).catch(logHookFailure('onSessionReleased'));
       },
       onAuthenticated: ({ socket: authenticated, userId }) => {
         enforceUserSocketCap(io, userId, connectionLimits.maxPerUser);
@@ -136,6 +137,9 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
         }
       },
       shouldResetInsteadOfDelete: (room) => aiService.isAssistantRoom(room),
+      onUserBlocked: ({ userId, blockedUserId }) => {
+        deps.callService.endCallsBetween(userId, blockedUserId).catch(logHookFailure('onUserBlocked'));
+      },
       onRoomKeyPublished: ({ io: server, room }) => {
         if (aiService.isAssistantRoom(room)) {
           aiService.handleRoomKeyPublished(server, room).catch(logHookFailure('onRoomKeyPublished'));

@@ -35,6 +35,7 @@ export interface RoomSocketDeps {
   onRoomCreated?: OnRoomCreatedHook;
   shouldResetInsteadOfDelete?: ShouldResetInsteadOfDeleteHook;
   onRoomKeyPublished?: OnRoomKeyPublishedHook;
+  onUserBlocked?: (input: { userId: string; blockedUserId: string; roomId: string }) => void;
 }
 
 const ROOM_CODE_MIN_LENGTH = 8;
@@ -276,7 +277,13 @@ export function registerRoomSocketHandlers(io: AppServer, socket: AppSocket, dep
 
   socket.on('user:block', (payload) => {
     runSocketHandler(socket, 'user:block', () =>
-      handleBlockChange(io, socket, payload, 'user:blocked', (roomId, userId, blockedUserId) => deps.roomService.blockUser(roomId, userId, blockedUserId)),
+      handleBlockChange(io, socket, payload, 'user:blocked', async (roomId, userId, blockedUserId) => {
+        const room = await deps.roomService.blockUser(roomId, userId, blockedUserId);
+        if (room) {
+          deps.onUserBlocked?.({ userId, blockedUserId, roomId });
+        }
+        return room;
+      }),
     );
   });
 
