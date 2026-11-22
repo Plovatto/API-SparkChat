@@ -3,9 +3,7 @@ import { z } from 'zod';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import { AppError } from '../../lib/app-error.js';
 import type { AppSocket } from '../../sockets/events.js';
-import { extractErrorPayload } from '../../sockets/socket-errors.js';
-import { runSocketHandler } from '../../sockets/socket-handler.js';
-import { requireSocketUserId } from '../../sockets/socket-session.js';
+import { runAuthedSocketHandler } from '../../sockets/socket-handler.js';
 import { userRoom } from '../../sockets/user-sockets.js';
 import { MAX_GOSSIP_ENVELOPE_LENGTH, MAX_PROOF_ITEMS, type TransparencyService } from './transparency.service.js';
 
@@ -50,22 +48,8 @@ registerServerEvents('key-transparency', ['kt:config', 'kt:head', 'kt:proofs', '
 export function registerTransparencySocketHandlers(socket: AppSocket, deps: TransparencySocketDeps): void {
   const { transparencyService } = deps;
 
-  const handle = (event: string, work: (userId: string) => Promise<void>): void => {
-    runSocketHandler(socket, event, async () => {
-      const userId = requireSocketUserId(socket);
-      if (!userId) {
-        return;
-      }
-      try {
-        await work(userId);
-      } catch (error) {
-        socket.emit('error', { ...extractErrorPayload(error), event });
-      }
-    });
-  };
-
   socket.on('kt:get-head', (payload) => {
-    handle('kt:get-head', async () => {
+    runAuthedSocketHandler(socket, 'kt:get-head', async () => {
       const input = getHeadSchema.parse(payload);
       const head = await transparencyService.head();
       socket.emit('kt:head', { ...(input?.requestId ? { requestId: input.requestId } : {}), head });
@@ -73,7 +57,7 @@ export function registerTransparencySocketHandlers(socket: AppSocket, deps: Tran
   });
 
   socket.on('kt:get-proofs', (payload) => {
-    handle('kt:get-proofs', async () => {
+    runAuthedSocketHandler(socket, 'kt:get-proofs', async () => {
       const input = getProofsSchema.parse(payload);
       const { head, proofs } = await transparencyService.proofs(input.items);
       socket.emit('kt:proofs', { ...(input.requestId ? { requestId: input.requestId } : {}), head, proofs });
@@ -81,7 +65,7 @@ export function registerTransparencySocketHandlers(socket: AppSocket, deps: Tran
   });
 
   socket.on('kt:get-consistency', (payload) => {
-    handle('kt:get-consistency', async () => {
+    runAuthedSocketHandler(socket, 'kt:get-consistency', async () => {
       const input = getConsistencySchema.parse(payload);
       const proof = await transparencyService.consistency(input.first, input.second);
       if (!proof) {
@@ -97,7 +81,7 @@ export function registerTransparencySocketHandlers(socket: AppSocket, deps: Tran
   });
 
   socket.on('kt:audit', (payload) => {
-    handle('kt:audit', async (userId) => {
+    runAuthedSocketHandler(socket, 'kt:audit', async (userId) => {
       const input = auditSchema.parse(payload);
       const result = await transparencyService.audit(userId, input?.fromVersion ?? 1);
       socket.emit('kt:audit', { ...(input?.requestId ? { requestId: input.requestId } : {}), ...result });
@@ -105,7 +89,7 @@ export function registerTransparencySocketHandlers(socket: AppSocket, deps: Tran
   });
 
   socket.on('kt:gossip', (payload) => {
-    handle('kt:gossip', async (userId) => {
+    runAuthedSocketHandler(socket, 'kt:gossip', async (userId) => {
       const input = gossipSchema.parse(payload);
       const contacts = await deps.getContactIds(userId);
       if (input.to === userId || !contacts.includes(input.to)) {

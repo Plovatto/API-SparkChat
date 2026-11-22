@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AppSocket } from '@/sockets/events.js';
-import { runSocketHandler } from '@/sockets/socket-handler.js';
+import { AppError } from '@/lib/app-error.js';
+import { runAuthedSocketHandler, runSocketHandler } from '@/sockets/socket-handler.js';
 
-function fakeSocket() {
+function fakeSocket(userId?: string) {
   const emit = vi.fn();
-  return { socket: { id: 'socket-1', connected: true, emit } as unknown as AppSocket, emit };
+  return { socket: { id: 'socket-1', connected: true, emit, data: { userId } } as unknown as AppSocket, emit };
 }
 
 describe('runSocketHandler', () => {
@@ -30,5 +31,38 @@ describe('runSocketHandler', () => {
       }),
     ).not.toThrow();
     expect(emit).toHaveBeenCalledWith('error', expect.objectContaining({ code: 'internal.unexpected' }));
+  });
+});
+
+describe('runAuthedSocketHandler', () => {
+  it('refuses an unauthenticated socket without running the work', async () => {
+    const { socket, emit } = fakeSocket();
+    const work = vi.fn();
+
+    runAuthedSocketHandler(socket, 'push:subscribe', work);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(work).not.toHaveBeenCalled();
+    expect(emit).toHaveBeenCalledWith('error', expect.objectContaining({ code: 'auth.unauthenticated' }));
+  });
+
+  it('passes the session user id to the work', async () => {
+    const { socket, emit } = fakeSocket('user-1');
+    const work = vi.fn(() => Promise.resolve());
+
+    runAuthedSocketHandler(socket, 'push:subscribe', work);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(work).toHaveBeenCalledWith('user-1');
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('reports a failure as the error payload tagged with the event', async () => {
+    const { socket, emit } = fakeSocket('user-1');
+
+    runAuthedSocketHandler(socket, 'kt:get-head', () => Promise.reject(AppError.of('room.notFound')));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(emit).toHaveBeenCalledWith('error', expect.objectContaining({ code: 'room.notFound', event: 'kt:get-head' }));
   });
 });

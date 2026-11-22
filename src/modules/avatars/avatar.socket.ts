@@ -2,9 +2,7 @@ import '../../docs/zod-extend.js';
 import { z } from 'zod';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
-import { extractErrorPayload } from '../../sockets/socket-errors.js';
-import { runSocketHandler } from '../../sockets/socket-handler.js';
-import { requireSocketUserId } from '../../sockets/socket-session.js';
+import { runAuthedSocketHandler } from '../../sockets/socket-handler.js';
 import { emitToUser, userRoom } from '../../sockets/user-sockets.js';
 import { KEY_ID_PATTERN, type RoomService } from '../rooms/index.js';
 import {
@@ -142,57 +140,43 @@ async function announceProfileKeys(io: AppServer, deps: AvatarSocketDeps, view: 
 export function registerAvatarSocketHandlers(io: AppServer, socket: AppSocket, deps: AvatarSocketDeps): void {
   const { avatarService } = deps;
 
-  const handle = (event: string, work: (userId: string) => Promise<void>): void => {
-    runSocketHandler(socket, event, async () => {
-      const userId = requireSocketUserId(socket);
-      if (!userId) {
-        return;
-      }
-      try {
-        await work(userId);
-      } catch (error) {
-        socket.emit('error', { ...extractErrorPayload(error), event });
-      }
-    });
-  };
-
   socket.on('user:set-avatar', (payload) => {
-    handle('user:set-avatar', async (userId) => {
+    runAuthedSocketHandler(socket, 'user:set-avatar', async (userId) => {
       const input = setUserAvatarPayloadSchema.parse(payload);
       await announceUserAvatar(io, deps, await avatarService.setUserAvatar(userId, input));
     });
   });
 
   socket.on('user:clear-avatar', (payload) => {
-    handle('user:clear-avatar', async (userId) => {
+    runAuthedSocketHandler(socket, 'user:clear-avatar', async (userId) => {
       clearUserAvatarPayloadSchema.parse(payload);
       await announceUserAvatar(io, deps, await avatarService.clearUserAvatar(userId));
     });
   });
 
   socket.on('room:set-avatar', (payload) => {
-    handle('room:set-avatar', async (userId) => {
+    runAuthedSocketHandler(socket, 'room:set-avatar', async (userId) => {
       const input = setRoomAvatarPayloadSchema.parse(payload);
       await announceRoomAvatar(io, deps, await avatarService.setRoomAvatar(userId, input));
     });
   });
 
   socket.on('room:clear-avatar', (payload) => {
-    handle('room:clear-avatar', async (userId) => {
+    runAuthedSocketHandler(socket, 'room:clear-avatar', async (userId) => {
       const { roomId } = clearRoomAvatarPayloadSchema.parse(payload);
       await announceRoomAvatar(io, deps, await avatarService.clearRoomAvatar(userId, roomId));
     });
   });
 
   socket.on('room:publish-profile-key', (payload) => {
-    handle('room:publish-profile-key', async (userId) => {
+    runAuthedSocketHandler(socket, 'room:publish-profile-key', async (userId) => {
       const input = publishProfileKeyPayloadSchema.parse(payload);
       await announceProfileKeys(io, deps, await avatarService.publishProfileKey(userId, input));
     });
   });
 
   socket.on('room:rewrap-profile-keys', (payload) => {
-    handle('room:rewrap-profile-keys', async (userId) => {
+    runAuthedSocketHandler(socket, 'room:rewrap-profile-keys', async (userId) => {
       const input = rewrapProfileKeysPayloadSchema.parse(payload);
       await announceProfileKeys(io, deps, await avatarService.rewrapProfileKeys(userId, input));
     });
