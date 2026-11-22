@@ -166,6 +166,24 @@ export class CallService {
     return device !== undefined && this.boundDevices.get(call.id)?.[role] === device;
   }
 
+  private isBoundSocketConnected(call: CallRecord, role: CallRole): boolean {
+    const bound = this.boundSocket(call, role);
+    return bound !== undefined && this.io.sockets.sockets.has(bound);
+  }
+
+  private dropQueuedSignals(callId: string, role: CallRole): void {
+    const queue = this.pending.get(callId);
+    if (!queue) {
+      return;
+    }
+    const rest = queue.filter((entry) => entry.role !== role);
+    if (rest.length === 0) {
+      this.pending.delete(callId);
+    } else {
+      this.pending.set(callId, rest);
+    }
+  }
+
   private purgeSocketDevices(): void {
     for (const socketId of this.socketDevices.keys()) {
       if (!this.io.sockets.sockets.has(socketId)) {
@@ -487,6 +505,7 @@ export class CallService {
         return;
       }
       this.markBeat(call.id, role);
+      this.dropQueuedSignals(call.id, role);
       await this.rememberMedia(call, role, actor.socketId, media);
       await this.repository.touchHeartbeat(callId, new Date(this.now()).toISOString());
       if (relayed === false) {
@@ -591,7 +610,7 @@ export class CallService {
       transferable: this.isTransferable(call, role, socketId ?? ''),
       peerLive: this.isPeerLive(call, role),
     };
-    if (socketId !== null && payload.transferable && this.isSameDevice(call, role, socketId)) {
+    if (socketId !== null && payload.transferable && !this.isBoundSocketConnected(call, role) && this.isSameDevice(call, role, socketId)) {
       payload.resumable = true;
     }
     const media = this.mediaStates.get(call.id)?.[role];
