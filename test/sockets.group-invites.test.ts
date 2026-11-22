@@ -415,9 +415,50 @@ describe('joining a group by invite', () => {
       bobClient,
       'room:join-by-invite',
       { roomId, inviteToken: first.invite.inviteToken, proof: fakeProof(bob.user.id) },
-      { code: 'room.notFound', event: 'room:join-by-invite' },
+      { code: 'room.removedFromGroup', event: 'room:join-by-invite' },
     );
     expect(await h.db.select().from(roomParticipants).where(eq(roomParticipants.userId, bob.user.id))).toEqual([]);
+  });
+
+  it('tells a removed member they were removed when they open an old invite link after the rotation', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+    const { roomId, first } = await createGroupWithKey(alice, aliceClient);
+    await joinByInvite(bobClient, roomId, bob.user.id, first.invite.inviteToken);
+    const left = waitForEvent(bobClient, 'group:left');
+    aliceClient.emit('group:remove-member', { roomId, userId: bob.user.id });
+    await left;
+
+    await expectError(
+      bobClient,
+      'room:join-by-invite',
+      { roomId, inviteToken: first.invite.inviteToken, proof: fakeProof(bob.user.id) },
+      { code: 'room.removedFromGroup', event: 'room:join-by-invite' },
+    );
+  });
+
+  it('marks the group:left sent to a removed member with the removal reason and keeps a voluntary leave unmarked', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const carol = await h.createAccount('Carol');
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+    const carolClient = await h.connectAs(carol);
+    const { roomId, first } = await createGroupWithKey(alice, aliceClient);
+    await joinByInvite(bobClient, roomId, bob.user.id, first.invite.inviteToken);
+    await joinByInvite(carolClient, roomId, carol.user.id, first.invite.inviteToken);
+
+    const removed = waitForEvent(bobClient, 'group:left');
+    aliceClient.emit('group:remove-member', { roomId, userId: bob.user.id });
+    await expect(removed).resolves.toEqual({ roomId, reason: 'removed' });
+
+    const leftByChoice = waitForEvent(carolClient, 'group:left');
+    carolClient.emit('group:leave', { roomId });
+    await expect(leftByChoice).resolves.toEqual({ roomId });
   });
 
   it('answers a group room code exactly like an unknown code', async () => {

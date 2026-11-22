@@ -65,7 +65,7 @@ describe('room membership changes', () => {
     await roomService.removeMember(group.id, alice.id, bob.id);
 
     expect(await roomRepository.addParticipant(group.id, bob.id, new Date().toISOString())).toBe(false);
-    await expect(joinGroup(group.id, bob.id)).rejects.toMatchObject({ code: 'room.notFound' });
+    await expect(joinGroup(group.id, bob.id)).rejects.toMatchObject({ code: 'room.removedFromGroup' });
   });
 
   it('ignores a leftover participant row of a banned user on every membership check', async () => {

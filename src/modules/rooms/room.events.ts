@@ -39,7 +39,7 @@ export interface RoomServerToClientEvents {
   'room:deleted': (payload: { roomId: string }) => void;
   'rooms:list': (payload: { rooms: RoomSummary[] }) => void;
   'group:user-joined': (payload: { roomId: string; participants: RoomParticipant[] }) => void;
-  'group:left': (payload: { roomId: string }) => void;
+  'group:left': (payload: { roomId: string; reason?: 'removed' }) => void;
   'group:user-left': (payload: {
     roomId: string;
     userId: string;
