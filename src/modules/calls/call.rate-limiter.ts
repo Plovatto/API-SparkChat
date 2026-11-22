@@ -8,6 +8,7 @@ const MAX_SIGNALS_PER_WINDOW = 60;
 const ICE_SERVERS_COOLDOWN_MS = 10_000;
 const MAX_ICE_SERVERS_PER_USER = 10;
 const MAX_ICE_SERVERS_PER_USER_PER_DAY = 100;
+const ICE_SERVERS_REFILL_MS = 30 * 60 * 1000;
 const ICE_SERVERS_RETENTION_MS = 5 * 60 * 60 * 1000;
 const CLOSED_CALL_RETENTION_MS = 60_000;
 const TRANSFER_WINDOW_MS = 60_000;
@@ -19,6 +20,7 @@ interface SignalWindow {
 }
 
 interface IceServersUsage {
+  firstAt: number;
   lastAt: number;
   count: number;
 }
@@ -83,7 +85,7 @@ export class CallRateLimiter {
     if (socketId !== undefined && this.iceBypass.get(key) === socketId) {
       this.iceBypass.delete(key);
       const usage = this.iceServers.get(key);
-      this.iceServers.set(key, { lastAt: this.now(), count: usage?.count ?? 1 });
+      this.iceServers.set(key, { firstAt: usage?.firstAt ?? this.now(), lastAt: this.now(), count: usage?.count ?? 1 });
       return true;
     }
     const current = this.now();
@@ -93,10 +95,11 @@ export class CallRateLimiter {
       this.dailyIceServers.set(userId, daily);
       return false;
     }
-    if (usage && (current - usage.lastAt < ICE_SERVERS_COOLDOWN_MS || usage.count >= MAX_ICE_SERVERS_PER_USER)) {
+    const allowance = usage ? MAX_ICE_SERVERS_PER_USER + Math.floor((current - usage.firstAt) / ICE_SERVERS_REFILL_MS) : MAX_ICE_SERVERS_PER_USER;
+    if (usage && (current - usage.lastAt < ICE_SERVERS_COOLDOWN_MS || usage.count >= allowance)) {
       return false;
     }
-    this.iceServers.set(key, { lastAt: current, count: (usage?.count ?? 0) + 1 });
+    this.iceServers.set(key, { firstAt: usage?.firstAt ?? current, lastAt: current, count: (usage?.count ?? 0) + 1 });
     daily.push(current);
     this.dailyIceServers.set(userId, daily);
     return true;

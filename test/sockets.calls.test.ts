@@ -1094,25 +1094,29 @@ describe('server owned timers', () => {
     expect((await signal).envelope).toBe('both-back');
   });
 
-  it('completes calls at the four hour limit', async () => {
+});
+
+describe('long calls', () => {
+  it('keeps a healthy call past four hours while both participants stay connected', async () => {
     const { h, room, aliceClient, bobClient } = await setup();
     const callId = await ring(h, aliceClient, [bobClient], room.id);
     await answer(aliceClient, bobClient, callId);
-    const answeredAt = clock.now;
-
-    clock.now = answeredAt + 4 * 3_600_000 - 1000;
-    await h.callRepository.touchHeartbeat(callId, new Date(clock.now).toISOString());
-    await h.callService.runMaintenance();
-    expect((await callRow(h, callId)).state).toBe('accepted');
-
-    clock.now = answeredAt + 4 * 3_600_000 + 1000;
-    await h.callRepository.touchHeartbeat(callId, new Date(clock.now).toISOString());
-    const ended = waitForEvent<CallEndedEvent>(aliceClient, 'call:ended');
+    clock.now += 4 * 60 * 60 * 1000 + 1_000;
     await h.callService.runMaintenance();
 
-    const event = await ended;
-    expect(event.reason).toBe('completed');
-    expect(event.endedAt).toBe(new Date(answeredAt + 4 * 3_600_000).toISOString());
+    expect((await callRow(h, callId)).state).not.toBe('ended');
+  });
+
+  it('still ends a call past four hours once a participant is gone', async () => {
+    const { h, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    bobClient.disconnect();
+    await settle();
+    clock.now += 4 * 60 * 60 * 1000 + 1_000;
+    await h.callService.runMaintenance();
+
+    expect((await callRow(h, callId)).endReason).toBe('completed');
   });
 });
 

@@ -902,6 +902,13 @@ export class CallService {
     return socket !== undefined && socket.data.userId === userId;
   }
 
+  private bothParticipantsConnected(call: CallRecord): boolean {
+    return (['caller', 'callee'] as const).every((role) => {
+      const bound = this.boundSocket(call, role);
+      return bound !== undefined && this.io.sockets.sockets.has(bound);
+    });
+  }
+
   private hasConnectedParticipant(call: CallRecord): boolean {
     return (['caller', 'callee'] as const).some((role) => {
       const bound = this.boundSocket(call, role);
@@ -996,7 +1003,7 @@ export class CallService {
         continue;
       }
 
-      if (call.answeredAt && current - Date.parse(call.answeredAt) >= MAX_CALL_DURATION_MS) {
+      if (call.answeredAt && current - Date.parse(call.answeredAt) >= MAX_CALL_DURATION_MS && !this.bothParticipantsConnected(call)) {
         await this.finish(call.id, { type: 'max-duration' }, Date.parse(call.answeredAt) + MAX_CALL_DURATION_MS);
         continue;
       }
