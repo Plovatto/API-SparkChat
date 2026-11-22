@@ -41,7 +41,7 @@ registry.registerPath({
       content: { 'application/json': { schema: errorResponseSchema } },
     },
     429: {
-      description: 'Muitas tentativas de login',
+      description: 'Muitas tentativas de login (rateLimit.loginAttempts) ou atraso progressivo da conta (rateLimit.accountAttempts, com Retry-After)',
       content: { 'application/json': { schema: errorResponseSchema } },
     },
   },

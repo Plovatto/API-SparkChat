@@ -190,4 +190,78 @@ describe('LoginRateLimiter', () => {
 
     expect(limiter.reserveResume('socket-a', '10.0.1.1')).toBe(true);
   });
+
+  it('imposes a delay on an account guessed from many different networks', () => {
+    vi.useFakeTimers();
+    const limiter = new LoginRateLimiter();
+
+    for (let i = 0; i < 20; i += 1) {
+      expect(limiter.reserveAttempt('ada', `198.${i}.0.1`)).toBe(true);
+    }
+
+    expect(limiter.isBlocked('ada', '203.0.113.7')).toBe(true);
+    expect(limiter.accountRetryAfterMs('ada', '203.0.113.7')).toBeGreaterThan(0);
+    expect(limiter.reserveAttempt('ada', '203.0.113.7')).toBe(false);
+    expect(limiter.isBlocked('grace', '203.0.113.7')).toBe(false);
+  });
+
+  it('keeps the account delay short so a victim is never locked out for long', () => {
+    vi.useFakeTimers();
+    const limiter = new LoginRateLimiter();
+
+    for (let i = 0; i < 200; i += 1) {
+      limiter.reserveAttempt('ada', `10.${Math.floor(i / 250)}.${i % 250}.1`);
+      vi.advanceTimersByTime(limiter.accountRetryAfterMs('ada', '203.0.113.7'));
+    }
+
+    expect(limiter.accountRetryAfterMs('ada', '203.0.113.7')).toBeLessThanOrEqual(60_000);
+    vi.advanceTimersByTime(60_000);
+    expect(limiter.isBlocked('ada', '203.0.113.7')).toBe(false);
+  });
+
+  it('caps account guesses across networks within the window', () => {
+    vi.useFakeTimers();
+    const limiter = new LoginRateLimiter();
+    let accepted = 0;
+
+    for (let second = 0; second < 15 * 60; second += 1) {
+      if (limiter.reserveAttempt('ada', `172.${second % 200}.${Math.floor(second / 200)}.1`)) {
+        accepted += 1;
+      }
+      vi.advanceTimersByTime(1000);
+    }
+
+    expect(accepted).toBeLessThan(60);
+  });
+
+  it('lets a network that recently signed in to the account bypass the cross-network delay', () => {
+    vi.useFakeTimers();
+    const limiter = new LoginRateLimiter();
+
+    expect(limiter.reserveAttempt('ada', '192.0.2.10')).toBe(true);
+    limiter.registerSuccess('ada', '192.0.2.10');
+
+    for (let i = 0; i < 30; i += 1) {
+      limiter.reserveAttempt('ada', `198.${i}.0.1`);
+    }
+
+    expect(limiter.isBlocked('ada', '203.0.113.7')).toBe(true);
+    expect(limiter.isBlocked('ada', '192.0.2.10')).toBe(false);
+    expect(limiter.accountRetryAfterMs('ada', '192.0.2.10')).toBe(0);
+  });
+
+  it('does not count successful or unfinished attempts toward the cross-network ceiling', () => {
+    const limiter = new LoginRateLimiter();
+
+    for (let i = 0; i < 40; i += 1) {
+      limiter.reserveAttempt('ada', `198.${i}.0.1`);
+      if (i % 2 === 0) {
+        limiter.registerSuccess('ada', `198.${i}.0.1`);
+      } else {
+        limiter.releaseAttempt('ada', `198.${i}.0.1`);
+      }
+    }
+
+    expect(limiter.isBlocked('ada', '203.0.113.7')).toBe(false);
+  });
 });

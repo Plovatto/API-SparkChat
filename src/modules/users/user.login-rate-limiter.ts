@@ -8,6 +8,11 @@ const ACCOUNT_WINDOW_MS = 60 * 60 * 1000;
 const ACCOUNT_FREE_ATTEMPTS = 10;
 const ACCOUNT_BASE_BACKOFF_MS = 1000;
 const ACCOUNT_MAX_BACKOFF_MS = 15 * 60 * 1000;
+const GLOBAL_ACCOUNT_WINDOW_MS = 15 * 60 * 1000;
+const GLOBAL_ACCOUNT_FREE_ATTEMPTS = 20;
+const GLOBAL_ACCOUNT_BASE_DELAY_MS = 2000;
+const GLOBAL_ACCOUNT_MAX_DELAY_MS = 60 * 1000;
+const TRUSTED_NETWORK_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const REAUTH_MAX_ATTEMPTS = 5;
 const RESUME_WINDOW_MS = 60 * 1000;
 const MAX_RESUMES_PER_SOCKET = 20;
@@ -33,6 +38,14 @@ export function networkPrefix(ip: string): string {
 
 function buildAccountKey(nickname: string, ip: string): string {
   return `account:${normalizeNickname(nickname)}:${networkPrefix(ip)}`;
+}
+
+function buildGlobalAccountKey(nickname: string): string {
+  return `account-global:${normalizeNickname(nickname)}`;
+}
+
+function buildTrustedNetworkKey(nickname: string, ip: string): string {
+  return `trusted:${normalizeNickname(nickname)}:${networkPrefix(ip)}`;
 }
 
 function buildIpFailureKey(ip: string): string {
@@ -76,29 +89,68 @@ export function accountBackoffMs(attempts: number): number {
   return Math.min(ACCOUNT_BASE_BACKOFF_MS * 2 ** exponent, ACCOUNT_MAX_BACKOFF_MS);
 }
 
+export function globalAccountDelayMs(attempts: number): number {
+  if (attempts < GLOBAL_ACCOUNT_FREE_ATTEMPTS) {
+    return 0;
+  }
+
+  const exponent = Math.min(attempts - GLOBAL_ACCOUNT_FREE_ATTEMPTS, 16);
+  return Math.min(GLOBAL_ACCOUNT_BASE_DELAY_MS * 2 ** exponent, GLOBAL_ACCOUNT_MAX_DELAY_MS);
+}
+
 export class LoginRateLimiter {
   private readonly failures = new SlidingWindowCounter(WINDOW_MS);
   private readonly accountFailures = new SlidingWindowCounter(ACCOUNT_WINDOW_MS);
+  private readonly globalAccountFailures = new SlidingWindowCounter(GLOBAL_ACCOUNT_WINDOW_MS);
+  private readonly trustedNetworks = new SlidingWindowCounter(TRUSTED_NETWORK_WINDOW_MS);
   private readonly resumes = new SlidingWindowCounter(RESUME_WINDOW_MS);
   private readonly authParamsLookups = new SlidingWindowCounter(WINDOW_MS);
 
   get trackedKeys(): number {
-    return this.failures.size + this.accountFailures.size + this.resumes.size + this.authParamsLookups.size;
+    return (
+      this.failures.size +
+      this.accountFailures.size +
+      this.globalAccountFailures.size +
+      this.trustedNetworks.size +
+      this.resumes.size +
+      this.authParamsLookups.size
+    );
   }
 
   sweep(): void {
     this.failures.sweep();
     this.accountFailures.sweep();
+    this.globalAccountFailures.sweep();
+    this.trustedNetworks.sweep();
     this.resumes.sweep();
     this.authParamsLookups.sweep();
   }
 
   isBlocked(nickname: string, ip: string): boolean {
+    return this.isBlockedForNetwork(nickname, ip) || this.accountRetryAfterMs(nickname, ip) > 0;
+  }
+
+  isBlockedForNetwork(nickname: string, ip: string): boolean {
     return (
       this.failures.count(buildKey(nickname, ip)) >= MAX_ATTEMPTS ||
       this.failures.count(buildIpFailureKey(ip)) >= MAX_IP_FAILURES ||
       this.isAccountBackingOff(nickname, ip)
     );
+  }
+
+  accountRetryAfterMs(nickname: string, ip: string): number {
+    if (this.trustedNetworks.count(buildTrustedNetworkKey(nickname, ip)) > 0) {
+      return 0;
+    }
+
+    const key = buildGlobalAccountKey(nickname);
+    const delayMs = globalAccountDelayMs(this.globalAccountFailures.count(key));
+    if (delayMs === 0) {
+      return 0;
+    }
+
+    const lastAttempt = this.globalAccountFailures.latest(key) ?? 0;
+    return Math.max(0, lastAttempt + delayMs - Date.now());
   }
 
   reserveAttempt(nickname: string, ip: string): boolean {
@@ -108,6 +160,7 @@ export class LoginRateLimiter {
 
     this.failures.record(buildKey(nickname, ip));
     this.accountFailures.record(buildAccountKey(nickname, ip));
+    this.globalAccountFailures.record(buildGlobalAccountKey(nickname));
     this.failures.record(buildIpFailureKey(ip));
     return true;
   }
@@ -115,12 +168,15 @@ export class LoginRateLimiter {
   releaseAttempt(nickname: string, ip: string): void {
     this.failures.release(buildKey(nickname, ip));
     this.accountFailures.release(buildAccountKey(nickname, ip));
+    this.globalAccountFailures.release(buildGlobalAccountKey(nickname));
     this.failures.release(buildIpFailureKey(ip));
   }
 
   registerSuccess(nickname: string, ip: string): void {
     this.failures.reset(buildKey(nickname, ip));
     this.accountFailures.release(buildAccountKey(nickname, ip));
+    this.globalAccountFailures.release(buildGlobalAccountKey(nickname));
+    this.trustedNetworks.record(buildTrustedNetworkKey(nickname, ip));
     this.failures.release(buildIpFailureKey(ip));
   }
 
