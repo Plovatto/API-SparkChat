@@ -291,6 +291,45 @@ export class CallService {
     });
   }
 
+  async releaseSocket(socketId: string, userId: string): Promise<void> {
+    this.socketDevices.delete(socketId);
+    for (const [callId, pending] of this.pendingTransfers) {
+      if (pending.socketId === socketId) {
+        this.pendingTransfers.delete(callId);
+      }
+    }
+    const call = await this.repository.findOpenForUser(userId);
+    if (!call) {
+      return;
+    }
+    const role = roleOf(call, userId);
+    if (!role) {
+      return;
+    }
+    const bound = this.boundSocket(call, role);
+    const ringingCaller = call.state === 'ringing' && role === 'caller' && bound === socketId;
+    if (bound !== socketId && !ringingCaller) {
+      return;
+    }
+    const bindings = this.bindings.get(call.id);
+    if (bindings) {
+      delete bindings[role];
+    }
+    if (call.state === 'ringing' && role === 'callee') {
+      return;
+    }
+    await this.finish(call.id, { type: 'hangup', by: role });
+  }
+
+  async endCallsBetween(userId: string, otherUserId: string): Promise<void> {
+    const call = await this.repository.findOpenForUser(userId);
+    if (!call || roleOf(call, otherUserId) === null) {
+      return;
+    }
+    const role = roleOf(call, userId) ?? 'caller';
+    await this.finish(call.id, call.state === 'ringing' && role === 'callee' ? { type: 'decline' } : { type: 'hangup', by: role });
+  }
+
   async accept(actor: CallActor, input: { callId: string; envelope: string }): Promise<void> {
     this.requireEnabled();
     assertEnvelopeSize(input.envelope);
@@ -439,7 +478,7 @@ export class CallService {
     const movingRole: CallRole = role === 'caller' ? 'callee' : 'caller';
     this.expirePendingTransfers();
     const pending = this.pendingTransfers.get(call.id);
-    if (!pending || pending.role !== movingRole || !this.io.sockets.sockets.has(pending.socketId)) {
+    if (!pending || pending.role !== movingRole || !this.socketBelongsTo(pending.socketId, roleUserId(call, movingRole))) {
       this.clearPendingTransfer(call.id);
       throw AppError.of('call.invalidState');
     }
@@ -489,7 +528,7 @@ export class CallService {
     const peerRole: CallRole = role === 'caller' ? 'callee' : 'caller';
     const payload = { callId: call.id, from: actor.userId, envelope: input.envelope };
     const peerSocket = this.boundSocket(call, peerRole);
-    if (peerSocket !== undefined && this.io.sockets.sockets.has(peerSocket)) {
+    if (peerSocket !== undefined && this.socketBelongsTo(peerSocket, roleUserId(call, peerRole))) {
       this.io.to(peerSocket).emit('call:signal', payload);
       if (this.now() - this.lastBeatOf(call, peerRole) >= SIGNAL_STALE_MS) {
         this.enqueueSignal(call.id, peerRole, payload);
@@ -861,6 +900,11 @@ export class CallService {
     if (this.boundSocket(call, role) !== socketId) {
       throw AppError.of('call.notAllowed');
     }
+  }
+
+  private socketBelongsTo(socketId: string, userId: string): boolean {
+    const socket = this.io.sockets.sockets.get(socketId);
+    return socket !== undefined && socket.data.userId === userId;
   }
 
   private bothParticipantsConnected(call: CallRecord): boolean {

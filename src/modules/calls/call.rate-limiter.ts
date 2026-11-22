@@ -7,6 +7,7 @@ const SIGNAL_WINDOW_MS = 1000;
 const MAX_SIGNALS_PER_WINDOW = 60;
 const ICE_SERVERS_COOLDOWN_MS = 10_000;
 const MAX_ICE_SERVERS_PER_USER = 10;
+const MAX_ICE_SERVERS_PER_USER_PER_DAY = 100;
 const ICE_SERVERS_REFILL_MS = 30 * 60 * 1000;
 const ICE_SERVERS_RETENTION_MS = 5 * 60 * 60 * 1000;
 const CLOSED_CALL_RETENTION_MS = 60_000;
@@ -29,6 +30,7 @@ export class CallRateLimiter {
   private readonly pairStarts = new Map<string, number[]>();
   private readonly signals = new Map<string, SignalWindow>();
   private readonly iceServers = new Map<string, IceServersUsage>();
+  private readonly dailyIceServers = new Map<string, number[]>();
   private readonly closed = new Map<string, number>();
   private readonly transfers = new Map<string, number[]>();
   private readonly iceBypass = new Map<string, string>();
@@ -88,11 +90,18 @@ export class CallRateLimiter {
     }
     const current = this.now();
     const usage = this.iceServers.get(key);
+    const daily = (this.dailyIceServers.get(userId) ?? []).filter((timestamp) => timestamp > current - DAY_MS);
+    if (daily.length >= MAX_ICE_SERVERS_PER_USER_PER_DAY) {
+      this.dailyIceServers.set(userId, daily);
+      return false;
+    }
     const allowance = usage ? MAX_ICE_SERVERS_PER_USER + Math.floor((current - usage.firstAt) / ICE_SERVERS_REFILL_MS) : MAX_ICE_SERVERS_PER_USER;
     if (usage && (current - usage.lastAt < ICE_SERVERS_COOLDOWN_MS || usage.count >= allowance)) {
       return false;
     }
     this.iceServers.set(key, { firstAt: usage?.firstAt ?? current, lastAt: current, count: (usage?.count ?? 0) + 1 });
+    daily.push(current);
+    this.dailyIceServers.set(userId, daily);
     return true;
   }
 
@@ -140,6 +149,14 @@ export class CallRateLimiter {
     for (const [key, window] of this.signals) {
       if (current - window.startedAt >= SIGNAL_WINDOW_MS) {
         this.signals.delete(key);
+      }
+    }
+    for (const [userId, timestamps] of this.dailyIceServers) {
+      const fresh = timestamps.filter((timestamp) => timestamp > current - DAY_MS);
+      if (fresh.length === 0) {
+        this.dailyIceServers.delete(userId);
+      } else {
+        this.dailyIceServers.set(userId, fresh);
       }
     }
     for (const [key, usage] of this.iceServers) {

@@ -1120,6 +1120,53 @@ describe('long calls', () => {
   });
 });
 
+describe('call session security', () => {
+  it('ends the call and stops relaying signals when the bound socket logs out without disconnecting', async () => {
+    const { h, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const ended = waitForEvent<CallEndedEvent>(aliceClient, 'call:ended');
+    const leaked = collectEvents(bobClient, 'call:signal');
+
+    bobClient.emit('user:logout', {});
+    expect((await ended).callId).toBe(callId);
+    aliceClient.emit('call:signal', { callId, to: bob.user.id, envelope: 'after-logout' });
+    await settle();
+
+    expect((await callRow(h, callId)).state).toBe('ended');
+    expect(leaked).toHaveLength(0);
+  });
+
+  it('ends an active call when one side blocks the other and refuses new calls between them', async () => {
+    const { h, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const ended = Promise.all([waitForEvent<CallEndedEvent>(aliceClient, 'call:ended'), waitForEvent<CallEndedEvent>(bobClient, 'call:ended')]);
+
+    aliceClient.emit('user:block', { roomId: room.id, blockedUserId: bob.user.id });
+    const [forAlice] = await ended;
+    expect(forAlice.callId).toBe(callId);
+    expect((await callRow(h, callId)).state).toBe('ended');
+
+    const refused = expectError(bobClient, 'call:start');
+    bobClient.emit('call:start', { callId: newCallId(), roomId: room.id, kind: 'voice', envelope: ENVELOPE });
+    expect((await refused).code).toBe('call.notAllowed');
+  });
+
+  it('stops a ringing call when the callee blocks the caller', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    const ended = waitForEvent<CallEndedEvent>(aliceClient, 'call:ended');
+
+    bobClient.emit('user:block', { roomId: room.id, blockedUserId: alice.user.id });
+
+    expect((await ended).callId).toBe(callId);
+    const refused = expectError(bobClient, 'call:accept');
+    bobClient.emit('call:accept', { callId, envelope: ENVELOPE });
+    expect((await refused).code).toBe('call.invalidState');
+  });
+});
+
 describe('abandoned calls', () => {
   it('lets a caller start a new call when both tabs of the previous call were closed', async () => {
     const { h, alice, bob, room, aliceClient, bobClient } = await setup();

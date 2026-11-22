@@ -270,6 +270,24 @@ describe('cloudflare turn provider', () => {
   });
 });
 
+describe('turn credential abuse limits', () => {
+  it('caps how many relay credentials one user can obtain per day across many calls', () => {
+    let now = 0;
+    const limiter = new CallRateLimiter(() => now);
+    let granted = 0;
+    for (let call = 0; call < 200; call += 1) {
+      now += 1_000;
+      if (limiter.tryIceServers(`c${call}`, 'u')) {
+        granted += 1;
+      }
+    }
+    expect(granted).toBe(100);
+    expect(limiter.tryIceServers('fresh', 'other')).toBe(true);
+    now += 24 * 60 * 60 * 1000;
+    expect(limiter.tryIceServers('later', 'u')).toBe(true);
+  });
+});
+
 describe('turn credentials for long healthy calls', () => {
   it('keeps refreshing credentials on a call far longer than the old cap while still capping bursts', () => {
     let now = 0;
