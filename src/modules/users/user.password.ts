@@ -77,10 +77,6 @@ export class DerivationGate {
 
 const derivationGate = new DerivationGate(MAX_CONCURRENT_DERIVATIONS, MAX_QUEUED_VERIFICATIONS);
 
-export function passwordDerivationGate(): DerivationGate {
-  return derivationGate;
-}
-
 const LEGACY_PARAMS: PasswordHashParams = { cost: 16384, blockSize: 8, parallelization: 1 };
 
 export const DEFAULT_PASSWORD_HASH_PARAMS: PasswordHashParams = { cost: 2 ** 16, blockSize: 8, parallelization: 1 };
