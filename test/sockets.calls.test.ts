@@ -1714,6 +1714,65 @@ describe('call transfer between devices', () => {
     expect(await systemEventTypes(h, room.id)).toEqual([]);
   });
 
+  it('tells the other devices of the same account whether the bound device has its microphone muted and camera on, so a transfer keeps them', async () => {
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const alicePhone = await h.connectAs(alice);
+    const bobTablet = await h.connectAs(bob);
+
+    const before = waitForEvent<Record<string, unknown>>(alicePhone, 'call:state');
+    alicePhone.emit('call:sync', { callId: null });
+    expect(await before).not.toHaveProperty('media');
+
+    aliceClient.emit('call:heartbeat', { callId, media: { muted: true, camera: true } });
+    await settle(100);
+    const reported = waitForEvent<{ media?: unknown }>(alicePhone, 'call:state');
+    alicePhone.emit('call:sync', { callId: null });
+    expect((await reported).media).toEqual({ muted: true, camera: true });
+
+    const peerView = waitForEvent<Record<string, unknown>>(bobTablet, 'call:state');
+    bobTablet.emit('call:sync', { callId: null });
+    expect(await peerView).not.toHaveProperty('media');
+
+    aliceClient.emit('call:heartbeat', { callId, media: { muted: false, camera: false } });
+    await settle(100);
+    const updated = waitForEvent<{ media?: unknown }>(alicePhone, 'call:state');
+    alicePhone.emit('call:sync', { callId: null });
+    expect((await updated).media).toEqual({ muted: false, camera: false });
+
+    const intruder = expectError(alicePhone, 'call:heartbeat');
+    alicePhone.emit('call:heartbeat', { callId, media: { muted: true, camera: true } });
+    expect((await intruder).code).toBe('call.notAllowed');
+    const unchanged = waitForEvent<{ media?: unknown }>(alicePhone, 'call:state');
+    alicePhone.emit('call:sync', { callId: null });
+    expect((await unchanged).media).toEqual({ muted: false, camera: false });
+
+    const invalid = expectError(aliceClient, 'call:heartbeat');
+    aliceClient.emit('call:heartbeat', { callId, media: { muted: 'yes', camera: true } });
+    expect((await invalid).code).toBeTruthy();
+  });
+
+  it('forgets the media state of the device that moved away, so the new device reports its own', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    aliceClient.emit('call:heartbeat', { callId, media: { muted: true, camera: true } });
+    await settle(100);
+    const alicePhone = await h.connectAs(alice);
+    const moved = waitForEvent(bobClient, 'call:peer-transfer');
+    alicePhone.emit('call:transfer', { callId, envelope: 'transfer-envelope' });
+    await moved;
+    const accepted = waitForEvent(alicePhone, 'call:transfer-accepted');
+    bobClient.emit('call:transfer-accept', { callId, envelope: 'transfer-accept-envelope' });
+    await accepted;
+
+    const state = waitForEvent<Record<string, unknown>>(aliceClient, 'call:state');
+    aliceClient.emit('call:sync', { callId: null });
+    expect(await state).toMatchObject({ callId, transferable: true });
+    expect(await state).not.toHaveProperty('media');
+  });
+
   it('refuses a second transfer while one is pending and drops an unanswered one after 15 seconds', async () => {
     const { h, alice, room, aliceClient, bobClient } = await setup();
     const callId = await ring(h, aliceClient, [bobClient], room.id);

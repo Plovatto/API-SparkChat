@@ -6,7 +6,7 @@ import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService } from '../mes
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import { ASSISTANT_USER_ID } from '../users/index.js';
 import { monthKey, type CallBudget } from './call-budget.js';
-import type { CallServerToClientEvents, CallStatePayload } from './call.events.js';
+import type { CallMediaState, CallServerToClientEvents, CallStatePayload } from './call.events.js';
 import type { CallRateLimiter } from './call.rate-limiter.js';
 import type { CallRepository } from './call.repository.js';
 import { transition, type CallEvent } from './call.state.js';
@@ -93,6 +93,7 @@ function peerOf(call: CallRecord, role: CallRole): string {
 export class CallService {
   private readonly bindings = new Map<string, SocketBindings>();
   private readonly beats = new Map<string, Partial<Record<CallRole, number>>>();
+  private readonly mediaStates = new Map<string, Partial<Record<CallRole, CallMediaState>>>();
   private readonly connectedAt = new Map<string, number>();
   private readonly pendingTransfers = new Map<string, { role: CallRole; socketId: string; startedAt: number }>();
   private readonly ringingInvites = new Map<string, IncomingCallPayload>();
@@ -354,6 +355,7 @@ export class CallService {
     this.clearPendingTransfer(call.id);
     const previous = this.boundSocket(call, movingRole);
     await this.takeOver(call, movingRole, pending.socketId);
+    this.forgetMedia(call.id, movingRole);
     this.limiter.allowNextIceServers(call.id, roleUserId(call, movingRole), pending.socketId);
     if (previous !== undefined && previous !== pending.socketId) {
       this.io.to(previous).emit('call:transferred', { callId: call.id });
@@ -403,7 +405,7 @@ export class CallService {
     this.enqueueSignal(call.id, peerRole, payload);
   }
 
-  async heartbeat(actor: CallActor, callId: string, relayed?: boolean): Promise<void> {
+  async heartbeat(actor: CallActor, callId: string, relayed?: boolean, media?: CallMediaState): Promise<void> {
     this.requireEnabled();
     const call = await this.requireParticipant(callId, actor.userId);
     if (call.state === 'accepted' || call.state === 'active') {
@@ -416,13 +418,35 @@ export class CallService {
           throw AppError.of('call.notAllowed');
         }
         await this.takeOver(call, role, actor.socketId);
+        this.rememberMedia(call.id, role, media);
         return;
       }
       this.markBeat(call.id, role);
+      this.rememberMedia(call.id, role, media);
       await this.repository.touchHeartbeat(callId, new Date(this.now()).toISOString());
       if (relayed === false) {
         await this.dropRelayCredentials(call, role);
       }
+    }
+  }
+
+  private rememberMedia(callId: string, role: CallRole, media: CallMediaState | undefined): void {
+    if (!media) {
+      return;
+    }
+    const states = this.mediaStates.get(callId) ?? {};
+    states[role] = { muted: media.muted, camera: media.camera };
+    this.mediaStates.set(callId, states);
+  }
+
+  private forgetMedia(callId: string, role: CallRole): void {
+    const states = this.mediaStates.get(callId);
+    if (!states) {
+      return;
+    }
+    delete states[role];
+    if (!states.caller && !states.callee) {
+      this.mediaStates.delete(callId);
     }
   }
 
@@ -480,6 +504,10 @@ export class CallService {
       transferable: this.isTransferable(call, role, actor.socketId),
       peerLive: this.isPeerLive(call, role),
     };
+    const media = this.mediaStates.get(call.id)?.[role];
+    if (media && (call.state === 'accepted' || call.state === 'active')) {
+      payload.media = { ...media };
+    }
     this.io.to(actor.socketId).emit('call:state', payload);
     const invite = this.ringingInvites.get(call.id);
     if (call.state === 'ringing' && role === 'callee' && invite && Date.parse(invite.ringExpiresAt) > this.now()) {
@@ -618,6 +646,7 @@ export class CallService {
   private async afterEnd(call: CallRecord): Promise<void> {
     this.bindings.delete(call.id);
     this.beats.delete(call.id);
+    this.mediaStates.delete(call.id);
     this.connectedAt.delete(call.id);
     this.clearPendingTransfer(call.id);
     this.ringingInvites.delete(call.id);

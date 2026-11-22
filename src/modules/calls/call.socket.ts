@@ -22,7 +22,11 @@ const iceServerSchema = z.object({ urls: z.array(z.string()), username: z.string
 const startPayloadSchema = z.object({ callId: callIdSchema, roomId: z.string().trim().min(1), kind: kindSchema, envelope: envelopeSchema });
 const acceptPayloadSchema = z.object({ callId: callIdSchema, envelope: envelopeSchema });
 const callIdPayloadSchema = z.object({ callId: callIdSchema });
-const heartbeatPayloadSchema = z.object({ callId: callIdSchema, relayed: z.boolean().optional().openapi({ description: 'Rota atual da mídia deste aparelho. false (conexão direta) faz o servidor revogar as credenciais TURN deste aparelho; um novo call:ice-servers emite outras quando precisar do relay' }) });
+const mediaStateSchema = z
+  .object({ muted: z.boolean(), camera: z.boolean() })
+  .strict()
+  .openapi({ description: 'Estado do microfone e da câmera deste aparelho. O servidor só repassa aos outros aparelhos da mesma conta, para que uma troca de aparelho mantenha o mesmo estado' });
+const heartbeatPayloadSchema = z.object({ callId: callIdSchema, relayed: z.boolean().optional().openapi({ description: 'Rota atual da mídia deste aparelho. false (conexão direta) faz o servidor revogar as credenciais TURN deste aparelho; um novo call:ice-servers emite outras quando precisar do relay' }), media: mediaStateSchema.optional() });
 const hangupPayloadSchema = z.object({ callId: callIdSchema, force: z.boolean().optional() });
 const signalPayloadSchema = z.object({ callId: callIdSchema, to: z.string().trim().min(1), envelope: envelopeSchema });
 const syncPayloadSchema = z
@@ -90,6 +94,7 @@ registerServerEvents(
         answeredAt: z.string().nullable(),
         transferable: z.boolean().openapi({ description: 'true quando este aparelho pode puxar a chamada que está ativa em outro aparelho da mesma conta' }),
         peerLive: z.boolean().openapi({ description: 'true enquanto o outro participante ainda pode voltar: o socket dele segue conectado ou ele deu sinal de vida há menos de 3 minutos. O cliente usa isso para continuar reconectando em vez de encerrar' }),
+        media: mediaStateSchema.optional().openapi({ description: 'Último estado de microfone e câmera informado pelo aparelho desta conta que está na chamada. Ausente enquanto ele não informou' }),
       })
       .nullable(),
     'call:transferred': callIdPayloadSchema,
@@ -185,7 +190,7 @@ export function registerCallSocketHandlers(socket: AppSocket, deps: CallSocketDe
   socket.on('call:heartbeat', (payload) => {
     handle('call:heartbeat', (actor) => {
       const input = heartbeatPayloadSchema.parse(payload);
-      return callService.heartbeat(actor, input.callId, input.relayed);
+      return callService.heartbeat(actor, input.callId, input.relayed, input.media);
     });
   });
 

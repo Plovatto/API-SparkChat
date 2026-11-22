@@ -1,5 +1,10 @@
 import type { CallDegrade, CallEndReason, CallKind, CallRole, CallState, IceServer } from './call.types.js';
 
+export interface CallMediaState {
+  muted: boolean;
+  camera: boolean;
+}
+
 export interface CallStatePayload {
   callId: string;
   state: Exclude<CallState, 'ended'>;
@@ -10,6 +15,7 @@ export interface CallStatePayload {
   answeredAt: string | null;
   transferable: boolean;
   peerLive: boolean;
+  media?: CallMediaState;
 }
 
 export interface CallClientToServerEvents {
