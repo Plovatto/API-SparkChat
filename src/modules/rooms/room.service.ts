@@ -145,6 +145,9 @@ export class RoomService {
 
   async joinByInvite(request: JoinByInviteRequest, userId: string): Promise<JoinByCodeResult> {
     const room = await this.repository.findById(request.roomId);
+    if (room?.type === 'group' && (await this.repository.isBanned(room.id, userId))) {
+      throw AppError.of('room.removedFromGroup');
+    }
     if (!room || room.type !== 'group' || !matchesInviteToken(request.inviteToken, room.inviteTokenHash)) {
       throw AppError.of('room.invalidInvite');
     }

@@ -101,6 +101,15 @@ export class RoomRepository {
     );
   }
 
+  async isBanned(roomId: string, userId: string): Promise<boolean> {
+    const [ban] = await this.db
+      .select({ userId: roomBans.userId })
+      .from(roomBans)
+      .where(and(eq(roomBans.roomId, roomId), eq(roomBans.userId, userId)))
+      .limit(1);
+    return ban !== undefined;
+  }
+
   async findById(id: string): Promise<RoomRecord | null> {
     const [[room], participants] = await Promise.all([
       this.db.select().from(rooms).where(eq(rooms.id, id)),

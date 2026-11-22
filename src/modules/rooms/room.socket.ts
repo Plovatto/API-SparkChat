@@ -679,7 +679,7 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
 
     const remaining = await roomService.buildParticipantViews(updatedRoom);
 
-    emitToUser(io, targetUserId).emit('group:left', { roomId });
+    emitToUser(io, targetUserId).emit('group:left', { roomId, reason: 'removed' });
     await removeUserSocketsFromRoom(io, targetUserId, roomId);
 
     io.to(roomId).emit('group:user-left', {

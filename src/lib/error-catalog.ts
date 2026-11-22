@@ -58,6 +58,7 @@ export const ERROR_CATALOG = {
   'room.cannotRemoveSelf': () => 'Use a opção de sair do grupo para se remover.',
   'room.notMember': () => 'Usuário não faz parte do grupo.',
   'room.invalidInvite': () => 'Este link de convite é inválido ou foi redefinido.',
+  'room.removedFromGroup': () => 'Você foi removido deste grupo e não pode voltar a entrar.',
   'room.avatarUploadInvalid': () => 'A foto enviada não foi encontrada, já está em uso ou não pertence a você.',
   'room.groupFull': ({ maxMembers }: { maxMembers: number }) => `Este grupo está cheio. O limite é de ${maxMembers} membros.`,
   'message.notFound': () => 'Mensagem não encontrada.',

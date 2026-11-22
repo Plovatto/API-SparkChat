@@ -180,12 +180,12 @@ describe('group membership enforcement', () => {
 
     const rejected = waitForEvent<{ code: string }>(bobClient, 'error');
     bobClient.emit('room:join-by-invite', { roomId: group.id, inviteToken, proof: fakeProof(bob.user.id) });
-    await expect(rejected).resolves.toMatchObject({ code: 'room.invalidInvite' });
+    await expect(rejected).resolves.toMatchObject({ code: 'room.removedFromGroup' });
 
     const renewed = await seedInvite(h.db, group.id, 'renewed');
     const banned = waitForEvent<{ code: string }>(bobClient, 'error');
     bobClient.emit('room:join-by-invite', { roomId: group.id, inviteToken: renewed.inviteToken, proof: fakeProof(bob.user.id) });
-    await expect(banned).resolves.toMatchObject({ code: 'room.notFound' });
+    await expect(banned).resolves.toMatchObject({ code: 'room.removedFromGroup' });
 
     const room = await h.roomService.getRoomById(group.id);
     expect(room?.participants).not.toContain(bob.user.id);
