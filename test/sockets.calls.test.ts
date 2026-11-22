@@ -1116,6 +1116,51 @@ describe('server owned timers', () => {
   });
 });
 
+describe('abandoned calls', () => {
+  it('lets a caller start a new call when both tabs of the previous call were closed', async () => {
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup();
+    const first = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, first);
+    aliceClient.disconnect();
+    bobClient.disconnect();
+    await settle();
+    clock.now += 25_000;
+
+    const alice2 = await h.connectAs(alice);
+    const bob2 = await h.connectAs(bob);
+    const second = await ring(h, alice2, [bob2], room.id);
+
+    expect((await callRow(h, first)).state).toBe('ended');
+    expect((await callRow(h, second)).state).toBe('ringing');
+  });
+
+  it('keeps refusing while the previous call still runs on another device of the caller', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const first = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, first);
+    clock.now += 25_000;
+    const tablet = await h.connectAs(alice);
+    const refused = expectError(tablet, 'call:start');
+    tablet.emit('call:start', { callId: newCallId(), roomId: room.id, kind: 'voice', envelope: ENVELOPE });
+
+    expect((await refused).code).toBe('call.alreadyInCall');
+  });
+
+  it('keeps a call that was just left for a reload so the same tab can still resume it', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const first = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, first);
+    aliceClient.disconnect();
+    await settle();
+    const reloaded = await h.connectAs(alice);
+    const refused = expectError(reloaded, 'call:start');
+    reloaded.emit('call:start', { callId: newCallId(), roomId: room.id, kind: 'voice', envelope: ENVELOPE });
+
+    expect((await refused).code).toBe('call.alreadyInCall');
+    expect((await callRow(h, first)).state).not.toBe('ended');
+  });
+});
+
 describe('same tab on a new socket', () => {
   const TAB_A = 'tab-alice-0123456789abcdef';
   const TAB_B = 'tab-bobby-0123456789abcdef';
