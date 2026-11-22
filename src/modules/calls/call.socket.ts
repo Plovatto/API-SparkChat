@@ -88,6 +88,8 @@ registerServerEvents(
         peerId: z.string(),
         role: z.enum(['caller', 'callee']),
         answeredAt: z.string().nullable(),
+        transferable: z.boolean().openapi({ description: 'true quando este aparelho pode puxar a chamada que está ativa em outro aparelho da mesma conta' }),
+        peerLive: z.boolean().openapi({ description: 'true enquanto o outro participante ainda pode voltar: o socket dele segue conectado ou ele deu sinal de vida há menos de 3 minutos. O cliente usa isso para continuar reconectando em vez de encerrar' }),
       })
       .nullable(),
     'call:transferred': callIdPayloadSchema,

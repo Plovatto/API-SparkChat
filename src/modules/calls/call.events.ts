@@ -9,6 +9,7 @@ export interface CallStatePayload {
   role: CallRole;
   answeredAt: string | null;
   transferable: boolean;
+  peerLive: boolean;
 }
 
 export interface CallClientToServerEvents {
