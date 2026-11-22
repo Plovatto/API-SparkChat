@@ -293,6 +293,11 @@ export class CallService {
 
   async releaseSocket(socketId: string, userId: string): Promise<void> {
     this.socketDevices.delete(socketId);
+    for (const [callId, pending] of this.pendingTransfers) {
+      if (pending.socketId === socketId) {
+        this.pendingTransfers.delete(callId);
+      }
+    }
     const call = await this.repository.findOpenForUser(userId);
     if (!call) {
       return;
@@ -473,7 +478,7 @@ export class CallService {
     const movingRole: CallRole = role === 'caller' ? 'callee' : 'caller';
     this.expirePendingTransfers();
     const pending = this.pendingTransfers.get(call.id);
-    if (!pending || pending.role !== movingRole || !this.io.sockets.sockets.has(pending.socketId)) {
+    if (!pending || pending.role !== movingRole || !this.socketBelongsTo(pending.socketId, roleUserId(call, movingRole))) {
       this.clearPendingTransfer(call.id);
       throw AppError.of('call.invalidState');
     }
