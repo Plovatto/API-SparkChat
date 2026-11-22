@@ -97,6 +97,17 @@ describe('loadDecryptedAttachment', () => {
     expect(await loadDecryptedAttachment(url, { ...BINDING, slot: 'thumbnail' }, fileKey, objectStorage, 1024 * 1024)).toBeNull();
   });
 
+  it('asks storage to stop reading once the object exceeds the sealed size cap', async () => {
+    const objectStorage = new InMemoryObjectStorage();
+    const { bytes, fileKey } = await sealAttachmentBytes(Buffer.from('fake image bytes'), BINDING);
+    const url = await storeSealed(objectStorage, 'uploads/images/photo.png', bytes);
+    const getObject = vi.spyOn(objectStorage, 'getObject');
+
+    await loadDecryptedAttachment(url, BINDING, fileKey, objectStorage, 1024);
+
+    expect(getObject).toHaveBeenCalledWith('uploads/images/photo.png', { maxBytes: 1024 + 40 });
+  });
+
   it('refuses a missing or malformed file key without reading the object', async () => {
     const objectStorage = new InMemoryObjectStorage();
     const { bytes } = await sealAttachmentBytes(Buffer.from('fake image bytes'), BINDING);
