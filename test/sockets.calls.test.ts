@@ -334,6 +334,35 @@ describe('accept, decline and hangup', () => {
     expect(await systemEventTypes(h, room.id)).toEqual(['call.missed']);
   });
 
+  it('declines from the push notification with the call scoped token even with no socket of the callee involved', async () => {
+    const { h, room, aliceClient, bobClient } = await setup();
+    const pushes = vi.spyOn(h.pushService, 'incomingCall');
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    const token = pushes.mock.calls[0]?.[0].declineToken;
+    expect(typeof token).toBe('string');
+    const callerEnded = waitForEvent<CallEndedEvent>(aliceClient, 'call:ended');
+    const bobDeclined = waitForEvent(bobClient, 'call:declined-elsewhere');
+
+    await expect(h.callService.declineWithToken({ callId: newCallId(), token: token as string })).rejects.toMatchObject({ code: 'call.notAllowed' });
+    await expect(h.callService.declineWithToken({ callId, token: `${token as string}x` })).rejects.toMatchObject({ code: 'call.notAllowed' });
+    await h.callService.declineWithToken({ callId, token: token as string });
+
+    expect((await callerEnded).reason).toBe('declined');
+    expect(await bobDeclined).toEqual({ callId });
+    expect((await callRow(h, callId)).endReason).toBe('declined');
+    await expect(h.callService.declineWithToken({ callId, token: token as string })).rejects.toMatchObject({ code: 'call.invalidState' });
+  });
+
+  it('refuses a push decline once the ring expired', async () => {
+    const { h, room, aliceClient, bobClient } = await setup();
+    const pushes = vi.spyOn(h.pushService, 'incomingCall');
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    const token = pushes.mock.calls[0]?.[0].declineToken as string;
+    clock.now += 46_000;
+
+    await expect(h.callService.declineWithToken({ callId, token })).rejects.toMatchObject({ code: 'call.notAllowed' });
+  });
+
   it('cancels while ringing and completes after answer with the duration in the system message', async () => {
     const { h, room, aliceClient, bobClient } = await setup();
     const first = await ring(h, aliceClient, [bobClient], room.id);

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { createCallRouter, type CallDeclineHandler } from '../modules/calls/call.routes.js';
 import { createGifRouter, type GifProvider } from '../modules/gifs/index.js';
 import { createAvatarRouter } from '../modules/avatars/index.js';
 import { createLinkPreviewRouter, type LinkPreviewService } from '../modules/link-preview/index.js';
@@ -17,6 +18,7 @@ export interface ApiRouterDeps {
   storageQuota: StorageQuota;
   uploadRegistry: UploadRegistry;
   gifProvider?: GifProvider | null;
+  callDecline?: CallDeclineHandler;
 }
 
 export function createApiRouter(deps: ApiRouterDeps): Router {
@@ -27,6 +29,9 @@ export function createApiRouter(deps: ApiRouterDeps): Router {
   router.use('/avatars', createAvatarRouter(deps.userService, deps.objectStorage, deps.storageQuota, deps.uploadRegistry));
   router.use('/link-preview', createLinkPreviewRouter(deps.userService, deps.linkPreviewService));
   router.use('/gifs', createGifRouter(deps.userService, deps.gifProvider ?? null));
+  if (deps.callDecline) {
+    router.use('/calls', createCallRouter(deps.callDecline));
+  }
 
   return router;
 }

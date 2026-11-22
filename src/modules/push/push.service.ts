@@ -45,6 +45,7 @@ export interface IncomingCallPush {
   roomId: string;
   kind: 'voice' | 'video';
   ringExpiresAtMs: number;
+  declineToken?: string;
 }
 
 export interface CallEndedPush {
@@ -167,7 +168,7 @@ export class PushService {
     this.ringingCalls.set(`${input.userId}:${input.callId}`, input.ringExpiresAtMs + CALL_END_TTL_SECONDS * 1000);
     const topic = pushTopic('call', input.callId);
     this.enqueue(topic, () =>
-      this.deliver(input.userId, { t: 'call', callId: input.callId, roomId: input.roomId, kind: input.kind }, { TTL: ttl, urgency: 'high', topic }),
+      this.deliver(input.userId, { t: 'call', callId: input.callId, roomId: input.roomId, kind: input.kind, ...(input.declineToken ? { d: input.declineToken } : {}) }, { TTL: ttl, urgency: 'high', topic }),
     );
   }
 

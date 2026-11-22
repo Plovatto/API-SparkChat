@@ -7,6 +7,7 @@ import type { RoomRecord, RoomService } from '../rooms/index.js';
 import { ASSISTANT_USER_ID } from '../users/index.js';
 import { monthKey, type CallBudget } from './call-budget.js';
 import type { CallMediaState, CallServerToClientEvents, CallStatePayload } from './call.events.js';
+import { CallDeclineTokens } from './call-decline-token.js';
 import type { CallRateLimiter } from './call.rate-limiter.js';
 import type { CallRepository } from './call.repository.js';
 import { transition, type CallEvent } from './call.state.js';
@@ -44,7 +45,7 @@ export interface CallActor {
 }
 
 export interface CallPushNotifier {
-  incomingCall(input: { userId: string; callId: string; roomId: string; kind: CallKind; ringExpiresAtMs: number }): void;
+  incomingCall(input: { userId: string; callId: string; roomId: string; kind: CallKind; ringExpiresAtMs: number; declineToken?: string }): void;
   callEnded(input: { userId: string; callId: string; reason: CallEndReason | 'answered' }): void;
 }
 
@@ -52,6 +53,7 @@ export interface CallServiceOptions {
   enabled?: boolean;
   now?: () => number;
   push?: CallPushNotifier;
+  declineTokens?: CallDeclineTokens;
 }
 
 export interface IceServersResult {
@@ -102,6 +104,7 @@ export class CallService {
   private readonly enabled: boolean;
   private readonly graceUntil: number;
   private readonly push: CallPushNotifier | null;
+  private readonly declineTokens: CallDeclineTokens;
 
   constructor(
     private readonly io: AppServer,
@@ -117,6 +120,7 @@ export class CallService {
     this.enabled = options.enabled ?? true;
     this.graceUntil = this.now() + RESTART_GRACE_MS;
     this.push = options.push ?? null;
+    this.declineTokens = options.declineTokens ?? new CallDeclineTokens({ now: this.now });
   }
 
   async getConfig(): Promise<CallConfig> {
@@ -215,6 +219,7 @@ export class CallService {
       roomId: input.roomId,
       kind: input.kind,
       ringExpiresAtMs: createdAtMs + RING_TIMEOUT_MS,
+      declineToken: this.declineTokens.issue(calleeId, input.callId, createdAtMs + RING_TIMEOUT_MS),
     });
   }
 
@@ -265,6 +270,23 @@ export class CallService {
     if (ended) {
       this.io.in(userRoom(call.calleeId)).except(actor.socketId).emit('call:declined-elsewhere', { callId });
     }
+  }
+
+  async declineWithToken(input: { callId: string; token: string }): Promise<void> {
+    this.requireEnabled();
+    const verified = this.declineTokens.verify(input.token, input.callId);
+    if (!verified) {
+      throw AppError.of('call.notAllowed');
+    }
+    const call = await this.requireParticipant(input.callId, verified.userId, 'callee');
+    if (call.state !== 'ringing') {
+      throw AppError.of('call.invalidState');
+    }
+    const ended = await this.finish(call.id, { type: 'decline' });
+    if (!ended) {
+      throw AppError.of('call.invalidState');
+    }
+    this.io.to(userRoom(call.calleeId)).emit('call:declined-elsewhere', { callId: call.id });
   }
 
   async hangup(actor: CallActor, callId: string, force = false): Promise<void> {
