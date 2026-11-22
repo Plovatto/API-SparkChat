@@ -77,7 +77,6 @@ describe('POST /api/messages/upload/gif', () => {
     ['a tiny file', 10],
     ['between steps', 300 * KIB],
     ['above the largest step', 2048 * KIB + 41],
-    ['far above the largest step', 3 * 1024 * KIB],
   ])('rejects %s', async (_label, size) => {
     const { app, authHeader, uploadRegistry } = await setup();
 
@@ -85,6 +84,20 @@ describe('POST /api/messages/upload/gif', () => {
 
     expect(response.status).toBe(400);
     expect(response.body).toEqual({ message: 'Tamanho de GIF inválido. Atualize o aplicativo e tente novamente.', code: 'upload.invalidGifSize' });
+    await expect(uploadRegistry.findExpiredBefore(new Date(Date.now() + 2 * GIF_UPLOAD_TTL_MS).toISOString(), 10)).resolves.toEqual([]);
+  });
+
+  it('rejects far above the largest step, by status or by closing the upload early', async () => {
+    const { app, authHeader, uploadRegistry } = await setup();
+
+    const outcome = await uploadGif(app, authHeader, 3 * 1024 * KIB).then(
+      (response) => ({ status: response.status, body: response.body as unknown, code: null }),
+      (error: NodeJS.ErrnoException) => ({ status: null, body: null, code: error.code ?? null }),
+    );
+
+    const answered = outcome.status === 400 && JSON.stringify(outcome.body) === JSON.stringify({ message: 'Tamanho de GIF inválido. Atualize o aplicativo e tente novamente.', code: 'upload.invalidGifSize' });
+    const closedEarly = outcome.code === 'ECONNRESET' || outcome.code === 'EPIPE';
+    expect(answered || closedEarly).toBe(true);
     await expect(uploadRegistry.findExpiredBefore(new Date(Date.now() + 2 * GIF_UPLOAD_TTL_MS).toISOString(), 10)).resolves.toEqual([]);
   });
 

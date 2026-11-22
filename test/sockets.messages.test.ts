@@ -158,6 +158,7 @@ describe('replies over sockets', () => {
     const carol = await h.createAccount('Carol');
     const group = await h.roomService.createGroupRoom(alice.user.id);
     await h.joinGroup(group.id, bob.user.id);
+    await settle(5);
     const original = await h.messageService.sendMessage({ roomId: group.id, senderId: alice.user.id, content: 'e2e:v1:antigo' });
     const reply = await h.messageService.sendMessage({
       roomId: group.id,
