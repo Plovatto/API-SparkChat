@@ -306,10 +306,12 @@ describe('per-user aggregate budgets and connection caps', () => {
 
   it('closes transports that never authenticate and lets them reconnect', async () => {
     const h = await start({ socketConnectionLimits: { maxPerIp: 100, maxPerUser: 10, unauthenticatedTimeoutMs: 150 } });
+    const account = await h.createAccount('Authenticated');
     const idle = await h.connect();
-    const authenticated = await h.connectAs(await h.createAccount('Authenticated'));
+    const idleClosed = waitForDisconnect(idle, 2000);
+    const authenticated = await h.connectAs(account);
 
-    await expect(waitForDisconnect(idle, 2000)).resolves.toBe('transport close');
+    await expect(idleClosed).resolves.toBe('transport close');
     await settle();
 
     expect(authenticated.connected).toBe(true);
