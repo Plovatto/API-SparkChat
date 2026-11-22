@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { uploadedMediaKeyPrefix } from '../../config/paths.js';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
-import { errorPayload } from '../../lib/app-error.js';
+import { AppError, errorPayload } from '../../lib/app-error.js';
 import type { ErrorCode } from '../../lib/error-catalog.js';
 import type { Locale } from '../../lib/locale.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
@@ -547,6 +547,14 @@ async function handleDeleteMessage(io: AppServer, socket: AppSocket, deps: Messa
 }
 
 async function deleteOneMessage(io: AppServer, deps: MessageSocketDeps, messageId: string, userId: string): Promise<void> {
+  const existing = await deps.messageService.getMessage(messageId);
+  if (existing) {
+    const currentRoom = await deps.roomService.getRoomById(existing.roomId);
+    if (!currentRoom || !deps.roomService.isParticipant(currentRoom, userId)) {
+      throw AppError.of('message.deleteForbidden');
+    }
+  }
+
   const { message: updated, affectedReplies } = await deps.messageService.deleteMessage(messageId, userId);
   io.to(updated.roomId).emit('message:deleted', { messageId, roomId: updated.roomId });
 

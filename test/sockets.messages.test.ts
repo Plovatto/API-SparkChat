@@ -199,6 +199,58 @@ describe('replies over sockets', () => {
   });
 });
 
+describe('message:delete after leaving the room', () => {
+  async function setupGroupWithBobMessage(h: Harness) {
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const group = await h.roomService.createGroupRoom(alice.user.id);
+    await h.joinGroup(group.id, bob.user.id);
+    await settle(5);
+    const message = await h.messageService.sendMessage({ roomId: group.id, senderId: bob.user.id, content: 'e2e:v1:prova' });
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+    await Promise.all([joinVisibleRooms(aliceClient), joinVisibleRooms(bobClient)]);
+    return { alice, bob, group, message, aliceClient, bobClient };
+  }
+
+  it('rejects deleting old messages once the sender was removed from the group', async () => {
+    const h = await start();
+    const { alice, bob, group, message, aliceClient, bobClient } = await setupGroupWithBobMessage(h);
+    await h.roomService.removeMember(group.id, alice.user.id, bob.user.id);
+    const aliceDeletes = collectEvents(aliceClient, 'message:deleted');
+
+    const rejected = waitForEvent<ErrorEvent>(bobClient, 'error', (event) => event.event === 'message:delete');
+    bobClient.emit('message:delete', { messageIds: [message.id] });
+
+    await expect(rejected).resolves.toMatchObject({ code: 'message.deleteForbidden', messageIds: [message.id] });
+    await settle(50);
+    expect(aliceDeletes).toHaveLength(0);
+    expect((await h.messageService.getMessage(message.id))?.deletedForEveryone).toBe(false);
+  });
+
+  it('rejects deleting old messages once the sender left the group', async () => {
+    const h = await start();
+    const { bob, group, message, bobClient } = await setupGroupWithBobMessage(h);
+    await h.roomService.leaveGroup(group.id, bob.user.id);
+
+    const rejected = waitForEvent<ErrorEvent>(bobClient, 'error');
+    bobClient.emit('message:delete', { messageId: message.id });
+
+    await expect(rejected).resolves.toMatchObject({ code: 'message.deleteForbidden' });
+    expect((await h.messageService.getMessage(message.id))?.deletedForEveryone).toBe(false);
+  });
+
+  it('still lets a current member delete their own message', async () => {
+    const h = await start();
+    const { message, aliceClient, bobClient } = await setupGroupWithBobMessage(h);
+
+    const deleted = waitForEvent(aliceClient, 'message:deleted');
+    bobClient.emit('message:delete', { messageId: message.id });
+
+    await expect(deleted).resolves.toMatchObject({ messageId: message.id });
+  });
+});
+
 describe('room authorization for activity and receipts', () => {
   it('ignores typing for a room the socket is not subscribed to', async () => {
     const h = await start();
