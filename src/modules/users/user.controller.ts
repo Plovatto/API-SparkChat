@@ -182,6 +182,11 @@ export function createUserController(
       return;
     }
 
+    if (!loginRateLimiter.reserveNicknameAvailabilityLookup(req.ip ?? 'unknown')) {
+      res.status(429).json(errorPayload('rateLimit.loginAttempts'));
+      return;
+    }
+
     try {
       const existing = await userService.getUserByNickname(nickname);
       res.status(200).json({ status: existing ? 'taken' : 'available' });

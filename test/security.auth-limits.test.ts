@@ -15,6 +15,32 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('nickname availability oracle', () => {
+  it('limits availability lookups per network like auth-params', async () => {
+    const { app } = await buildTestApp();
+
+    for (let i = 0; i < 60; i += 1) {
+      const allowed = await request(app).get('/api/users/nickname-availability').query({ nickname: `probe${i}` });
+      expect(allowed.status).toBe(200);
+    }
+
+    const limited = await request(app).get('/api/users/nickname-availability').query({ nickname: 'probe61' });
+    expect(limited.status).toBe(429);
+    expect(limited.body).toMatchObject({ code: 'rateLimit.loginAttempts' });
+  });
+
+  it('keeps the availability budget separate from the auth-params budget', () => {
+    const limiter = new LoginRateLimiter();
+
+    for (let i = 0; i < 60; i += 1) {
+      expect(limiter.reserveNicknameAvailabilityLookup('203.0.113.7')).toBe(true);
+    }
+
+    expect(limiter.reserveNicknameAvailabilityLookup('203.0.113.7')).toBe(false);
+    expect(limiter.reserveAuthParamsLookup('203.0.113.7')).toBe(true);
+  });
+});
+
 describe('oversized auth input', () => {
   it('rejects a 90KB login nickname with 400 and creates no limiter entry', async () => {
     const { app, loginRateLimiter } = await buildTestApp();
