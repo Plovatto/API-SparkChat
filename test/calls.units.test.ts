@@ -270,6 +270,27 @@ describe('cloudflare turn provider', () => {
   });
 });
 
+describe('turn credentials for long healthy calls', () => {
+  it('keeps refreshing credentials on a call far longer than the old cap while still capping bursts', () => {
+    let now = 0;
+    const limiter = new CallRateLimiter(() => now);
+    for (let i = 0; i < 30; i += 1) {
+      expect(limiter.tryIceServers('c', 'u')).toBe(true);
+      now += 40 * 60 * 1000;
+    }
+
+    const burst = new CallRateLimiter(() => now);
+    let granted = 0;
+    for (let i = 0; i < 40; i += 1) {
+      now += 11_000;
+      if (burst.tryIceServers('d', 'u')) {
+        granted += 1;
+      }
+    }
+    expect(granted).toBe(10);
+  });
+});
+
 describe('turn credential lifetime', () => {
   it('lasts one hour and the refresh cap covers a full length call', () => {
     expect(TURN_TTL_SECONDS).toBe(3_600);
