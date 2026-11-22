@@ -11,6 +11,7 @@ export type CallDegrade = 'none' | 'video-360' | 'audio-only-relay';
 export const RING_TIMEOUT_MS = 45_000;
 export const HEARTBEAT_TIMEOUT_MS = 90_000;
 export const TAKEOVER_SILENCE_MS = 20_000;
+export const PEER_PRESENCE_MS = 30_000;
 export const TRANSFER_PENDING_MS = 15_000;
 export const MAX_CALL_DURATION_MS = 4 * 60 * 60 * 1000;
 export const RESTART_GRACE_MS = 60_000;

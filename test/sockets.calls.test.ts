@@ -1092,7 +1092,7 @@ describe('call sync and restart restore', () => {
     const reloaded = await h.connectAs(alice);
     const state = waitForEvent(reloaded, 'call:state');
     reloaded.emit('call:sync', {});
-    expect(await state).toEqual({ callId, state: 'accepted', roomId: room.id, kind: 'video', peerId: bob.user.id, role: 'caller', answeredAt: (await callRow(h, callId)).answeredAt });
+    expect(await state).toEqual({ callId, state: 'accepted', roomId: room.id, kind: 'video', peerId: bob.user.id, role: 'caller', answeredAt: (await callRow(h, callId)).answeredAt, transferable: false });
 
     const signal = waitForEvent(reloaded, 'call:signal');
     bobClient.emit('call:signal', { callId, to: alice.user.id, envelope: 'answer' });
@@ -1394,6 +1394,78 @@ describe('hardening', () => {
     second.emit('call:hangup', { callId, force: true });
     await ended;
     expect((await callRow(h, callId)).state).toBe('ended');
+  });
+
+  it('lets the device that dropped a call hang it up from a new socket once the old binding went quiet', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const reconnected = await h.connectAs(alice);
+    clock.now += 21_000;
+
+    const ended = waitForEvent(bobClient, 'call:ended');
+    reconnected.emit('call:hangup', { callId });
+    await ended;
+    expect((await callRow(h, callId)).state).toBe('ended');
+  });
+
+  it('does not bind a socket that says it is not in the call, so a dropped call is not offered back as another device', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    aliceClient.disconnect();
+    await settle(100);
+    const reopened = await h.connectAs(alice);
+
+    const state = waitForEvent<{ callId: string; transferable: boolean }>(reopened, 'call:state');
+    reopened.emit('call:sync', { callId: null });
+    expect(await state).toMatchObject({ callId, transferable: true });
+    const refused = expectError(reopened, 'call:signal');
+    reopened.emit('call:signal', { callId, to: (await callRow(h, callId)).calleeId, envelope: 'not-in-call' });
+    expect((await refused).code).toBe('call.notAllowed');
+  });
+
+  it('rebinds a reconnecting device that reports the call it is still in', async () => {
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    aliceClient.disconnect();
+    await settle(100);
+    const reconnected = await h.connectAs(alice);
+
+    const state = waitForEvent<{ transferable: boolean }>(reconnected, 'call:state');
+    reconnected.emit('call:sync', { callId });
+    expect((await state).transferable).toBe(false);
+    const signal = waitForEvent<{ envelope: string }>(bobClient, 'call:signal');
+    reconnected.emit('call:signal', { callId, to: bob.user.id, envelope: 'still-here' });
+    expect((await signal).envelope).toBe('still-here');
+  });
+
+  it('only offers a transfer while the other person is still in the call', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const second = await h.connectAs(alice);
+
+    const live = waitForEvent<{ transferable: boolean }>(second, 'call:state');
+    second.emit('call:sync', { callId: null });
+    expect((await live).transferable).toBe(true);
+
+    clock.now += 31_000;
+    const silent = waitForEvent<{ transferable: boolean }>(second, 'call:state');
+    second.emit('call:sync', { callId: null });
+    expect((await silent).transferable).toBe(false);
+
+    await beat(bobClient, callId, true);
+    const back = waitForEvent<{ transferable: boolean }>(second, 'call:state');
+    second.emit('call:sync', { callId: null });
+    expect((await back).transferable).toBe(true);
+
+    bobClient.disconnect();
+    await settle(100);
+    const gone = waitForEvent<{ transferable: boolean }>(second, 'call:state');
+    second.emit('call:sync', { callId: null });
+    expect((await gone).transferable).toBe(false);
   });
 
   it('still lets the bound device hang up a live call without forcing', async () => {
