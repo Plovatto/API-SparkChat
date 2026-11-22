@@ -13,6 +13,7 @@ import { transition, type CallEvent } from './call.state.js';
 import {
   HEARTBEAT_TIMEOUT_MS,
   PEER_PRESENCE_MS,
+  PEER_RESUME_GRACE_MS,
   TAKEOVER_SILENCE_MS,
   TRANSFER_PENDING_MS,
   MAX_CALL_DURATION_MS,
@@ -477,6 +478,7 @@ export class CallService {
       role,
       answeredAt: call.answeredAt,
       transferable: this.isTransferable(call, role, actor.socketId),
+      peerLive: this.isPeerLive(call, role),
     };
     this.io.to(actor.socketId).emit('call:state', payload);
     const invite = this.ringingInvites.get(call.id);
@@ -736,6 +738,18 @@ export class CallService {
     const peerRole: CallRole = role === 'caller' ? 'callee' : 'caller';
     const peerSocket = this.boundSocket(call, peerRole);
     return peerSocket !== undefined && this.io.sockets.sockets.has(peerSocket) && this.now() - this.lastBeatOf(call, peerRole) < PEER_PRESENCE_MS;
+  }
+
+  private isPeerLive(call: CallRecord, role: CallRole): boolean {
+    if (call.state !== 'accepted' && call.state !== 'active') {
+      return true;
+    }
+    const peerRole: CallRole = role === 'caller' ? 'callee' : 'caller';
+    const peerSocket = this.boundSocket(call, peerRole);
+    if (peerSocket !== undefined && this.io.sockets.sockets.has(peerSocket)) {
+      return true;
+    }
+    return this.now() - this.lastBeatOf(call, peerRole) < PEER_RESUME_GRACE_MS;
   }
 
   private canTakeOver(call: CallRecord, role: CallRole, socketId: string): boolean {

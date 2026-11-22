@@ -970,7 +970,7 @@ describe('server owned timers', () => {
     await settle(100);
     const watcher = await h.connectAs(bob);
 
-    clock.now += 85_000;
+    clock.now += 175_000;
     await h.callService.runMaintenance();
     expect((await callRow(h, callId)).state).toBe('accepted');
 
@@ -1008,7 +1008,7 @@ describe('server owned timers', () => {
     await settle(100);
     const watcher = await h.connectAs(bob);
 
-    clock.now += 80_000;
+    clock.now += 170_000;
     await h.callService.runMaintenance();
     expect((await callRow(h, callId)).state).toBe('accepted');
 
@@ -1028,9 +1028,41 @@ describe('server owned timers', () => {
     await settle(200);
     expect((await callRow(h, callId)).state).toBe('accepted');
 
-    clock.now += 120_000;
+    clock.now += 150_000;
+    await h.callService.runMaintenance();
+    expect((await callRow(h, callId)).state).toBe('accepted');
+
+    clock.now += 31_000;
     await h.callService.runMaintenance();
     expect((await callRow(h, callId)).endReason).toBe('connection-lost');
+  });
+
+  it('keeps a call with both sockets gone for as long as peerLive promises and lets either side resume it', async () => {
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    aliceClient.emit('call:heartbeat', { callId });
+    bobClient.emit('call:heartbeat', { callId });
+    await settle(100);
+
+    aliceClient.disconnect();
+    bobClient.disconnect();
+    await settle(100);
+    clock.now += 170_000;
+    await h.callService.runMaintenance();
+    expect((await callRow(h, callId)).state).not.toBe('ended');
+
+    const back = await h.connectAs(alice);
+    const state = waitForEvent<{ callId: string; peerLive: boolean }>(back, 'call:state');
+    back.emit('call:sync', { callId });
+    expect(await state).toMatchObject({ callId, peerLive: true });
+    const bobBack = await h.connectAs(bob);
+    const bobState = waitForEvent<{ callId: string }>(bobBack, 'call:state');
+    bobBack.emit('call:sync', { callId });
+    expect((await bobState).callId).toBe(callId);
+    const signal = waitForEvent<{ envelope: string }>(bobBack, 'call:signal');
+    back.emit('call:signal', { callId, to: bob.user.id, envelope: 'both-back' });
+    expect((await signal).envelope).toBe('both-back');
   });
 
   it('completes calls at the four hour limit', async () => {
@@ -1092,7 +1124,7 @@ describe('call sync and restart restore', () => {
     const reloaded = await h.connectAs(alice);
     const state = waitForEvent(reloaded, 'call:state');
     reloaded.emit('call:sync', {});
-    expect(await state).toEqual({ callId, state: 'accepted', roomId: room.id, kind: 'video', peerId: bob.user.id, role: 'caller', answeredAt: (await callRow(h, callId)).answeredAt, transferable: false });
+    expect(await state).toEqual({ callId, state: 'accepted', roomId: room.id, kind: 'video', peerId: bob.user.id, role: 'caller', answeredAt: (await callRow(h, callId)).answeredAt, transferable: false, peerLive: true });
 
     const signal = waitForEvent(reloaded, 'call:signal');
     bobClient.emit('call:signal', { callId, to: alice.user.id, envelope: 'answer' });
@@ -1167,7 +1199,7 @@ describe('call sync and restart restore', () => {
     aliceClient.disconnect();
     bobClient.disconnect();
     await settle(100);
-    clock.now += 100_000;
+    clock.now += 190_000;
     await restarted.runMaintenance();
     expect((await callRow(h, callId)).endReason).toBe('connection-lost');
   });
@@ -1337,7 +1369,7 @@ describe('hardening', () => {
     reconnected.emit('call:heartbeat', { callId });
     expect((await early).code).toBe('call.notAllowed');
 
-    clock.now += 21_000;
+    clock.now += 76_000;
     reconnected.emit('call:heartbeat', { callId });
     await settle(100);
     const signal = waitForEvent<{ envelope: string }>(bobClient, 'call:signal');
@@ -1401,12 +1433,112 @@ describe('hardening', () => {
     const callId = await ring(h, aliceClient, [bobClient], room.id);
     await answer(aliceClient, bobClient, callId);
     const reconnected = await h.connectAs(alice);
-    clock.now += 21_000;
+    clock.now += 76_000;
 
     const ended = waitForEvent(bobClient, 'call:ended');
     reconnected.emit('call:hangup', { callId });
     await ended;
     expect((await callRow(h, callId)).state).toBe('ended');
+  });
+
+  it('keeps the binding of a backgrounded device whose throttled heartbeats arrive once a minute', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    aliceClient.emit('call:heartbeat', { callId });
+    await settle(100);
+    const other = await h.connectAs(alice);
+
+    for (let minute = 0; minute < 3; minute += 1) {
+      clock.now += 59_000;
+      await h.callService.runMaintenance();
+
+      const takeover = expectError(other, 'call:heartbeat');
+      other.emit('call:heartbeat', { callId });
+      expect((await takeover).code).toBe('call.notAllowed');
+      const hangup = expectError(other, 'call:hangup');
+      other.emit('call:hangup', { callId });
+      expect((await hangup).code).toBe('call.notAllowed');
+
+      clock.now += 1_000;
+      bobClient.emit('call:heartbeat', { callId });
+      aliceClient.emit('call:heartbeat', { callId });
+      await settle(50);
+    }
+    expect((await callRow(h, callId)).state).not.toBe('ended');
+  });
+
+  it('never gives another account or an unbound device the call while the peer is away', async () => {
+    const { h, alice, bob, carol, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    bobClient.emit('call:heartbeat', { callId });
+    await settle(100);
+    bobClient.disconnect();
+    await settle(100);
+    clock.now += 60_000;
+
+    const carolClient = await h.connectAs(carol);
+    const carolState = waitForEvent<unknown>(carolClient, 'call:state');
+    carolClient.emit('call:sync', { callId });
+    expect(await carolState).toBeNull();
+    for (const event of ['call:heartbeat', 'call:hangup'] as const) {
+      const refused = expectError(carolClient, event);
+      carolClient.emit(event, { callId });
+      expect((await refused).code).toBe('call.notAllowed');
+    }
+    const carolSignal = expectError(carolClient, 'call:signal');
+    carolClient.emit('call:signal', { callId, to: alice.user.id, envelope: 'intruder' });
+    expect((await carolSignal).code).toBe('call.notAllowed');
+
+    const idle = await h.connectAs(alice);
+    const idleState = waitForEvent<{ peerLive: boolean; transferable: boolean }>(idle, 'call:state');
+    idle.emit('call:sync', { callId: null });
+    expect(await idleState).toMatchObject({ peerLive: true, transferable: false });
+    const takeover = expectError(idle, 'call:heartbeat');
+    idle.emit('call:heartbeat', { callId });
+    expect((await takeover).code).toBe('call.notAllowed');
+    const stolen = expectError(idle, 'call:signal');
+    idle.emit('call:signal', { callId, to: bob.user.id, envelope: 'stolen' });
+    expect((await stolen).code).toBe('call.notAllowed');
+    expect((await callRow(h, callId)).state).not.toBe('ended');
+  });
+
+  it('tells the other participant that a backgrounded peer can still come back for three minutes', async () => {
+    const { h, alice, bob, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    bobClient.emit('call:heartbeat', { callId });
+    await settle(100);
+
+    const connected = waitForEvent<{ callId: string; peerLive: boolean }>(aliceClient, 'call:state');
+    aliceClient.emit('call:sync', { callId });
+    expect(await connected).toMatchObject({ callId, peerLive: true });
+
+    bobClient.disconnect();
+    await settle(100);
+    clock.now += 150_000;
+    await h.callService.runMaintenance();
+    const away = waitForEvent<{ peerLive: boolean }>(aliceClient, 'call:state');
+    aliceClient.emit('call:sync', { callId });
+    expect((await away).peerLive).toBe(true);
+    expect((await callRow(h, callId)).state).not.toBe('ended');
+
+    clock.now += 31_000;
+    const gone = waitForEvent<{ peerLive: boolean }>(aliceClient, 'call:state');
+    aliceClient.emit('call:sync', { callId });
+    expect((await gone).peerLive).toBe(false);
+
+    const back = await h.connectAs(bob);
+    const resumed = waitForEvent<{ callId: string; peerLive: boolean }>(back, 'call:state');
+    back.emit('call:sync', { callId });
+    expect(await resumed).toMatchObject({ callId, peerLive: true });
+    const signal = waitForEvent<{ envelope: string }>(aliceClient, 'call:signal');
+    back.emit('call:signal', { callId, to: alice.user.id, envelope: 'resumed' });
+    expect((await signal).envelope).toBe('resumed');
+    const refreshed = waitForEvent<{ peerLive: boolean }>(aliceClient, 'call:state');
+    aliceClient.emit('call:sync', { callId });
+    expect((await refreshed).peerLive).toBe(true);
   });
 
   it('does not bind a socket that says it is not in the call, so a dropped call is not offered back as another device', async () => {
