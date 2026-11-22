@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
+import { idSchema } from '../../sockets/payloads.js';
 import { attestationSchema } from './room.event-attestation.js';
 
 export const INVITE_TOKEN_HASH_PATTERN = /^[0-9a-f]{64}$/;
@@ -53,7 +54,7 @@ export const encryptedRosterSchema = z.string().trim().min(1).max(MAX_ENCRYPTED_
 export const encryptedNameSchema = z.string().trim().min(1).max(MAX_ENCRYPTED_NAME_LENGTH);
 
 export const joinByInvitePayloadSchema = z.object({
-  roomId: z.string().trim().min(1),
+  roomId: idSchema,
   inviteToken: inviteValueSchema,
   proof: inviteValueSchema,
   attestation: attestationSchema,

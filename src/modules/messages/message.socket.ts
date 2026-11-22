@@ -5,7 +5,7 @@ import { AppError, errorPayload } from '../../lib/app-error.js';
 import type { ErrorCode } from '../../lib/error-catalog.js';
 import type { Locale } from '../../lib/locale.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
-import { roomIdPayloadSchema } from '../../sockets/payloads.js';
+import { idSchema, roomIdPayloadSchema } from '../../sockets/payloads.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
 import { runSocketHandler } from '../../sockets/socket-handler.js';
 import { socketLocale } from '../../sockets/socket-locale.js';
@@ -104,15 +104,15 @@ const clientTempIdSchema = z.string().trim().min(1).max(200);
 
 const sendMessagePayloadSchema = z
   .object({
-    roomId: z.string().trim().min(1),
+    roomId: idSchema,
     content: z.string().trim().min(1).max(30000),
     type: z.enum(['text', 'image', 'audio', 'file']).default('text'),
     duration: z.number().int().positive().optional(),
-    replyToMessageId: z.string().trim().min(1).optional(),
+    replyToMessageId: idSchema.optional(),
     clientTempId: clientTempIdSchema.optional(),
     messageId: z.string().uuid(),
     fileMeta: fileMetaSchema.optional(),
-    mentionedUserIds: z.array(z.string().trim().min(1)).max(50).optional(),
+    mentionedUserIds: z.array(idSchema).max(50).optional(),
     caption: z.string().trim().max(3340).optional(),
     linkPreview: linkPreviewSchema.optional(),
     attachmentUrls: z.array(z.string().trim().min(1).max(4000)).max(4).optional(),
@@ -127,24 +127,24 @@ const sendMessagePayloadSchema = z
   });
 
 const markReadPayloadSchema = z.object({
-  roomId: z.string().trim().min(1),
-  messageIds: z.array(z.string().trim().min(1)).max(100).optional(),
+  roomId: idSchema,
+  messageIds: z.array(idSchema).max(100).optional(),
 });
 
 const getMessagesPayloadSchema = z.object({
-  roomId: z.string().trim().min(1),
-  before: z.string().trim().min(1).optional(),
+  roomId: idSchema,
+  before: idSchema.optional(),
   limit: z.number().int().min(1).max(100).default(INITIAL_MESSAGES_LIMIT),
 });
 
 const messageIdPayloadSchema = z.object({
-  messageId: z.string().trim().min(1),
+  messageId: idSchema,
 });
 
 export const MESSAGE_BATCH_LIMIT = 100;
 
 const messageIdsSchema = z
-  .array(z.string().trim().min(1))
+  .array(idSchema)
   .min(1)
   .max(MESSAGE_BATCH_LIMIT)
   .refine((ids) => new Set(ids).size === ids.length, { message: 'messageIds não pode ter itens repetidos.' });

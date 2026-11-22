@@ -3,7 +3,7 @@ import { registerClientEvents, registerServerEvents } from '../../docs/socket-re
 import { errorPayload } from '../../lib/app-error.js';
 import type { Locale } from '../../lib/locale.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
-import { roomIdPayloadSchema } from '../../sockets/payloads.js';
+import { idSchema, roomIdPayloadSchema } from '../../sockets/payloads.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
 import { runSocketHandler } from '../../sockets/socket-handler.js';
 import { socketLocale } from '../../sockets/socket-locale.js';
@@ -43,6 +43,8 @@ const ROOM_CODE_INPUT_MAX_LENGTH = 64;
 const MAX_SEALED_KEY_LENGTH = 1000;
 export const MAX_ROOM_KEY_BATCH = MAX_GROUP_MEMBERS;
 
+const keyIdSchema = z.string().regex(KEY_ID_PATTERN);
+
 const createPrivateRoomPayloadSchema = z.object({
   targetNickname: z.string().trim().min(1).max(NICKNAME_MAX_LENGTH),
 });
@@ -56,29 +58,29 @@ const joinByCodePayloadSchema = z.object({
 });
 
 const blockPayloadSchema = z.object({
-  roomId: z.string().trim().min(1),
-  blockedUserId: z.string().trim().min(1),
+  roomId: idSchema,
+  blockedUserId: idSchema,
 });
 
 const memberActionPayloadSchema = z.object({
-  roomId: z.string().trim().min(1),
-  userId: z.string().trim().min(1),
+  roomId: idSchema,
+  userId: idSchema,
   attestation: attestationSchema,
 });
 
 const leaveGroupPayloadSchema = z.object({
-  roomId: z.string().trim().min(1),
+  roomId: idSchema,
   attestation: attestationSchema,
 });
 
 const publishRoomKeyPayloadSchema = z.object({
-  roomId: z.string().trim().min(1),
-  keyId: z.string().regex(KEY_ID_PATTERN),
+  roomId: idSchema,
+  keyId: keyIdSchema,
   epoch: z.number().int().min(1),
   keys: z
     .array(
       z.object({
-        userId: z.string().trim().min(1),
+        userId: idSchema,
         sealedKey: z.string().trim().min(1).max(MAX_SEALED_KEY_LENGTH),
       }),
     )
@@ -90,22 +92,22 @@ const publishRoomKeyPayloadSchema = z.object({
 });
 
 const getRoomKeysPayloadSchema = z.object({
-  roomIds: z.array(z.string().trim().min(1)).min(1).max(E2E_LOOKUP_MAX_ITEMS),
+  roomIds: z.array(idSchema).min(1).max(E2E_LOOKUP_MAX_ITEMS),
   keyIds: z
-    .record(z.string().trim().min(1), z.array(z.string().regex(KEY_ID_PATTERN)).min(1).max(MAX_KEY_IDS_PER_ROOM))
+    .record(idSchema, z.array(keyIdSchema).min(1).max(MAX_KEY_IDS_PER_ROOM))
     .refine((keyIds) => Object.keys(keyIds).length <= E2E_LOOKUP_MAX_ITEMS)
     .optional(),
 });
 
 const reportBadKeyPayloadSchema = z.object({
-  roomId: z.string().trim().min(1),
-  keyId: z.string().regex(KEY_ID_PATTERN),
+  roomId: idSchema,
+  keyId: keyIdSchema,
 });
 
 const renameRoomPayloadSchema = z.object({
-  roomId: z.string().trim().min(1),
+  roomId: idSchema,
   name: encryptedNameSchema,
-  keyId: z.string().regex(KEY_ID_PATTERN),
+  keyId: keyIdSchema,
 });
 
 registerClientEvents('rooms', {

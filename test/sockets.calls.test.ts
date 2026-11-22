@@ -1116,6 +1116,103 @@ describe('server owned timers', () => {
   });
 });
 
+describe('same tab on a new socket', () => {
+  const TAB_A = 'tab-alice-0123456789abcdef';
+  const TAB_B = 'tab-bobby-0123456789abcdef';
+
+  async function liveCall() {
+    const ctx = await setup();
+    const { room, aliceClient, bobClient } = ctx;
+    const callId = newCallId();
+    const incoming = waitForEvent(bobClient, 'call:incoming');
+    aliceClient.emit('call:start', { callId, roomId: room.id, kind: 'voice', envelope: ENVELOPE, device: TAB_A });
+    await incoming;
+    const accepted = Promise.all([waitForEvent(aliceClient, 'call:accepted'), waitForEvent(bobClient, 'call:accepted')]);
+    bobClient.emit('call:accept', { callId, envelope: 'accept-envelope', device: TAB_B });
+    await accepted;
+    return { ...ctx, callId };
+  }
+
+  it('rebinds the same tab right away after a network switch while the old socket still looks connected', async () => {
+    const { h, alice, bob, callId, aliceClient } = await liveCall();
+    const switched = await h.connectAs(bob);
+    const state = waitForEvent(switched, 'call:state');
+    switched.emit('call:sync', { callId, device: TAB_B });
+    await state;
+
+    const relayed = waitForEvent<{ envelope: string }>(switched, 'call:signal');
+    aliceClient.emit('call:signal', { callId, to: bob.user.id, envelope: 'restart-offer' });
+    expect((await relayed).envelope).toBe('restart-offer');
+
+    const back = waitForEvent<{ envelope: string }>(aliceClient, 'call:signal');
+    switched.emit('call:signal', { callId, to: alice.user.id, envelope: 'restart-answer' });
+    expect((await back).envelope).toBe('restart-answer');
+  });
+
+  it('keeps the binding when another tab of the same account presents a different tab token', async () => {
+    const { h, alice, bob, callId } = await liveCall();
+    const other = await h.connectAs(bob);
+    const state = waitForEvent(other, 'call:state');
+    other.emit('call:sync', { callId, device: 'tab-other-0123456789abcdef' });
+    await state;
+
+    const refused = expectError(other, 'call:signal');
+    other.emit('call:signal', { callId, to: alice.user.id, envelope: 'x' });
+    expect((await refused).code).toBe('call.notAllowed');
+  });
+
+  it('marks the call resumable for the same tab after a reload and not for another tab', async () => {
+    const { h, bob, callId, bobClient } = await liveCall();
+    bobClient.disconnect();
+    await settle();
+    const reloaded = await h.connectAs(bob);
+    const state = waitForEvent<{ transferable: boolean; resumable?: boolean }>(reloaded, 'call:state');
+    reloaded.emit('call:sync', { callId: null, device: TAB_B });
+    expect(await state).toMatchObject({ callId, transferable: true, resumable: true });
+
+    const stranger = await h.connectAs(bob);
+    const strangerState = waitForEvent<{ transferable: boolean; resumable?: boolean }>(stranger, 'call:state');
+    stranger.emit('call:sync', { callId: null, device: 'tab-other-0123456789abcdef' });
+    const seen = await strangerState;
+    expect(seen.transferable).toBe(true);
+    expect(seen.resumable).toBeUndefined();
+  });
+
+  it('does not mark the call resumable for a duplicated tab while the original tab is still connected', async () => {
+    const { h, bob } = await liveCall();
+    const duplicate = await h.connectAs(bob);
+    const state = waitForEvent<{ resumable?: boolean }>(duplicate, 'call:state');
+    duplicate.emit('call:sync', { callId: null, device: TAB_B });
+    expect((await state).resumable).toBeUndefined();
+  });
+
+  it('drops queued signals once the silent socket beats again so they are not delivered twice', async () => {
+    const { h, bob, callId, aliceClient, bobClient } = await liveCall();
+    clock.now += 16_000;
+    aliceClient.emit('call:signal', { callId, to: bob.user.id, envelope: 'offer-once' });
+    await settle();
+    await beat(bobClient, callId, false);
+    const switched = await h.connectAs(bob);
+    const late = collectEvents(switched, 'call:signal');
+    const state = waitForEvent(switched, 'call:state');
+    switched.emit('call:sync', { callId, device: TAB_B });
+    await state;
+    await settle();
+    expect(late).toHaveLength(0);
+  });
+
+  it('keeps signals for a bound socket that went silent and delivers them when the tab comes back', async () => {
+    const { h, bob, callId, aliceClient } = await liveCall();
+    clock.now += 16_000;
+    aliceClient.emit('call:signal', { callId, to: bob.user.id, envelope: 'lost-offer' });
+    await settle();
+    const switched = await h.connectAs(bob);
+    const flushed = waitForEvent<{ envelope: string }>(switched, 'call:signal');
+    switched.emit('call:sync', { callId, device: TAB_B });
+    expect((await flushed).envelope).toBe('lost-offer');
+  });
+});
+
 describe('call sync and restart restore', () => {
   it('always sends the config before the state on sync', async () => {
     const { aliceClient } = await setup();
