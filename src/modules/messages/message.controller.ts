@@ -11,6 +11,7 @@ import { StorageQuotaExceededError, type StorageQuota } from '../../storage/stor
 import type { UploadRegistry } from '../../storage/upload-registry.js';
 import { verifyFileSignature } from './message.file-signature.js';
 import {
+  fileDispositionFor,
   GIF_UPLOAD_TTL_MS,
   MAX_LIVE_GIF_BYTES,
   isAllowedGifUploadSize,
@@ -19,7 +20,6 @@ import {
   NEUTRAL_UPLOAD_MIME_TYPE,
 } from './message.upload.js';
 
-const INLINE_SAFE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.mov', '.avi']);
 const UPLOAD_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 export const MAX_USER_STORAGE_BYTES = 500 * 1024 * 1024;
 
@@ -34,10 +34,6 @@ function isEncryptedUpload(req: Request): boolean {
 
 function withEncryptedMarker(url: string, encrypted: boolean): string {
   return encrypted ? `${url}?e2e=1` : url;
-}
-
-function attachmentDispositionFor(originalname: string): string | undefined {
-  return INLINE_SAFE_FILE_EXTENSIONS.has(path.extname(originalname).toLowerCase()) ? undefined : 'attachment';
 }
 
 export const mediaUploadResponseSchema = z
@@ -60,7 +56,7 @@ interface UploadHandlerOptions<TResponse> {
   kind: UploadKind;
   buildKey: (filename: string) => string;
   buildResponse: (file: Express.Multer.File, url: string) => TResponse;
-  contentDisposition?: (originalname: string) => string | undefined;
+  contentDisposition?: (mimetype: string) => string | undefined;
   validateFile?: (file: Express.Multer.File) => 'upload.invalidGifSize' | null;
   countsTowardUserQuota?: boolean;
   ttlMs?: number;
@@ -135,7 +131,7 @@ export function createUploadHandler<TResponse>(
 
       await objectStorage.putObject(key, file.buffer, {
         contentType: encrypted ? NEUTRAL_UPLOAD_MIME_TYPE : file.mimetype,
-        contentDisposition: encrypted ? 'attachment' : contentDisposition?.(file.originalname),
+        contentDisposition: encrypted ? 'attachment' : contentDisposition?.(file.mimetype),
         cacheControl: UPLOAD_CACHE_CONTROL,
       });
     } catch (err) {
@@ -168,7 +164,7 @@ export function createMessageController(objectStorage: ObjectStorage, storageQuo
     uploadFile: createUploadHandler(objectStorage, storageQuota, uploadRegistry, {
       kind: 'file',
       buildKey: fileObjectKey,
-      contentDisposition: attachmentDispositionFor,
+      contentDisposition: fileDispositionFor,
       buildResponse: (file, url) => ({
         url,
         name: decodeOriginalFilename(file.originalname),
