@@ -7,6 +7,14 @@ export function notFoundHandler(req: Request, res: Response): void {
   res.status(404).json(errorPayload('internal.routeNotFound', { method: req.method, path: req.originalUrl }));
 }
 
+function describeClientError(err: unknown, status: number): { type: string; status: number } {
+  if (err instanceof multer.MulterError) {
+    return { type: `multer.${err.code}`, status };
+  }
+  const { type } = err as { type?: unknown };
+  return { type: typeof type === 'string' ? type : 'unknown', status };
+}
+
 function clientErrorStatus(err: unknown): number | null {
   if (err instanceof multer.MulterError) {
     return 400;
@@ -28,7 +36,7 @@ function clientErrorStatus(err: unknown): number | null {
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
   const status = clientErrorStatus(err);
   if (status !== null) {
-    logger.warn({ err }, 'Rejected malformed request');
+    logger.warn({ request: describeClientError(err, status) }, 'Rejected malformed request');
     res.status(status).json(errorPayload('validation.invalidPayload'));
     return;
   }
