@@ -6,7 +6,7 @@ import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService } from '../mes
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import { ASSISTANT_USER_ID } from '../users/index.js';
 import { monthKey, type CallBudget } from './call-budget.js';
-import type { CallServerToClientEvents, CallStatePayload } from './call.events.js';
+import type { CallMediaState, CallServerToClientEvents, CallStatePayload } from './call.events.js';
 import type { CallRateLimiter } from './call.rate-limiter.js';
 import type { CallRepository } from './call.repository.js';
 import { transition, type CallEvent } from './call.state.js';
@@ -93,6 +93,7 @@ function peerOf(call: CallRecord, role: CallRole): string {
 export class CallService {
   private readonly bindings = new Map<string, SocketBindings>();
   private readonly beats = new Map<string, Partial<Record<CallRole, number>>>();
+  private readonly mediaStates = new Map<string, Partial<Record<CallRole, CallMediaState>>>();
   private readonly connectedAt = new Map<string, number>();
   private readonly pendingTransfers = new Map<string, { role: CallRole; socketId: string; startedAt: number }>();
   private readonly ringingInvites = new Map<string, IncomingCallPayload>();
@@ -353,6 +354,7 @@ export class CallService {
     }
     this.clearPendingTransfer(call.id);
     const previous = this.boundSocket(call, movingRole);
+    this.forgetMedia(call.id, movingRole);
     await this.takeOver(call, movingRole, pending.socketId);
     this.limiter.allowNextIceServers(call.id, roleUserId(call, movingRole), pending.socketId);
     if (previous !== undefined && previous !== pending.socketId) {
@@ -403,7 +405,7 @@ export class CallService {
     this.enqueueSignal(call.id, peerRole, payload);
   }
 
-  async heartbeat(actor: CallActor, callId: string, relayed?: boolean): Promise<void> {
+  async heartbeat(actor: CallActor, callId: string, relayed?: boolean, media?: CallMediaState): Promise<void> {
     this.requireEnabled();
     const call = await this.requireParticipant(callId, actor.userId);
     if (call.state === 'accepted' || call.state === 'active') {
@@ -416,13 +418,51 @@ export class CallService {
           throw AppError.of('call.notAllowed');
         }
         await this.takeOver(call, role, actor.socketId);
+        if (media) {
+          await this.rememberMedia(call, role, actor.socketId, media);
+        } else {
+          this.forgetMedia(call.id, role);
+        }
         return;
       }
       this.markBeat(call.id, role);
+      await this.rememberMedia(call, role, actor.socketId, media);
       await this.repository.touchHeartbeat(callId, new Date(this.now()).toISOString());
       if (relayed === false) {
         await this.dropRelayCredentials(call, role);
       }
+    }
+  }
+
+  private async rememberMedia(call: CallRecord, role: CallRole, socketId: string, media: CallMediaState | undefined): Promise<void> {
+    if (!media) {
+      return;
+    }
+    const known = this.mediaStates.get(call.id);
+    const previous = known?.[role];
+    const states = known ?? {};
+    states[role] = { muted: media.muted, camera: media.camera };
+    this.mediaStates.set(call.id, states);
+    if (!known) {
+      const current = await this.repository.findById(call.id);
+      if (!current || current.state === 'ended') {
+        this.mediaStates.delete(call.id);
+        return;
+      }
+    }
+    if (!previous || previous.muted !== media.muted || previous.camera !== media.camera) {
+      this.io.in(userRoom(roleUserId(call, role))).except(socketId).emit('call:state', this.statePayload(call, call.state === 'accepted' ? 'accepted' : 'active', role, null));
+    }
+  }
+
+  private forgetMedia(callId: string, role: CallRole): void {
+    const states = this.mediaStates.get(callId);
+    if (!states) {
+      return;
+    }
+    delete states[role];
+    if (!states.caller && !states.callee) {
+      this.mediaStates.delete(callId);
     }
   }
 
@@ -469,22 +509,31 @@ export class CallService {
       }
     }
 
-    const payload: CallStatePayload = {
-      callId: call.id,
-      state: call.state,
-      roomId: call.roomId,
-      kind: call.kind,
-      peerId: peerOf(call, role),
-      role,
-      answeredAt: call.answeredAt,
-      transferable: this.isTransferable(call, role, actor.socketId),
-      peerLive: this.isPeerLive(call, role),
-    };
+    const payload = this.statePayload(call, call.state, role, actor.socketId);
     this.io.to(actor.socketId).emit('call:state', payload);
     const invite = this.ringingInvites.get(call.id);
     if (call.state === 'ringing' && role === 'callee' && invite && Date.parse(invite.ringExpiresAt) > this.now()) {
       this.io.to(actor.socketId).emit('call:incoming', invite);
     }
+  }
+
+  private statePayload(call: CallRecord, state: CallStatePayload['state'], role: CallRole, socketId: string | null): CallStatePayload {
+    const payload: CallStatePayload = {
+      callId: call.id,
+      state,
+      roomId: call.roomId,
+      kind: call.kind,
+      peerId: peerOf(call, role),
+      role,
+      answeredAt: call.answeredAt,
+      transferable: this.isTransferable(call, role, socketId ?? ''),
+      peerLive: this.isPeerLive(call, role),
+    };
+    const media = this.mediaStates.get(call.id)?.[role];
+    if (media && (call.state === 'accepted' || call.state === 'active')) {
+      payload.media = { ...media };
+    }
+    return payload;
   }
 
   async iceServers(actor: CallActor, input: { callId: string; protectIp: boolean }): Promise<IceServersResult> {
@@ -618,6 +667,7 @@ export class CallService {
   private async afterEnd(call: CallRecord): Promise<void> {
     this.bindings.delete(call.id);
     this.beats.delete(call.id);
+    this.mediaStates.delete(call.id);
     this.connectedAt.delete(call.id);
     this.clearPendingTransfer(call.id);
     this.ringingInvites.delete(call.id);
