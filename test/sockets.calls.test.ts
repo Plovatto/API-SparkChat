@@ -1124,7 +1124,7 @@ describe('abandoned calls', () => {
     aliceClient.disconnect();
     bobClient.disconnect();
     await settle();
-    clock.now += 25_000;
+    clock.now += 65_000;
 
     const alice2 = await h.connectAs(alice);
     const bob2 = await h.connectAs(bob);
@@ -1144,6 +1144,24 @@ describe('abandoned calls', () => {
     tablet.emit('call:start', { callId: newCallId(), roomId: room.id, kind: 'voice', envelope: ENVELOPE });
 
     expect((await refused).code).toBe('call.alreadyInCall');
+  });
+
+  it('never ends the dropped call of the callee because someone else calls them', async () => {
+    const { h, alice, room, carol, aliceClient, bobClient } = await setup();
+    const first = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, first);
+    aliceClient.disconnect();
+    bobClient.disconnect();
+    await settle();
+    clock.now += 65_000;
+    const carolRoom = await h.roomService.createPrivateRoom(carol.user.id, alice.user.id);
+    await h.roomService.makeVisibleForAll(carolRoom, new Date().toISOString());
+    const carolClient = await h.connectAs(carol);
+    const ended = waitForEvent<CallEndedEvent>(carolClient, 'call:ended');
+    carolClient.emit('call:start', { callId: newCallId(), roomId: carolRoom.id, kind: 'voice', envelope: ENVELOPE });
+
+    expect((await ended).reason).toBe('busy');
+    expect((await callRow(h, first)).state).not.toBe('ended');
   });
 
   it('keeps a call that was just left for a reload so the same tab can still resume it', async () => {

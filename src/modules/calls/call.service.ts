@@ -187,7 +187,7 @@ export class CallService {
 
   private async endAbandonedCall(userId: string): Promise<void> {
     const call = await this.repository.findOpenForUser(userId);
-    if (!call || (call.state !== 'accepted' && call.state !== 'active') || this.hasConnectedParticipant(call)) {
+    if (!call || this.now() < this.graceUntil || (call.state !== 'accepted' && call.state !== 'active') || this.hasConnectedParticipant(call)) {
       return;
     }
     const silentFor = this.now() - Math.max(this.lastBeatOf(call, 'caller'), this.lastBeatOf(call, 'callee'), this.connectedAt.get(call.id) ?? 0);
@@ -244,7 +244,6 @@ export class CallService {
     };
 
     await this.endAbandonedCall(actor.userId);
-    await this.endAbandonedCall(calleeId);
 
     if (await this.repository.findOpenForUser(actor.userId)) {
       throw AppError.of('call.alreadyInCall');
