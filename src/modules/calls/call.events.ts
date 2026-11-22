@@ -14,6 +14,7 @@ export interface CallStatePayload {
   role: CallRole;
   answeredAt: string | null;
   transferable: boolean;
+  resumable?: true;
   peerLive: boolean;
   media?: CallMediaState;
 }
