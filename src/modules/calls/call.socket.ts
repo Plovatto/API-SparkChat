@@ -25,7 +25,11 @@ const callIdPayloadSchema = z.object({ callId: callIdSchema });
 const heartbeatPayloadSchema = z.object({ callId: callIdSchema, relayed: z.boolean().optional().openapi({ description: 'Rota atual da mídia deste aparelho. false (conexão direta) faz o servidor revogar as credenciais TURN deste aparelho; um novo call:ice-servers emite outras quando precisar do relay' }) });
 const hangupPayloadSchema = z.object({ callId: callIdSchema, force: z.boolean().optional() });
 const signalPayloadSchema = z.object({ callId: callIdSchema, to: z.string().trim().min(1), envelope: envelopeSchema });
-const syncPayloadSchema = z.object({}).optional();
+const syncPayloadSchema = z
+  .object({
+    callId: callIdSchema.nullable().optional().openapi({ description: 'Chamada em que este aparelho está agora (null se nenhuma). Só um aparelho que informa esta chamada assume o vínculo dela no sync; sem o campo, vale o comportamento antigo' }),
+  })
+  .optional();
 const iceServersPayloadSchema = z.object({ callId: callIdSchema, protectIp: z.boolean() });
 const transferPayloadSchema = z.object({ callId: callIdSchema, envelope: envelopeSchema });
 
@@ -185,8 +189,8 @@ export function registerCallSocketHandlers(socket: AppSocket, deps: CallSocketDe
 
   socket.on('call:sync', (payload) => {
     handle('call:sync', (actor) => {
-      syncPayloadSchema.parse(payload);
-      return callService.sync(actor);
+      const input = syncPayloadSchema.parse(payload);
+      return callService.sync(actor, input?.callId);
     });
   });
 

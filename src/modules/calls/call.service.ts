@@ -12,6 +12,7 @@ import type { CallRepository } from './call.repository.js';
 import { transition, type CallEvent } from './call.state.js';
 import {
   HEARTBEAT_TIMEOUT_MS,
+  PEER_PRESENCE_MS,
   TAKEOVER_SILENCE_MS,
   TRANSFER_PENDING_MS,
   MAX_CALL_DURATION_MS,
@@ -272,8 +273,7 @@ export class CallService {
     }
     const role = roleOf(call, actor.userId);
     if (role && !force && (call.state === 'accepted' || call.state === 'active')) {
-      const bound = this.boundSocket(call, role);
-      if (bound !== undefined && bound !== actor.socketId && this.io.sockets.sockets.has(bound)) {
+      if (!this.mayTakeOver(call, role, actor.socketId)) {
         throw AppError.of('call.notAllowed');
       }
     }
@@ -451,7 +451,7 @@ export class CallService {
     this.flushSignals(call.id, role, socketId);
   }
 
-  async sync(actor: CallActor): Promise<void> {
+  async sync(actor: CallActor, currentCallId?: string | null): Promise<void> {
     this.io.to(actor.socketId).emit('call:config', await this.getConfig());
     this.requireEnabled();
     const call = await this.repository.findOpenForUser(actor.userId);
@@ -461,7 +461,8 @@ export class CallService {
       return;
     }
 
-    if (call.state === 'accepted' || call.state === 'active') {
+    const inCall = currentCallId === undefined || currentCallId === call.id;
+    if (inCall && (call.state === 'accepted' || call.state === 'active')) {
       if (this.canTakeOver(call, role, actor.socketId)) {
         await this.takeOver(call, role, actor.socketId);
       }
@@ -475,6 +476,7 @@ export class CallService {
       peerId: peerOf(call, role),
       role,
       answeredAt: call.answeredAt,
+      transferable: this.isTransferable(call, role, actor.socketId),
     };
     this.io.to(actor.socketId).emit('call:state', payload);
     const invite = this.ringingInvites.get(call.id);
@@ -722,6 +724,18 @@ export class CallService {
       return bound;
     }
     return role === 'callee' ? (call.acceptedDeviceId ?? undefined) : undefined;
+  }
+
+  private isTransferable(call: CallRecord, role: CallRole, socketId: string): boolean {
+    if (call.state !== 'accepted' && call.state !== 'active') {
+      return false;
+    }
+    if (this.boundSocket(call, role) === socketId) {
+      return false;
+    }
+    const peerRole: CallRole = role === 'caller' ? 'callee' : 'caller';
+    const peerSocket = this.boundSocket(call, peerRole);
+    return peerSocket !== undefined && this.io.sockets.sockets.has(peerSocket) && this.now() - this.lastBeatOf(call, peerRole) < PEER_PRESENCE_MS;
   }
 
   private canTakeOver(call: CallRecord, role: CallRole, socketId: string): boolean {
