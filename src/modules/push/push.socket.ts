@@ -3,9 +3,7 @@ import { z } from 'zod';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import { AppError } from '../../lib/app-error.js';
 import type { AppSocket } from '../../sockets/events.js';
-import { extractErrorPayload } from '../../sockets/socket-errors.js';
-import { runSocketHandler } from '../../sockets/socket-handler.js';
-import { requireSocketUserId } from '../../sockets/socket-session.js';
+import { runAuthedSocketHandler } from '../../sockets/socket-handler.js';
 import type { PushService } from './push.service.js';
 import { MAX_ENDPOINT_LENGTH } from './push.types.js';
 
@@ -54,22 +52,8 @@ function userAgentOf(socket: AppSocket): string | undefined {
 export function registerPushSocketHandlers(socket: AppSocket, deps: PushSocketDeps): void {
   const { pushService } = deps;
 
-  const handle = (event: string, work: (userId: string) => Promise<void>): void => {
-    runSocketHandler(socket, event, async () => {
-      const userId = requireSocketUserId(socket);
-      if (!userId) {
-        return;
-      }
-      try {
-        await work(userId);
-      } catch (error) {
-        socket.emit('error', { ...extractErrorPayload(error), event });
-      }
-    });
-  };
-
   socket.on('push:config', (payload) => {
-    handle('push:config', () => {
+    runAuthedSocketHandler(socket, 'push:config', () => {
       configPayloadSchema.parse(payload);
       socket.emit('push:config', pushService.getConfig());
       return Promise.resolve();
@@ -77,7 +61,7 @@ export function registerPushSocketHandlers(socket: AppSocket, deps: PushSocketDe
   });
 
   socket.on('push:subscribe', (payload) => {
-    handle('push:subscribe', async (userId) => {
+    runAuthedSocketHandler(socket, 'push:subscribe', async (userId) => {
       const { subscription } = subscribePayloadSchema.parse(payload);
       const sessionId = socket.data.sessionId;
       if (!sessionId) {
@@ -88,7 +72,7 @@ export function registerPushSocketHandlers(socket: AppSocket, deps: PushSocketDe
   });
 
   socket.on('push:unsubscribe', (payload) => {
-    handle('push:unsubscribe', async (userId) => {
+    runAuthedSocketHandler(socket, 'push:unsubscribe', async (userId) => {
       const { endpoint } = unsubscribePayloadSchema.parse(payload);
       socket.emit('push:unsubscribed', await pushService.unsubscribe(userId, endpoint));
     });
