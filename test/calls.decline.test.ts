@@ -60,11 +60,17 @@ describe('call decline route', () => {
     expect(decline).not.toHaveBeenCalled();
   });
 
+  it('answers 204 when the call already stopped ringing so a retried decline is harmless', async () => {
+    const decline = vi.fn(() => Promise.reject(AppError.of('call.invalidState')));
+    const response = await request(appWith(decline)).post('/api/calls/decline').send({ callId: 'call-1', token: 'tok' });
+
+    expect(response.status).toBe(204);
+  });
+
   it('maps a refused token to the service error', async () => {
     const decline = vi.fn(() => Promise.reject(AppError.of('call.notAllowed')));
     const response = await request(appWith(decline)).post('/api/calls/decline').send({ callId: 'call-1', token: 'bad' });
 
-    expect(response.status).toBeGreaterThanOrEqual(400);
-    expect(response.status).toBeLessThan(500);
+    expect(response.status).toBe(403);
   });
 });

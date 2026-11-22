@@ -33,13 +33,13 @@ registry.registerPath({
     400: { description: 'Dados inválidos', content: { 'application/json': { schema: errorResponseSchema } } },
     403: { description: 'Token inválido ou expirado', content: { 'application/json': { schema: errorResponseSchema } } },
     404: { description: 'Chamada não encontrada', content: { 'application/json': { schema: errorResponseSchema } } },
+    503: { description: 'Chamadas desativadas', content: { 'application/json': { schema: errorResponseSchema } } },
   },
 });
 
 const STATUS_BY_CODE: Partial<Record<string, number>> = {
   'call.notAllowed': 403,
   'call.notFound': 404,
-  'call.invalidState': 409,
   'call.disabled': 503,
 };
 
@@ -58,6 +58,10 @@ export function createCallRouter(decline: CallDeclineHandler): Router {
       try {
         await decline(parsed.data);
       } catch (err) {
+        if (err instanceof AppError && err.code === 'call.invalidState') {
+          res.status(204).end();
+          return;
+        }
         const status = err instanceof AppError ? STATUS_BY_CODE[err.code] : undefined;
         if (err instanceof AppError && status !== undefined) {
           res.status(status).json(err.toPayload());
