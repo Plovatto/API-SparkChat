@@ -177,6 +177,15 @@ describe('push service', () => {
     expect(order).toEqual(['call', 'call-end']);
   });
 
+  it('carries the decline token of the call in the incoming push', async () => {
+    const sender = vi.fn<PushSender>(() => Promise.resolve());
+    const { service } = await build({ sender });
+    await service.subscribe('u1', 's-u1', subscription());
+    service.incomingCall({ userId: 'u1', callId: 'c1', roomId: 'r', kind: 'video', ringExpiresAtMs: Date.now() + 30_000, declineToken: 'tok' });
+    await service.idle();
+    expect(JSON.parse(sender.mock.calls[0]?.[1] as string)).toEqual({ t: 'call', callId: 'c1', roomId: 'r', kind: 'video', d: 'tok' });
+  });
+
   it('skips expired rings, skips call-end without a ring and keeps subscriptions on transient failures', async () => {
     const sender = vi.fn<PushSender>(() => Promise.reject(new PushDeliveryError(null)));
     const { service, repository } = await build({ sender });

@@ -116,6 +116,7 @@ const app = createApp({
   storageQuota,
   uploadRegistry,
   gifProvider,
+  callDecline: (input) => callService.declineWithToken(input),
 });
 const httpServer = createServer(app);
 
