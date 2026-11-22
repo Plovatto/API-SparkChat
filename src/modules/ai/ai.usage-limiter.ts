@@ -1,28 +1,52 @@
+import { and, eq, lt, sql } from 'drizzle-orm';
+import { aiDailyUsage } from '../../database/schema.js';
+import type { Database } from '../../database/turso-client.js';
 import { AI_DAILY_MESSAGE_LIMIT } from './ai.model.js';
 
-function currentDateKey(): string {
-  return new Date().toISOString().slice(0, 10);
+export function currentUsageDate(now = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
+export class AiUsageRepository {
+  constructor(private readonly db: Database) {}
+
+  async count(userId: string, usageDate: string): Promise<number> {
+    const [row] = await this.db
+      .select({ count: aiDailyUsage.count })
+      .from(aiDailyUsage)
+      .where(and(eq(aiDailyUsage.userId, userId), eq(aiDailyUsage.usageDate, usageDate)));
+    return row?.count ?? 0;
+  }
+
+  async consume(userId: string, usageDate: string, limit: number): Promise<boolean> {
+    const rows = await this.db
+      .insert(aiDailyUsage)
+      .values({ userId, usageDate, count: 1 })
+      .onConflictDoUpdate({
+        target: [aiDailyUsage.userId, aiDailyUsage.usageDate],
+        set: { count: sql`${aiDailyUsage.count} + 1` },
+        setWhere: lt(aiDailyUsage.count, limit),
+      })
+      .returning({ count: aiDailyUsage.count });
+    return rows.length > 0;
+  }
+
+  async purgeBefore(usageDate: string): Promise<void> {
+    await this.db.delete(aiDailyUsage).where(lt(aiDailyUsage.usageDate, usageDate));
+  }
 }
 
 export class AiUsageLimiter {
-  private readonly countByUserId = new Map<string, number>();
-  private dateKey = currentDateKey();
+  constructor(
+    private readonly repository: AiUsageRepository,
+    private readonly limit: number = AI_DAILY_MESSAGE_LIMIT,
+  ) {}
 
-  isBlocked(userId: string): boolean {
-    this.rolloverIfNeeded();
-    return (this.countByUserId.get(userId) ?? 0) >= AI_DAILY_MESSAGE_LIMIT;
+  async isBlocked(userId: string): Promise<boolean> {
+    return (await this.repository.count(userId, currentUsageDate())) >= this.limit;
   }
 
-  registerUsage(userId: string): void {
-    this.rolloverIfNeeded();
-    this.countByUserId.set(userId, (this.countByUserId.get(userId) ?? 0) + 1);
-  }
-
-  private rolloverIfNeeded(): void {
-    const today = currentDateKey();
-    if (today !== this.dateKey) {
-      this.dateKey = today;
-      this.countByUserId.clear();
-    }
+  tryConsume(userId: string): Promise<boolean> {
+    return this.repository.consume(userId, currentUsageDate(), this.limit);
   }
 }

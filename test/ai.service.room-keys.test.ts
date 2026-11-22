@@ -43,7 +43,7 @@ describe('SparkAI with authenticated room keys', () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] });
 
     const message = await context.sendFromAlice('qual é a capital da França?');
-    context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
+    await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
     await flush();
 
     await vi.waitFor(async () => {
@@ -73,7 +73,7 @@ describe('SparkAI with authenticated room keys', () => {
     });
 
     const message = await context.sendFromAlice('mensagem real');
-    context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
+    await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
     await flush();
 
     await vi.waitFor(() => {
@@ -149,7 +149,7 @@ describe('SparkAI with authenticated room keys', () => {
       }),
     });
 
-    context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
+    await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
     await flush();
 
     await vi.waitFor(() => {
@@ -167,7 +167,7 @@ describe('SparkAI with authenticated room keys', () => {
     const message = await context.sendFromAlice('oi');
     await context.roomKeyRepository.markRotationRequired(context.room.id);
 
-    context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
+    await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
     await flush();
     await vi.advanceTimersByTimeAsync(PAST_RETRIES_MS);
 

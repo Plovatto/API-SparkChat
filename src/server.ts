@@ -9,7 +9,7 @@ import { runMigrations } from './database/migrate.js';
 import { CallBudget, CallRateLimiter, CallRepository, CallService, createCloudflareTurnProvider } from './modules/calls/index.js';
 import { AvatarRepository, AvatarService } from './modules/avatars/index.js';
 import { createGifProvider } from './modules/gifs/index.js';
-import { AiService, AiUsageLimiter, createGeminiRouter, ensureAssistantUser, loadAssistantIdentity } from './modules/ai/index.js';
+import { AiService, AiUsageLimiter, AiUsageRepository, createGeminiRouter, currentUsageDate, ensureAssistantUser, loadAssistantIdentity } from './modules/ai/index.js';
 import { httpLinkPreviewFetcher, LinkPreviewRepository, LinkPreviewService } from './modules/link-preview/index.js';
 import {
   MessageRateLimiter,
@@ -92,7 +92,11 @@ await linkPreviewService.purgeExpired().catch((error: unknown) => logger.warn({ 
 const assistantIdentity = await loadAssistantIdentity(env.AI_ASSISTANT_PRIVATE_KEY);
 const assistantRotations = await ensureAssistantUser(userRepository, assistantIdentity);
 const aiRouter = createGeminiRouter(env.GEMINI_API_KEY);
-const aiUsageLimiter = new AiUsageLimiter();
+const aiUsageRepository = new AiUsageRepository(db);
+await aiUsageRepository
+  .purgeBefore(currentUsageDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)))
+  .catch((error: unknown) => logger.warn({ err: error }, 'AI usage purge failed'));
+const aiUsageLimiter = new AiUsageLimiter(aiUsageRepository);
 const aiService = new AiService(
   assistantIdentity,
   roomKeyRepository,

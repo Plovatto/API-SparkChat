@@ -6,7 +6,7 @@ import { getSodium } from '@/modules/ai/ai.crypto.js';
 import { buildAssistantIdentity } from '@/modules/ai/ai.identity.js';
 import { AiRouter } from '@/modules/ai/ai.provider.js';
 import { AiService } from '@/modules/ai/ai.service.js';
-import { AiUsageLimiter } from '@/modules/ai/ai.usage-limiter.js';
+import { AiUsageLimiter, AiUsageRepository } from '@/modules/ai/ai.usage-limiter.js';
 import { CallBudget, CallRateLimiter, CallRepository, CallService, type TurnProvider } from '@/modules/calls/index.js';
 import { PushRateLimiter, PushRepository, PushService, type PushSender } from '@/modules/push/index.js';
 import { MessageRateLimiter, RecordingService, RoomPresenceService, TypingService } from '@/modules/messages/index.js';
@@ -52,7 +52,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     new TypingService(),
     new RoomPresenceService(),
     new AiRouter([{ generateReply: () => Promise.resolve('ok') }]),
-    new AiUsageLimiter(),
+    new AiUsageLimiter(new AiUsageRepository(services.db)),
     services.objectStorage,
     services.userService,
   );

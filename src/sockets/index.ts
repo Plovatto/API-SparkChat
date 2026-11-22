@@ -151,7 +151,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       messageRateLimiter: deps.messageRateLimiter,
       onMessageSent: ({ io: server, room, message, locale }) => {
         if (message.type !== 'system' && aiService.isAssistantRoom(room)) {
-          aiService.handleIncomingMessage(server, room, message, locale);
+          void aiService.handleIncomingMessage(server, room, message, locale);
         }
         if (message.type !== 'system') {
           deps.pushService.newMessage({

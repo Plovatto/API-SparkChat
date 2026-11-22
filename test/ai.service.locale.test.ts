@@ -39,7 +39,7 @@ describe('AiService locale', () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] });
 
     const message = await sendFromAlice('hello there');
-    aiService.handleIncomingMessage(createFakeServer(), room, message, 'en');
+    await aiService.handleIncomingMessage(createFakeServer(), room, message, 'en');
     await vi.advanceTimersByTimeAsync(3000);
 
     await vi.waitFor(() => {
@@ -53,9 +53,9 @@ describe('AiService locale', () => {
     const io = createFakeServer();
 
     const first = await sendFromAlice('oi');
-    aiService.handleIncomingMessage(io, room, first, 'pt');
+    await aiService.handleIncomingMessage(io, room, first, 'pt');
     const second = await sendFromAlice('hello');
-    aiService.handleIncomingMessage(io, room, second, 'en');
+    await aiService.handleIncomingMessage(io, room, second, 'en');
     await vi.advanceTimersByTimeAsync(3000);
 
     await vi.waitFor(() => {

@@ -335,3 +335,13 @@ export const transparencyMeta = sqliteTable('transparency_meta', {
   key: text('key').primaryKey(),
   value: text('value').notNull(),
 });
+
+export const aiDailyUsage = sqliteTable(
+  'ai_daily_usage',
+  {
+    userId: text('user_id').notNull(),
+    usageDate: text('usage_date').notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.usageDate] }), index('ai_daily_usage_date_idx').on(table.usageDate)],
+);
