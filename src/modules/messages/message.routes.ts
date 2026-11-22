@@ -1,11 +1,7 @@
-import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
-import multer from 'multer';
 import type { z } from 'zod';
 import { errorResponseSchema } from '../../docs/common-schemas.js';
 import { registry } from '../../docs/registry.js';
-import { errorPayload } from '../../lib/app-error.js';
-import type { UploadKind } from '../../lib/error-catalog.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { createRequireAuth } from '../../middleware/auth.js';
 import { createRateLimiter } from '../../middleware/rate-limit.js';
@@ -29,6 +25,7 @@ import {
   maxImageSizeBytes,
 } from './message.upload.js';
 import { createUploadConcurrencyGuard, sharedUploadLimiter } from './upload-concurrency.js';
+import { createUploadErrorHandler } from './upload-errors.js';
 
 const uploadRateLimiter = createRateLimiter({
   limit: 20,
@@ -130,22 +127,6 @@ registerUploadPath(
   mediaUploadResponseSchema,
 );
 
-function createUploadErrorHandler(kind: UploadKind, maxSize: string) {
-  return function handleUploadError(err: unknown, _req: Request, res: Response, next: NextFunction): void {
-    if (!(err instanceof multer.MulterError)) {
-      next(err);
-      return;
-    }
-
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      res.status(400).json(errorPayload('upload.tooLarge', { kind, maxSize }));
-      return;
-    }
-
-    res.status(400).json(errorPayload('upload.invalidType', { kind }));
-  };
-}
-
 const imageUploadGuard = createUploadConcurrencyGuard(sharedUploadLimiter, 'image', '5MB', { maxBytesPerUpload: maxImageSizeBytes });
 const audioUploadGuard = createUploadConcurrencyGuard(sharedUploadLimiter, 'audio', '8MB', { maxBytesPerUpload: maxAudioSizeBytes });
 const fileUploadGuard = createUploadConcurrencyGuard(sharedUploadLimiter, 'file', '50MB', { maxBytesPerUpload: maxFileSizeBytes });
@@ -157,20 +138,7 @@ const gifUploadGuard = createUploadConcurrencyGuard(sharedUploadLimiter, 'gif', 
 const handleImageUploadError = createUploadErrorHandler('image', '5MB');
 const handleAudioUploadError = createUploadErrorHandler('audio', '8MB');
 const handleFileUploadError = createUploadErrorHandler('file', '50MB');
-
-function handleGifUploadError(err: unknown, _req: Request, res: Response, next: NextFunction): void {
-  if (!(err instanceof multer.MulterError)) {
-    next(err);
-    return;
-  }
-
-  if (err.code === 'LIMIT_FILE_SIZE') {
-    res.status(400).json(errorPayload('upload.invalidGifSize'));
-    return;
-  }
-
-  res.status(400).json(errorPayload('upload.invalidType', { kind: 'gif' }));
-}
+const handleGifUploadError = createUploadErrorHandler('gif', '2MB', { oversizeCode: 'upload.invalidGifSize' });
 
 export function createMessageRouter(
   userService: UserService,

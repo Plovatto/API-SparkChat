@@ -1,4 +1,3 @@
-import type { NextFunction, Request, Response } from 'express';
 import { Router } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
@@ -6,14 +5,20 @@ import '../../docs/zod-extend.js';
 import { avatarObjectKey } from '../../config/paths.js';
 import { errorResponseSchema } from '../../docs/common-schemas.js';
 import { registry } from '../../docs/registry.js';
-import { errorPayload } from '../../lib/app-error.js';
 import { asyncHandler } from '../../middleware/async-handler.js';
 import { createRequireAuth } from '../../middleware/auth.js';
 import { createRateLimiter } from '../../middleware/rate-limit.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import type { StorageQuota } from '../../storage/storage-quota.js';
 import type { UploadRegistry } from '../../storage/upload-registry.js';
-import { createUploadConcurrencyGuard, createUploadHandler, isNeutralUpload, sharedUploadLimiter, UPLOAD_PART_LIMITS } from '../messages/index.js';
+import {
+  createUploadConcurrencyGuard,
+  createUploadErrorHandler,
+  createUploadHandler,
+  isNeutralUpload,
+  sharedUploadLimiter,
+  UPLOAD_PART_LIMITS,
+} from '../messages/index.js';
 import type { UserService } from '../users/index.js';
 import { AVATAR_UPLOADS_PER_MINUTE, MAX_AVATAR_UPLOAD_BYTES } from './avatar.limits.js';
 
@@ -101,19 +106,7 @@ const avatarUpload = multer({
   },
 });
 
-function handleAvatarUploadError(err: unknown, _req: Request, res: Response, next: NextFunction): void {
-  if (!(err instanceof multer.MulterError)) {
-    next(err);
-    return;
-  }
-
-  if (err.code === 'LIMIT_FILE_SIZE') {
-    res.status(400).json(errorPayload('upload.tooLarge', { kind: 'avatar', maxSize: AVATAR_MAX_SIZE_LABEL }));
-    return;
-  }
-
-  res.status(400).json(errorPayload('upload.invalidType', { kind: 'avatar' }));
-}
+const handleAvatarUploadError = createUploadErrorHandler('avatar', AVATAR_MAX_SIZE_LABEL);
 
 export function createAvatarRouter(
   userService: UserService,
