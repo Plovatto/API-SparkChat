@@ -108,3 +108,56 @@ describe('encrypted uploads keep attachment metadata private', () => {
     expect(objectStorage.writes[0]?.options.contentType).toBe('application/pdf');
   });
 });
+
+describe('plaintext file uploads derive type and disposition together', () => {
+  const PDF_BYTES = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+
+  it('rejects a text body declared as text/plain but named .pdf', async () => {
+    const { app, objectStorage, authHeader } = await setup();
+
+    const response = await request(app)
+      .post('/api/messages/upload-file')
+      .set('Authorization', authHeader)
+      .attach('file', Buffer.from('<h1>Pay here</h1>'), { filename: 'invoice.pdf', contentType: 'text/plain' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ code: 'upload.invalidType', params: { kind: 'file' } });
+    expect(objectStorage.writes).toHaveLength(0);
+  });
+
+  it('rejects a PDF body named as a video', async () => {
+    const { app, objectStorage, authHeader } = await setup();
+
+    const response = await request(app)
+      .post('/api/messages/upload-file')
+      .set('Authorization', authHeader)
+      .attach('file', PDF_BYTES, { filename: 'clip.mp4', contentType: 'application/pdf' });
+
+    expect(response.status).toBe(400);
+    expect(objectStorage.writes).toHaveLength(0);
+  });
+
+  it('serves a verified PDF inline', async () => {
+    const { app, objectStorage, authHeader } = await setup();
+
+    const response = await request(app)
+      .post('/api/messages/upload-file')
+      .set('Authorization', authHeader)
+      .attach('file', PDF_BYTES, { filename: 'report.PDF', contentType: 'application/pdf' });
+
+    expect(response.status).toBe(201);
+    expect(objectStorage.writes[0]?.options).toMatchObject({ contentType: 'application/pdf', contentDisposition: undefined });
+  });
+
+  it('forces text files to download as attachments', async () => {
+    const { app, objectStorage, authHeader } = await setup();
+
+    const response = await request(app)
+      .post('/api/messages/upload-file')
+      .set('Authorization', authHeader)
+      .attach('file', Buffer.from('plain notes'), { filename: 'notes.txt', contentType: 'text/plain' });
+
+    expect(response.status).toBe(201);
+    expect(objectStorage.writes[0]?.options).toMatchObject({ contentType: 'text/plain', contentDisposition: 'attachment' });
+  });
+});

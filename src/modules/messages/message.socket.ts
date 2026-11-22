@@ -100,7 +100,7 @@ function attachmentKeyViolation({ type, fileMeta, linkPreview }: Pick<SendMessag
   return null;
 }
 
-const clientTempIdSchema = z.string().trim().min(1);
+const clientTempIdSchema = z.string().trim().min(1).max(200);
 
 const sendMessagePayloadSchema = z
   .object({
@@ -252,26 +252,26 @@ export function registerMessageSocketHandlers(io: AppServer, socket: AppSocket, 
   });
 
   socket.on('typing:start', (payload) => {
-    runSocketHandler(socket, 'typing:start', () => {
-      handleActivityChange(io, socket, payload, 'typing', 'start', (roomId, userId) => typingService.startTyping(roomId, userId));
-    });
+    runSocketHandler(socket, 'typing:start', () =>
+      handleActivityStart(socket, deps, payload, 'typing', (roomId, userId) => typingService.startTyping(roomId, userId)),
+    );
   });
 
   socket.on('typing:stop', (payload) => {
     runSocketHandler(socket, 'typing:stop', () => {
-      handleActivityChange(io, socket, payload, 'typing', 'stop', (roomId, userId) => typingService.stopTyping(roomId, userId));
+      handleActivityStop(io, socket, payload, 'typing', (roomId, userId) => typingService.stopTyping(roomId, userId));
     });
   });
 
   socket.on('recording:start', (payload) => {
-    runSocketHandler(socket, 'recording:start', () => {
-      handleActivityChange(io, socket, payload, 'recording', 'start', (roomId, userId) => recordingService.startRecording(roomId, userId));
-    });
+    runSocketHandler(socket, 'recording:start', () =>
+      handleActivityStart(socket, deps, payload, 'recording', (roomId, userId) => recordingService.startRecording(roomId, userId)),
+    );
   });
 
   socket.on('recording:stop', (payload) => {
     runSocketHandler(socket, 'recording:stop', () => {
-      handleActivityChange(io, socket, payload, 'recording', 'stop', (roomId, userId) => recordingService.stopRecording(roomId, userId));
+      handleActivityStop(io, socket, payload, 'recording', (roomId, userId) => recordingService.stopRecording(roomId, userId));
     });
   });
 
@@ -710,12 +710,75 @@ async function handleAudioPlayed(io: AppServer, socket: AppSocket, deps: Message
   emitMessageUpdate(io, deps.roomService, room, view);
 }
 
-function handleActivityChange(
+const activityGenerations = new WeakMap<AppSocket, Map<string, number>>();
+
+function activityGenerationKey(kind: ActivityKind, roomId: string): string {
+  return `${kind}:${roomId}`;
+}
+
+function readActivityGeneration(socket: AppSocket, kind: ActivityKind, roomId: string): number {
+  return activityGenerations.get(socket)?.get(activityGenerationKey(kind, roomId)) ?? 0;
+}
+
+function bumpActivityGeneration(socket: AppSocket, kind: ActivityKind, roomId: string): void {
+  const generations = activityGenerations.get(socket) ?? new Map<string, number>();
+  const key = activityGenerationKey(kind, roomId);
+  generations.set(key, (generations.get(key) ?? 0) + 1);
+  activityGenerations.set(socket, generations);
+}
+
+function readActivityRoomId(socket: AppSocket, payload: unknown): string | null {
+  const parsed = roomIdPayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    return null;
+  }
+
+  const { roomId } = parsed.data;
+  if (isUserRoom(roomId) || !socket.rooms.has(roomId)) {
+    return null;
+  }
+  return roomId;
+}
+
+async function handleActivityStart(
+  socket: AppSocket,
+  deps: MessageSocketDeps,
+  payload: unknown,
+  kind: ActivityKind,
+  apply: (roomId: string, userId: string) => string[],
+): Promise<void> {
+  const userId = socket.data.userId;
+  if (!userId) {
+    return;
+  }
+
+  const roomId = readActivityRoomId(socket, payload);
+  if (!roomId) {
+    return;
+  }
+
+  const generation = readActivityGeneration(socket, kind, roomId);
+  const room = await deps.roomService.getRoomById(roomId);
+  if (!room || deps.roomService.isBlocked(room, userId)) {
+    return;
+  }
+
+  const stillCurrent =
+    socket.connected && socket.data.userId === userId && socket.rooms.has(roomId) && readActivityGeneration(socket, kind, roomId) === generation;
+  if (!stillCurrent) {
+    return;
+  }
+
+  markSocketActivity(socket, kind, roomId);
+  const users = apply(roomId, userId);
+  socket.to(roomId).emit(activityEvents[kind], { roomId, users });
+}
+
+function handleActivityStop(
   io: AppServer,
   socket: AppSocket,
   payload: unknown,
   kind: ActivityKind,
-  action: 'start' | 'stop',
   apply: (roomId: string, userId: string) => string[],
 ): void {
   const userId = socket.data.userId;
@@ -723,23 +786,15 @@ function handleActivityChange(
     return;
   }
 
-  const parsed = roomIdPayloadSchema.safeParse(payload);
-  if (!parsed.success) {
+  const roomId = readActivityRoomId(socket, payload);
+  if (!roomId) {
     return;
   }
 
-  const { roomId } = parsed.data;
-  if (isUserRoom(roomId) || !socket.rooms.has(roomId)) {
+  bumpActivityGeneration(socket, kind, roomId);
+  unmarkSocketActivity(socket, kind, roomId);
+  if (isActivityHeldByOtherSocket(io, socket, userId, kind, roomId)) {
     return;
-  }
-
-  if (action === 'start') {
-    markSocketActivity(socket, kind, roomId);
-  } else {
-    unmarkSocketActivity(socket, kind, roomId);
-    if (isActivityHeldByOtherSocket(io, socket, userId, kind, roomId)) {
-      return;
-    }
   }
 
   const users = apply(roomId, userId);
@@ -767,7 +822,9 @@ async function handleMarkRead(socket: AppSocket, deps: MessageSocketDeps, payloa
     const { unreadCount, mentionCount } = await messageService.countUnreadForUser(roomId, userId, after);
 
     socket.emit('message:mark-read-done', { roomId, unreadCount, mentionCount });
-    socket.to(roomId).emit('message:read-receipt', { roomId, userId });
+    if (!roomService.isBlocked(room, userId)) {
+      socket.to(roomId).emit('message:read-receipt', { roomId, userId });
+    }
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }

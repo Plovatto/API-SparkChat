@@ -11,6 +11,7 @@ import { StorageQuotaExceededError, type StorageQuota } from '../../storage/stor
 import type { UploadRegistry } from '../../storage/upload-registry.js';
 import { verifyFileSignature } from './message.file-signature.js';
 import {
+  fileDispositionFor,
   GIF_UPLOAD_TTL_MS,
   MAX_LIVE_GIF_BYTES,
   isAllowedGifUploadSize,
@@ -19,9 +20,23 @@ import {
   NEUTRAL_UPLOAD_MIME_TYPE,
 } from './message.upload.js';
 
-const INLINE_SAFE_FILE_EXTENSIONS = new Set(['.pdf', '.mp4', '.webm', '.mov', '.avi']);
 const UPLOAD_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 export const MAX_USER_STORAGE_BYTES = 500 * 1024 * 1024;
+export const NEW_ACCOUNT_STORAGE_BYTES = 100 * 1024 * 1024;
+export const NEW_ACCOUNT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isNewAccount(createdAt: string | undefined, now = Date.now()): boolean {
+  const created = createdAt ? new Date(createdAt).getTime() : Number.NaN;
+  return !Number.isFinite(created) || now - created < NEW_ACCOUNT_WINDOW_MS;
+}
+
+function permanentLimitFor(storageQuota: StorageQuota, createdAt: string | undefined): { limitBytes: number; probation: boolean } {
+  const userLimit = storageQuota.userLimitBytes(MAX_USER_STORAGE_BYTES);
+  if (isNewAccount(createdAt) && NEW_ACCOUNT_STORAGE_BYTES < userLimit) {
+    return { limitBytes: NEW_ACCOUNT_STORAGE_BYTES, probation: true };
+  }
+  return { limitBytes: userLimit, probation: false };
+}
 
 function decodeOriginalFilename(originalname: string): string {
   return Buffer.from(originalname, 'latin1').toString('utf8');
@@ -34,10 +49,6 @@ function isEncryptedUpload(req: Request): boolean {
 
 function withEncryptedMarker(url: string, encrypted: boolean): string {
   return encrypted ? `${url}?e2e=1` : url;
-}
-
-function attachmentDispositionFor(originalname: string): string | undefined {
-  return INLINE_SAFE_FILE_EXTENSIONS.has(path.extname(originalname).toLowerCase()) ? undefined : 'attachment';
 }
 
 export const mediaUploadResponseSchema = z
@@ -60,7 +71,7 @@ interface UploadHandlerOptions<TResponse> {
   kind: UploadKind;
   buildKey: (filename: string) => string;
   buildResponse: (file: Express.Multer.File, url: string) => TResponse;
-  contentDisposition?: (originalname: string) => string | undefined;
+  contentDisposition?: (mimetype: string) => string | undefined;
   validateFile?: (file: Express.Multer.File) => 'upload.invalidGifSize' | null;
   countsTowardUserQuota?: boolean;
   ttlMs?: number;
@@ -120,22 +131,23 @@ export function createUploadHandler<TResponse>(
 
     let registered = false;
     let released = false;
+    const permanentLimit = countsTowardUserQuota ? permanentLimitFor(storageQuota, req.authenticatedUser?.createdAt) : null;
     try {
       registered = await uploadRegistry.reserve(key, uploaderId, file.size, {
         expiresAt,
-        ...(countsTowardUserQuota ? { permanentLimitBytes: storageQuota.userLimitBytes(MAX_USER_STORAGE_BYTES) } : {}),
+        ...(permanentLimit ? { permanentLimitBytes: permanentLimit.limitBytes } : {}),
         ...(maxExpiringBytes !== undefined ? { expiringLimitBytes: maxExpiringBytes } : {}),
       });
       if (!registered) {
         await storageQuota.releaseUsage(file.size);
         released = true;
-        res.status(507).json(errorPayload('upload.userQuotaExceeded'));
+        res.status(507).json(errorPayload(permanentLimit?.probation ? 'upload.newAccountQuotaExceeded' : 'upload.userQuotaExceeded'));
         return;
       }
 
       await objectStorage.putObject(key, file.buffer, {
         contentType: encrypted ? NEUTRAL_UPLOAD_MIME_TYPE : file.mimetype,
-        contentDisposition: encrypted ? 'attachment' : contentDisposition?.(file.originalname),
+        contentDisposition: encrypted ? 'attachment' : contentDisposition?.(file.mimetype),
         cacheControl: UPLOAD_CACHE_CONTROL,
       });
     } catch (err) {
@@ -168,7 +180,7 @@ export function createMessageController(objectStorage: ObjectStorage, storageQuo
     uploadFile: createUploadHandler(objectStorage, storageQuota, uploadRegistry, {
       kind: 'file',
       buildKey: fileObjectKey,
-      contentDisposition: attachmentDispositionFor,
+      contentDisposition: fileDispositionFor,
       buildResponse: (file, url) => ({
         url,
         name: decodeOriginalFilename(file.originalname),

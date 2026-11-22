@@ -72,6 +72,19 @@ describe('message:send errors', () => {
     await expect(error).resolves.toMatchObject({ code: 'validation.invalidPayload', clientTempId: 'temp-2' });
   });
 
+  it('rejects an oversized clientTempId instead of broadcasting it to the room', async () => {
+    const h = await start();
+    const { room, aliceClient, bobClient } = await setupPair(h);
+    const delivered = collectEvents(bobClient, 'message:new');
+
+    const error = waitForEvent<ErrorEvent>(aliceClient, 'error');
+    aliceClient.emit('message:send', { roomId: room.id, content: fakeField('oi'), messageId: randomUUID(), clientTempId: 'x'.repeat(201) });
+
+    await expect(error).resolves.toMatchObject({ code: 'validation.invalidPayload' });
+    await settle(50);
+    expect(delivered).toHaveLength(0);
+  });
+
   it('returns the clientTempId when the socket is not authenticated', async () => {
     const h = await start();
     const anonymous = await h.connect();
@@ -200,6 +213,59 @@ describe('room authorization for activity and receipts', () => {
 
     expect(typing).toHaveLength(0);
     expect(h.typingService.startTyping(room.id, 'probe')).toEqual(['probe']);
+  });
+
+  it('drops typing and recording from a user the other side has blocked', async () => {
+    const h = await start();
+    const { alice, bob, room, aliceClient, bobClient } = await setupPair(h);
+    await h.roomService.blockUser(room.id, alice.user.id, bob.user.id);
+    const typing = collectEvents(aliceClient, 'typing:update');
+    const recording = collectEvents(aliceClient, 'recording:update');
+
+    bobClient.emit('typing:start', { roomId: room.id });
+    bobClient.emit('recording:start', { roomId: room.id });
+    await settle(150);
+
+    expect(typing).toHaveLength(0);
+    expect(recording).toHaveLength(0);
+    expect(h.typingService.startTyping(room.id, 'probe')).toEqual(['probe']);
+  });
+
+  it('drops typing from the blocker towards the user they blocked', async () => {
+    const h = await start();
+    const { alice, bob, room, aliceClient, bobClient } = await setupPair(h);
+    await h.roomService.blockUser(room.id, alice.user.id, bob.user.id);
+    const typing = collectEvents(bobClient, 'typing:update');
+
+    aliceClient.emit('typing:start', { roomId: room.id });
+    await settle(150);
+
+    expect(typing).toHaveLength(0);
+  });
+
+  it('leaves nobody typing when stop follows start immediately', async () => {
+    const h = await start();
+    const { room, aliceClient } = await setupPair(h);
+
+    aliceClient.emit('typing:start', { roomId: room.id });
+    aliceClient.emit('typing:stop', { roomId: room.id });
+    await settle(150);
+
+    expect(h.typingService.startTyping(room.id, 'probe')).toEqual(['probe']);
+  });
+
+  it('does not send read receipts between blocked users', async () => {
+    const h = await start();
+    const { alice, bob, room, aliceClient, bobClient } = await setupPair(h);
+    await h.roomService.blockUser(room.id, alice.user.id, bob.user.id);
+    const receipts = collectEvents(aliceClient, 'message:read-receipt');
+
+    const done = waitForEvent(bobClient, 'message:mark-read-done');
+    bobClient.emit('message:mark-read', { roomId: room.id });
+
+    await done;
+    await settle(50);
+    expect(receipts).toHaveLength(0);
   });
 
   it('rejects mark-read from a user who is not a participant', async () => {

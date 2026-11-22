@@ -9,7 +9,13 @@ export function isNeutralUpload(file: Pick<Express.Multer.File, 'mimetype' | 'or
   return file.mimetype === NEUTRAL_UPLOAD_MIME_TYPE && path.extname(file.originalname).toLowerCase() === NEUTRAL_UPLOAD_EXTENSION;
 }
 
-function createMediaUpload(allowedMimeTypes: Set<string>, allowedExtensions: Set<string>, maxFileSizeBytes: number) {
+type UploadTypeCheck = (mimetype: string, extension: string) => boolean;
+
+function allowsAnyPairing(allowedMimeTypes: ReadonlySet<string>, allowedExtensions: ReadonlySet<string>): UploadTypeCheck {
+  return (mimetype, extension) => allowedMimeTypes.has(mimetype) && allowedExtensions.has(extension);
+}
+
+function createMediaUpload(isAllowedType: UploadTypeCheck, maxFileSizeBytes: number) {
   return multer({
     storage: multer.memoryStorage(),
     limits: { ...UPLOAD_PART_LIMITS, fileSize: maxFileSizeBytes },
@@ -19,13 +25,7 @@ function createMediaUpload(allowedMimeTypes: Set<string>, allowedExtensions: Set
         return;
       }
 
-      if (!allowedMimeTypes.has(file.mimetype)) {
-        callback(new multer.MulterError('LIMIT_UNEXPECTED_FILE', file.fieldname));
-        return;
-      }
-
-      const extension = path.extname(file.originalname).toLowerCase();
-      if (!allowedExtensions.has(extension)) {
+      if (!isAllowedType(file.mimetype, path.extname(file.originalname).toLowerCase())) {
         callback(new multer.MulterError('LIMIT_UNEXPECTED_FILE', file.fieldname));
         return;
       }
@@ -49,48 +49,41 @@ const allowedAudioMimeTypes = new Set([
 ]);
 const allowedAudioExtensions = new Set(['.webm', '.ogg', '.oga', '.mp4', '.m4a', '.aac', '.mp3', '.wav']);
 
-const allowedFileMimeTypes = new Set([
-  'application/pdf',
-  'video/mp4',
-  'video/webm',
-  'video/quicktime',
-  'video/x-msvideo',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/vnd.ms-powerpoint',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'application/zip',
-  'application/x-zip-compressed',
-  'text/plain',
-  'text/csv',
+const fileExtensionsByMimeType: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['application/pdf', new Set(['.pdf'])],
+  ['video/mp4', new Set(['.mp4'])],
+  ['video/webm', new Set(['.webm'])],
+  ['video/quicktime', new Set(['.mov'])],
+  ['video/x-msvideo', new Set(['.avi'])],
+  ['application/msword', new Set(['.doc'])],
+  ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', new Set(['.docx'])],
+  ['application/vnd.ms-excel', new Set(['.xls'])],
+  ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', new Set(['.xlsx'])],
+  ['application/vnd.ms-powerpoint', new Set(['.ppt'])],
+  ['application/vnd.openxmlformats-officedocument.presentationml.presentation', new Set(['.pptx'])],
+  ['application/zip', new Set(['.zip'])],
+  ['application/x-zip-compressed', new Set(['.zip'])],
+  ['text/plain', new Set(['.txt'])],
+  ['text/csv', new Set(['.csv'])],
 ]);
 
-const allowedFileExtensions = new Set([
-  '.pdf',
-  '.mp4',
-  '.webm',
-  '.mov',
-  '.avi',
-  '.doc',
-  '.docx',
-  '.xls',
-  '.xlsx',
-  '.ppt',
-  '.pptx',
-  '.zip',
-  '.txt',
-  '.csv',
-]);
+function allowsMatchingFileType(mimetype: string, extension: string): boolean {
+  return fileExtensionsByMimeType.get(mimetype)?.has(extension) === true;
+}
+
+const INLINE_SAFE_FILE_MIME_TYPES: ReadonlySet<string> = new Set(['application/pdf', 'video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo']);
+
+export function fileDispositionFor(mimetype: string): 'attachment' | undefined {
+  return INLINE_SAFE_FILE_MIME_TYPES.has(mimetype) ? undefined : 'attachment';
+}
 
 export const maxImageSizeBytes = 5 * 1024 * 1024;
 export const maxAudioSizeBytes = 8 * 1024 * 1024;
 export const maxFileSizeBytes = 50 * 1024 * 1024;
 
-export const imageUpload = createMediaUpload(allowedImageMimeTypes, allowedImageExtensions, maxImageSizeBytes);
-export const audioUpload = createMediaUpload(allowedAudioMimeTypes, allowedAudioExtensions, maxAudioSizeBytes);
-export const fileUpload = createMediaUpload(allowedFileMimeTypes, allowedFileExtensions, maxFileSizeBytes);
+export const imageUpload = createMediaUpload(allowsAnyPairing(allowedImageMimeTypes, allowedImageExtensions), maxImageSizeBytes);
+export const audioUpload = createMediaUpload(allowsAnyPairing(allowedAudioMimeTypes, allowedAudioExtensions), maxAudioSizeBytes);
+export const fileUpload = createMediaUpload(allowsMatchingFileType, maxFileSizeBytes);
 
 const ENCRYPTION_OVERHEAD_BYTES = 40;
 const GIF_PADDED_SIZE_STEPS = [256 * 1024, 512 * 1024, 1024 * 1024, 2 * 1024 * 1024];

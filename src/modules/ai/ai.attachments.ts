@@ -86,8 +86,9 @@ export async function loadDecryptedAttachment(
   }
 
   try {
-    const raw = await objectStorage.getObject(objectKey);
-    if (!raw || raw.length > maxBytes + ENCRYPTION_OVERHEAD_BYTES) {
+    const sealedLimit = maxBytes + ENCRYPTION_OVERHEAD_BYTES;
+    const raw = await objectStorage.getObject(objectKey, { maxBytes: sealedLimit });
+    if (!raw || raw.length > sealedLimit) {
       return null;
     }
 

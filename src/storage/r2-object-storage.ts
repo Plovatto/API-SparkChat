@@ -1,5 +1,5 @@
 import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import type { ObjectStorage, PutObjectOptions } from './object-storage.js';
+import type { GetObjectOptions, ObjectStorage, PutObjectOptions } from './object-storage.js';
 
 export interface R2Config {
   accountId: string;
@@ -9,12 +9,24 @@ export interface R2Config {
   publicBaseUrl: string;
 }
 
-async function streamToBuffer(stream: AsyncIterable<Uint8Array>): Promise<Buffer> {
+async function streamToBuffer(stream: AsyncIterable<Uint8Array>, maxBytes: number): Promise<Buffer | null> {
   const chunks: Buffer[] = [];
+  let total = 0;
   for await (const chunk of stream) {
+    total += chunk.byteLength;
+    if (total > maxBytes) {
+      return null;
+    }
     chunks.push(Buffer.from(chunk));
   }
   return Buffer.concat(chunks);
+}
+
+function discardBody(body: unknown): void {
+  const destroyable = body as { destroy?: () => void };
+  if (typeof destroyable.destroy === 'function') {
+    destroyable.destroy();
+  }
 }
 
 export function createR2ObjectStorage(config: R2Config): ObjectStorage {
@@ -46,13 +58,22 @@ export function createR2ObjectStorage(config: R2Config): ObjectStorage {
       await client.send(new DeleteObjectCommand({ Bucket: config.bucketName, Key: key }));
     },
 
-    async getObject(key: string): Promise<Buffer | null> {
+    async getObject(key: string, options: GetObjectOptions = {}): Promise<Buffer | null> {
       try {
         const result = await client.send(new GetObjectCommand({ Bucket: config.bucketName, Key: key }));
         if (!result.Body) {
           return null;
         }
-        return await streamToBuffer(result.Body as AsyncIterable<Uint8Array>);
+        const maxBytes = options.maxBytes ?? Number.POSITIVE_INFINITY;
+        if (typeof result.ContentLength === 'number' && result.ContentLength > maxBytes) {
+          discardBody(result.Body);
+          return null;
+        }
+        const buffer = await streamToBuffer(result.Body as AsyncIterable<Uint8Array>, maxBytes);
+        if (!buffer) {
+          discardBody(result.Body);
+        }
+        return buffer;
       } catch {
         return null;
       }

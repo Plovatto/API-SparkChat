@@ -106,7 +106,7 @@ describe('POST /api/avatars/upload', () => {
       .attach('image', ENCRYPTED_BYTES, { filename: 'blob.bin', contentType: 'application/octet-stream' });
 
     expect(response.status).toBe(507);
-    expect(response.body).toMatchObject({ code: 'upload.userQuotaExceeded' });
+    expect(response.body).toMatchObject({ code: 'upload.newAccountQuotaExceeded' });
   });
 
   it('refuses uploads when the server storage is full', async () => {

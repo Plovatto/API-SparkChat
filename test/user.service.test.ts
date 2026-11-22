@@ -266,6 +266,42 @@ describe('UserService.isSessionActive', () => {
   });
 });
 
+describe('UserService.isSessionWithinLifetime', () => {
+  async function seedSession(createdDaysAgo: number, idleDaysAgo: number) {
+    const { userService, userSessionRepository } = await buildRoomService();
+    const { user } = await registerAlice(userService);
+    await userSessionRepository.create({
+      id: 'socket-session',
+      userId: user.id,
+      tokenHash: hashToken('socket-session-token'),
+      authMethod: 'password',
+      userAgent: '',
+      createdAt: new Date(Date.now() - createdDaysAgo * DAY_MS).toISOString(),
+      lastUsedAt: new Date(Date.now() - idleDaysAgo * DAY_MS).toISOString(),
+    });
+    return { userService, user };
+  }
+
+  it('keeps a connected session alive past the idle window', async () => {
+    const { userService, user } = await seedSession(10, 9);
+
+    await expect(userService.isSessionWithinLifetime(user.id, 'socket-session')).resolves.toBe(true);
+  });
+
+  it('ends a session past its absolute lifetime', async () => {
+    const { userService, user } = await seedSession(31, 0);
+
+    await expect(userService.isSessionWithinLifetime(user.id, 'socket-session')).resolves.toBe(false);
+  });
+
+  it('ends a session that no longer exists', async () => {
+    const { userService, user } = await seedSession(1, 0);
+    await userService.revokeSession(user.id, 'socket-session');
+
+    await expect(userService.isSessionWithinLifetime(user.id, 'socket-session')).resolves.toBe(false);
+  });
+});
+
 describe('UserService session lifetime', () => {
   it('rejects a session created more than 30 days ago even when it was used recently', async () => {
     const { userService, userSessionRepository } = await buildRoomService();

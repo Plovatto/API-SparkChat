@@ -47,6 +47,10 @@ function buildAuthParamsKey(ip: string): string {
   return `auth-params:${ipKey(ip)}`;
 }
 
+function buildNicknameAvailabilityKey(ip: string): string {
+  return `nickname-availability:${ipKey(ip)}`;
+}
+
 function buildRegisterKey(ip: string): string {
   return `register:${ipKey(ip)}`;
 }
@@ -143,6 +147,16 @@ export class LoginRateLimiter {
 
   reserveAuthParamsLookup(ip: string): boolean {
     const key = buildAuthParamsKey(ip);
+    if (this.authParamsLookups.count(key) >= AUTH_PARAMS_MAX_PER_IP) {
+      return false;
+    }
+
+    this.authParamsLookups.record(key);
+    return true;
+  }
+
+  reserveNicknameAvailabilityLookup(ip: string): boolean {
+    const key = buildNicknameAvailabilityKey(ip);
     if (this.authParamsLookups.count(key) >= AUTH_PARAMS_MAX_PER_IP) {
       return false;
     }
