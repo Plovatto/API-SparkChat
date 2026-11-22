@@ -38,6 +38,7 @@ const DAILY_RELAY_SECONDS_PER_USER = 6 * 60 * 60;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SIGNAL_QUEUE_TTL_MS = 15_000;
 const SIGNAL_QUEUE_LIMIT = 64;
+const SIGNAL_STALE_MS = 15_000;
 
 export interface CallActor {
   userId: string;
@@ -100,6 +101,8 @@ export class CallService {
   private readonly pendingTransfers = new Map<string, { role: CallRole; socketId: string; startedAt: number }>();
   private readonly ringingInvites = new Map<string, IncomingCallPayload>();
   private readonly pending = new Map<string, QueuedSignal[]>();
+  private readonly socketDevices = new Map<string, string>();
+  private readonly boundDevices = new Map<string, Partial<Record<CallRole, string>>>();
   private readonly now: () => number;
   private readonly enabled: boolean;
   private readonly graceUntil: number;
@@ -141,7 +144,38 @@ export class CallService {
     return () => clearInterval(timer);
   }
 
+  noteDevice(actor: CallActor, device: string | undefined): void {
+    if (device) {
+      this.socketDevices.set(actor.socketId, device);
+    }
+  }
+
+  private rememberBoundDevice(callId: string, role: CallRole, socketId: string): void {
+    const devices = this.boundDevices.get(callId) ?? {};
+    const device = this.socketDevices.get(socketId);
+    if (device) {
+      devices[role] = device;
+    } else {
+      delete devices[role];
+    }
+    this.boundDevices.set(callId, devices);
+  }
+
+  private isSameDevice(call: CallRecord, role: CallRole, socketId: string): boolean {
+    const device = this.socketDevices.get(socketId);
+    return device !== undefined && this.boundDevices.get(call.id)?.[role] === device;
+  }
+
+  private purgeSocketDevices(): void {
+    for (const socketId of this.socketDevices.keys()) {
+      if (!this.io.sockets.sockets.has(socketId)) {
+        this.socketDevices.delete(socketId);
+      }
+    }
+  }
+
   async runMaintenance(): Promise<void> {
+    this.purgeSocketDevices();
     this.expirePendingTransfers();
     await this.sweepOpenCalls();
     await this.sweepCredentials();
@@ -196,6 +230,7 @@ export class CallService {
     }
 
     this.bindings.set(input.callId, { caller: actor.socketId });
+    this.rememberBoundDevice(input.callId, 'caller', actor.socketId);
     try {
       if (room) {
         await this.revealRoom(room, newCall.createdAt);
@@ -253,6 +288,7 @@ export class CallService {
     const bindings = this.bindings.get(call.id) ?? {};
     bindings.callee = actor.socketId;
     this.bindings.set(call.id, bindings);
+    this.rememberBoundDevice(call.id, 'callee', actor.socketId);
 
     this.io.to(userRoom(call.callerId)).emit('call:accepted', { callId: call.id, envelope: input.envelope, deviceId: actor.socketId });
     this.io.to(actor.socketId).emit('call:accepted', { callId: call.id, envelope: input.envelope, deviceId: actor.socketId });
@@ -422,6 +458,9 @@ export class CallService {
     const peerSocket = this.boundSocket(call, peerRole);
     if (peerSocket !== undefined && this.io.sockets.sockets.has(peerSocket)) {
       this.io.to(peerSocket).emit('call:signal', payload);
+      if (this.now() - this.lastBeatOf(call, peerRole) >= SIGNAL_STALE_MS) {
+        this.enqueueSignal(call.id, peerRole, payload);
+      }
       return;
     }
     this.enqueueSignal(call.id, peerRole, payload);
@@ -499,13 +538,14 @@ export class CallService {
   }
 
   private mayTakeOver(call: CallRecord, role: CallRole, socketId: string): boolean {
-    return this.canTakeOver(call, role, socketId) || this.now() - this.lastBeatOf(call, role) >= TAKEOVER_SILENCE_MS;
+    return this.canTakeOver(call, role, socketId) || this.isSameDevice(call, role, socketId) || this.now() - this.lastBeatOf(call, role) >= TAKEOVER_SILENCE_MS;
   }
 
   private async takeOver(call: CallRecord, role: CallRole, socketId: string): Promise<void> {
     const bindings = this.bindings.get(call.id) ?? {};
     bindings[role] = socketId;
     this.bindings.set(call.id, bindings);
+    this.rememberBoundDevice(call.id, role, socketId);
     if (role === 'callee') {
       await this.repository.rebindAcceptedDevice(call.id, socketId);
     }
@@ -526,7 +566,7 @@ export class CallService {
 
     const inCall = currentCallId === undefined || currentCallId === call.id;
     if (inCall && (call.state === 'accepted' || call.state === 'active')) {
-      if (this.canTakeOver(call, role, actor.socketId)) {
+      if (this.canTakeOver(call, role, actor.socketId) || this.isSameDevice(call, role, actor.socketId)) {
         await this.takeOver(call, role, actor.socketId);
       }
     }
@@ -551,6 +591,9 @@ export class CallService {
       transferable: this.isTransferable(call, role, socketId ?? ''),
       peerLive: this.isPeerLive(call, role),
     };
+    if (socketId !== null && payload.transferable && this.isSameDevice(call, role, socketId)) {
+      payload.resumable = true;
+    }
     const media = this.mediaStates.get(call.id)?.[role];
     if (media && (call.state === 'accepted' || call.state === 'active')) {
       payload.media = { ...media };
@@ -688,6 +731,7 @@ export class CallService {
 
   private async afterEnd(call: CallRecord): Promise<void> {
     this.bindings.delete(call.id);
+    this.boundDevices.delete(call.id);
     this.beats.delete(call.id);
     this.mediaStates.delete(call.id);
     this.connectedAt.delete(call.id);

@@ -19,22 +19,27 @@ const degradeSchema = z.enum(['none', 'video-360', 'audio-only-relay']);
 const endReasonSchema = z.enum(['completed', 'missed', 'declined', 'cancelled', 'busy', 'failed', 'connection-lost']);
 const iceServerSchema = z.object({ urls: z.array(z.string()), username: z.string().optional(), credential: z.string().optional() });
 
-const startPayloadSchema = z.object({ callId: callIdSchema, roomId: z.string().trim().min(1), kind: kindSchema, envelope: envelopeSchema });
-const acceptPayloadSchema = z.object({ callId: callIdSchema, envelope: envelopeSchema });
+const deviceSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{16,64}$/)
+  .openapi({ description: 'Token aleatório da aba, guardado só nela. Uma aba que volta num socket novo (troca de rede ou recarga) com o mesmo token é reconhecida como o mesmo aparelho' });
+const startPayloadSchema = z.object({ callId: callIdSchema, roomId: z.string().trim().min(1), kind: kindSchema, envelope: envelopeSchema, device: deviceSchema.optional() });
+const acceptPayloadSchema = z.object({ callId: callIdSchema, envelope: envelopeSchema, device: deviceSchema.optional() });
 const callIdPayloadSchema = z.object({ callId: callIdSchema });
 const mediaStateSchema = z
   .object({ muted: z.boolean(), camera: z.boolean() })
   .openapi({ description: 'Estado do microfone e da câmera deste aparelho. O servidor só repassa aos outros aparelhos da mesma conta, para que uma troca de aparelho mantenha o mesmo estado' });
-const heartbeatPayloadSchema = z.object({ callId: callIdSchema, relayed: z.boolean().optional().openapi({ description: 'Rota atual da mídia deste aparelho. false (conexão direta) faz o servidor revogar as credenciais TURN deste aparelho; um novo call:ice-servers emite outras quando precisar do relay' }), media: mediaStateSchema.optional() });
+const heartbeatPayloadSchema = z.object({ callId: callIdSchema, relayed: z.boolean().optional().openapi({ description: 'Rota atual da mídia deste aparelho. false (conexão direta) faz o servidor revogar as credenciais TURN deste aparelho; um novo call:ice-servers emite outras quando precisar do relay' }), media: mediaStateSchema.optional(), device: deviceSchema.optional() });
 const hangupPayloadSchema = z.object({ callId: callIdSchema, force: z.boolean().optional() });
 const signalPayloadSchema = z.object({ callId: callIdSchema, to: z.string().trim().min(1), envelope: envelopeSchema });
 const syncPayloadSchema = z
   .object({
     callId: callIdSchema.nullable().optional().openapi({ description: 'Chamada em que este aparelho está agora (null se nenhuma). Só um aparelho que informa esta chamada assume o vínculo dela no sync; sem o campo, vale o comportamento antigo' }),
+    device: deviceSchema.optional(),
   })
   .optional();
 const iceServersPayloadSchema = z.object({ callId: callIdSchema, protectIp: z.boolean() });
-const transferPayloadSchema = z.object({ callId: callIdSchema, envelope: envelopeSchema });
+const transferPayloadSchema = z.object({ callId: callIdSchema, envelope: envelopeSchema, device: deviceSchema.optional() });
 
 registerClientEvents('calls', {
   'call:start': startPayloadSchema,
@@ -91,6 +96,7 @@ registerServerEvents(
         peerId: z.string(),
         role: z.enum(['caller', 'callee']),
         answeredAt: z.string().nullable(),
+        resumable: z.literal(true).optional().openapi({ description: 'Presente quando esta é a mesma aba que estava na chamada (mesmo token de aba), por exemplo depois de recarregar a página. O cliente retoma a chamada sozinho em vez de mostrar outro aparelho' }),
         transferable: z.boolean().openapi({ description: 'true quando este aparelho pode puxar a chamada que está ativa em outro aparelho da mesma conta' }),
         peerLive: z.boolean().openapi({ description: 'true enquanto o outro participante ainda pode voltar: o socket dele segue conectado ou ele deu sinal de vida há menos de 3 minutos. O cliente usa isso para continuar reconectando em vez de encerrar' }),
         media: mediaStateSchema.optional().openapi({ description: 'Último estado de microfone e câmera informado pelo aparelho desta conta que está na chamada. Ausente enquanto ele não informou' }),
@@ -157,11 +163,19 @@ export function registerCallSocketHandlers(socket: AppSocket, deps: CallSocketDe
   const handle = createSequentialHandler(socket);
 
   socket.on('call:start', (payload) => {
-    handle('call:start', (actor) => callService.start(actor, startPayloadSchema.parse(payload)));
+    handle('call:start', (actor) => {
+      const input = startPayloadSchema.parse(payload);
+      callService.noteDevice(actor, input.device);
+      return callService.start(actor, input);
+    });
   });
 
   socket.on('call:accept', (payload) => {
-    handle('call:accept', (actor) => callService.accept(actor, acceptPayloadSchema.parse(payload)));
+    handle('call:accept', (actor) => {
+      const input = acceptPayloadSchema.parse(payload);
+      callService.noteDevice(actor, input.device);
+      return callService.accept(actor, input);
+    });
   });
 
   socket.on('call:decline', (payload) => {
@@ -189,6 +203,7 @@ export function registerCallSocketHandlers(socket: AppSocket, deps: CallSocketDe
   socket.on('call:heartbeat', (payload) => {
     handle('call:heartbeat', (actor) => {
       const input = heartbeatPayloadSchema.parse(payload);
+      callService.noteDevice(actor, input.device);
       return callService.heartbeat(actor, input.callId, input.relayed, input.media);
     });
   });
@@ -196,12 +211,17 @@ export function registerCallSocketHandlers(socket: AppSocket, deps: CallSocketDe
   socket.on('call:sync', (payload) => {
     handle('call:sync', (actor) => {
       const input = syncPayloadSchema.parse(payload);
+      callService.noteDevice(actor, input?.device);
       return callService.sync(actor, input?.callId);
     });
   });
 
   socket.on('call:transfer', (payload) => {
-    handle('call:transfer', (actor) => callService.transfer(actor, transferPayloadSchema.parse(payload)));
+    handle('call:transfer', (actor) => {
+      const input = transferPayloadSchema.parse(payload);
+      callService.noteDevice(actor, input.device);
+      return callService.transfer(actor, input);
+    });
   });
 
   socket.on('call:transfer-accept', (payload) => {
