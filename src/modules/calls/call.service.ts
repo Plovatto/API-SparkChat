@@ -39,6 +39,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const SIGNAL_QUEUE_TTL_MS = 15_000;
 const SIGNAL_QUEUE_LIMIT = 64;
 const SIGNAL_STALE_MS = 15_000;
+const ABANDONED_CALL_MS = 20_000;
 
 export interface CallActor {
   userId: string;
@@ -184,6 +185,18 @@ export class CallService {
     }
   }
 
+  private async endAbandonedCall(userId: string): Promise<void> {
+    const call = await this.repository.findOpenForUser(userId);
+    if (!call || this.now() < this.graceUntil || (call.state !== 'accepted' && call.state !== 'active') || this.hasConnectedParticipant(call)) {
+      return;
+    }
+    const silentFor = this.now() - Math.max(this.lastBeatOf(call, 'caller'), this.lastBeatOf(call, 'callee'), this.connectedAt.get(call.id) ?? 0);
+    if (silentFor < ABANDONED_CALL_MS) {
+      return;
+    }
+    await this.finish(call.id, { type: 'heartbeat-timeout' });
+  }
+
   private purgeSocketDevices(): void {
     for (const socketId of this.socketDevices.keys()) {
       if (!this.io.sockets.sockets.has(socketId)) {
@@ -229,6 +242,8 @@ export class CallService {
       kind: input.kind,
       createdAt: new Date(createdAtMs).toISOString(),
     };
+
+    await this.endAbandonedCall(actor.userId);
 
     if (await this.repository.findOpenForUser(actor.userId)) {
       throw AppError.of('call.alreadyInCall');

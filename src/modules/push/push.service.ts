@@ -104,6 +104,7 @@ export class PushService {
   private readonly isSessionLive: (session: PushSessionTimes, now: number) => boolean;
   private readonly now: () => number;
   private readonly ringingCalls = new Map<string, number>();
+  private readonly skippedCalls = new Map<string, number>();
   private readonly waiting: (() => void)[] = [];
   private activeSends = 0;
   private readonly chains = new Map<string, Promise<void>>();
@@ -163,17 +164,20 @@ export class PushService {
   incomingCall(input: IncomingCallPush): void {
     const ttl = Math.ceil((input.ringExpiresAtMs - this.now()) / 1000);
     if (!this.enabled || ttl <= 0 || !this.limiter.tryCall(input.userId)) {
+      this.skippedCalls.set(`${input.userId}:${input.callId}`, Math.max(input.ringExpiresAtMs, this.now()) + CALL_END_TTL_SECONDS * 1000);
       return;
     }
     this.ringingCalls.set(`${input.userId}:${input.callId}`, input.ringExpiresAtMs + CALL_END_TTL_SECONDS * 1000);
     const topic = pushTopic('call', input.callId);
     this.enqueue(topic, () =>
-      this.deliver(input.userId, { t: 'call', callId: input.callId, roomId: input.roomId, kind: input.kind, ...(input.declineToken ? { d: input.declineToken } : {}) }, { TTL: ttl, urgency: 'high', topic }),
+      this.deliver(input.userId, { t: 'call', callId: input.callId, roomId: input.roomId, kind: input.kind, e: input.ringExpiresAtMs, ...(input.declineToken ? { d: input.declineToken } : {}) }, { TTL: ttl, urgency: 'high', topic }),
     );
   }
 
   callEnded(input: CallEndedPush): void {
-    if (!this.enabled || !this.ringingCalls.delete(`${input.userId}:${input.callId}`)) {
+    const key = `${input.userId}:${input.callId}`;
+    this.ringingCalls.delete(key);
+    if (!this.enabled || this.skippedCalls.delete(key)) {
       return;
     }
     const topic = pushTopic('call', input.callId);
@@ -215,6 +219,11 @@ export class PushService {
 
   private purgeRingingCalls(): void {
     const current = this.now();
+    for (const [key, expiresAt] of this.skippedCalls) {
+      if (expiresAt <= current) {
+        this.skippedCalls.delete(key);
+      }
+    }
     for (const [key, expiresAt] of this.ringingCalls) {
       if (expiresAt <= current) {
         this.ringingCalls.delete(key);

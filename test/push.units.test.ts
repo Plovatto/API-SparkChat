@@ -177,13 +177,29 @@ describe('push service', () => {
     expect(order).toEqual(['call', 'call-end']);
   });
 
+  it('still closes the ring with a call-end push after a restart lost the ringing entry, and tells when the ring expires', async () => {
+    const sender = vi.fn<PushSender>(() => Promise.resolve());
+    const { service } = await build({ sender });
+    await service.subscribe('u1', 's-u1', subscription());
+    const expiresAt = Date.now() + 30_000;
+    service.incomingCall({ userId: 'u1', callId: 'c1', roomId: 'r', kind: 'voice', ringExpiresAtMs: expiresAt });
+    await service.idle();
+    expect(JSON.parse(sender.mock.calls[0]?.[1] as string)).toMatchObject({ t: 'call', callId: 'c1', e: expiresAt });
+
+    const { service: restarted } = await build({ sender });
+    await restarted.subscribe('u1', 's-u1', subscription());
+    restarted.callEnded({ userId: 'u1', callId: 'c1', reason: 'cancelled' });
+    await restarted.idle();
+    expect(JSON.parse(sender.mock.calls.at(-1)?.[1] as string)).toEqual({ t: 'call-end', callId: 'c1', reason: 'cancelled' });
+  });
+
   it('carries the decline token of the call in the incoming push', async () => {
     const sender = vi.fn<PushSender>(() => Promise.resolve());
     const { service } = await build({ sender });
     await service.subscribe('u1', 's-u1', subscription());
     service.incomingCall({ userId: 'u1', callId: 'c1', roomId: 'r', kind: 'video', ringExpiresAtMs: Date.now() + 30_000, declineToken: 'tok' });
     await service.idle();
-    expect(JSON.parse(sender.mock.calls[0]?.[1] as string)).toEqual({ t: 'call', callId: 'c1', roomId: 'r', kind: 'video', d: 'tok' });
+    expect(JSON.parse(sender.mock.calls[0]?.[1] as string)).toMatchObject({ t: 'call', callId: 'c1', roomId: 'r', kind: 'video', d: 'tok' });
   });
 
   it('skips expired rings, skips call-end without a ring and keeps subscriptions on transient failures', async () => {
@@ -194,9 +210,12 @@ describe('push service', () => {
     await service.idle();
     expect(sender).not.toHaveBeenCalled();
     service.callEnded({ userId: 'u1', callId: 'c1', reason: 'missed' });
-    service.callEnded({ userId: 'u1', callId: 'other', reason: 'missed' });
     await service.idle();
     expect(sender).not.toHaveBeenCalled();
+    service.callEnded({ userId: 'u1', callId: 'other', reason: 'missed' });
+    await service.idle();
+    expect(sender).toHaveBeenCalledTimes(1);
+    sender.mockClear();
     service.newMessage({ roomId: 'r', senderId: 'u2', recipientIds: ['u1'] });
     await service.idle();
     expect(sender).toHaveBeenCalledTimes(1);
