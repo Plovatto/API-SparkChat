@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { E2E_LOOKUP_MAX_ITEMS } from '../../sockets/id-lookup.js';
+import { idSchema } from '../../sockets/payloads.js';
 
 const MAX_WRAPPED_KEY_LENGTH = 2000;
 
@@ -36,6 +37,6 @@ export const publishSigningKeyPayloadSchema = z.object({
 });
 
 export const getPublicKeysPayloadSchema = z.object({
-  userIds: z.array(z.string().trim().min(1)).min(1).max(E2E_LOOKUP_MAX_ITEMS),
+  userIds: z.array(idSchema).min(1).max(E2E_LOOKUP_MAX_ITEMS),
 });
 

@@ -2,6 +2,7 @@ import '../../docs/zod-extend.js';
 import { z } from 'zod';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
+import { idSchema } from '../../sockets/payloads.js';
 import { runAuthedSocketHandler } from '../../sockets/socket-handler.js';
 import { emitToUser, userRoom } from '../../sockets/user-sockets.js';
 import { KEY_ID_PATTERN, type RoomService } from '../rooms/index.js';
@@ -19,7 +20,6 @@ export interface AvatarSocketDeps {
   roomService: RoomService;
 }
 
-const roomIdSchema = z.string().trim().min(1);
 const keyIdSchema = z.string().regex(KEY_ID_PATTERN).openapi({ description: 'keyId da chave atual da sala' });
 const urlSchema = z
   .string()
@@ -54,25 +54,25 @@ const setUserAvatarPayloadSchema = z.object({
 const clearUserAvatarPayloadSchema = z.object({}).optional();
 
 const setRoomAvatarPayloadSchema = z.object({
-  roomId: roomIdSchema,
+  roomId: idSchema,
   url: urlSchema,
   encryptedAvatar: encryptedAvatarSchema,
   keyId: keyIdSchema,
 });
 
-const clearRoomAvatarPayloadSchema = z.object({ roomId: roomIdSchema });
+const clearRoomAvatarPayloadSchema = z.object({ roomId: idSchema });
 
 const publishProfileKeyPayloadSchema = z.object({
-  roomId: roomIdSchema,
+  roomId: idSchema,
   keyId: keyIdSchema,
   envelope: envelopeSchema,
 });
 
 const rewrapProfileKeysPayloadSchema = z.object({
-  roomId: roomIdSchema,
+  roomId: idSchema,
   keyId: keyIdSchema,
   envelopes: z
-    .record(z.string().trim().min(1), envelopeSchema)
+    .record(idSchema, envelopeSchema)
     .refine((envelopes) => Object.keys(envelopes).length <= MAX_PROFILE_KEY_ENVELOPES, {
       message: `No máximo ${MAX_PROFILE_KEY_ENVELOPES} envelopes.`,
     })
