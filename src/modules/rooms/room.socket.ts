@@ -10,7 +10,7 @@ import { socketLocale } from '../../sockets/socket-locale.js';
 import { exceedsLookupLimit, E2E_LOOKUP_MAX_ITEMS, lookupTooLargePayload } from '../../sockets/id-lookup.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
 import { emitToUser, joinUserSocketsToRoom, removeUserSocketsFromRoom } from '../../sockets/user-sockets.js';
-import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService, type MessageView } from '../messages/index.js';
+import { INITIAL_MESSAGES_LIMIT, systemEvent, type MessageService, type MessageView, type SystemEvent } from '../messages/index.js';
 import { NICKNAME_MAX_LENGTH, type UserService } from '../users/index.js';
 import { limitRosterBytes, type RoomKeyPublishMode, type RoomKeyPublishOutcome, type RoomKeyRepository } from './room.e2e.js';
 import { encryptedNameSchema, encryptedRosterSchema, joinByInvitePayloadSchema, roomInviteSchema, toInviteView } from './room.invites.js';
@@ -199,6 +199,17 @@ async function announceRotation(io: AppServer, deps: RoomSocketDeps, room: RoomR
   }
 }
 
+async function announceSystemEvent(
+  io: AppServer,
+  messageService: MessageService,
+  roomId: string,
+  event: SystemEvent,
+  attestation: string | null,
+): Promise<void> {
+  const systemMessage = await messageService.createSystemMessage(roomId, withAttestation(event, attestation));
+  io.to(roomId).emit('message:new', await messageService.toNewView(systemMessage));
+}
+
 function eventError(event: string, error: unknown) {
   return { ...extractErrorPayload(error), event };
 }
@@ -264,11 +275,15 @@ export function registerRoomSocketHandlers(io: AppServer, socket: AppSocket, dep
   });
 
   socket.on('user:block', (payload) => {
-    runSocketHandler(socket, 'user:block', () => handleBlockUser(io, socket, deps, payload));
+    runSocketHandler(socket, 'user:block', () =>
+      handleBlockChange(io, socket, payload, 'user:blocked', (roomId, userId, blockedUserId) => deps.roomService.blockUser(roomId, userId, blockedUserId)),
+    );
   });
 
   socket.on('user:unblock', (payload) => {
-    runSocketHandler(socket, 'user:unblock', () => handleUnblockUser(io, socket, deps, payload));
+    runSocketHandler(socket, 'user:unblock', () =>
+      handleBlockChange(io, socket, payload, 'user:unblocked', (roomId, userId, blockedUserId) => deps.roomService.unblockUser(roomId, userId, blockedUserId)),
+    );
   });
 
   socket.on('e2e:publish-room-key', (payload) => {
@@ -459,14 +474,13 @@ async function handleJoinByInvite(io: AppServer, socket: AppSocket, deps: RoomSo
     if (joined) {
       const user = await userService.getUser(userId);
       if (user) {
-        const systemMessage = await messageService.createSystemMessage(
+        await announceSystemEvent(
+          io,
+          messageService,
           room.id,
-          withAttestation(
-            systemEvent('group.memberJoined', { actor: user.nickname }),
-            acceptableAttestation(request.attestation, { roomId: room.id, actorId: userId, type: 'group.memberJoined' }),
-          ),
+          systemEvent('group.memberJoined', { actor: user.nickname }),
+          acceptableAttestation(request.attestation, { roomId: room.id, actorId: userId, type: 'group.memberJoined' }),
         );
-        io.to(room.id).emit('message:new', await messageService.toNewView(systemMessage));
 
         const participants = await roomService.buildParticipantViews(current);
         socket.to(room.id).emit('group:user-joined', { roomId: room.id, participants });
@@ -638,14 +652,13 @@ async function handleLeaveGroup(io: AppServer, socket: AppSocket, deps: RoomSock
         participants: remaining,
       });
 
-      const systemMessage = await messageService.createSystemMessage(
+      await announceSystemEvent(
+        io,
+        messageService,
         roomId,
-        withAttestation(
-          systemEvent('group.memberLeft', { actor: user.nickname }),
-          acceptableAttestation(attestation, { roomId, actorId: userId, type: 'group.memberLeft' }),
-        ),
+        systemEvent('group.memberLeft', { actor: user.nickname }),
+        acceptableAttestation(attestation, { roomId, actorId: userId, type: 'group.memberLeft' }),
       );
-      io.to(roomId).emit('message:new', await messageService.toNewView(systemMessage));
     }
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
@@ -691,14 +704,13 @@ async function handleRemoveMember(io: AppServer, socket: AppSocket, deps: RoomSo
       participants: remaining,
     });
 
-    const systemMessage = await messageService.createSystemMessage(
+    await announceSystemEvent(
+      io,
+      messageService,
       roomId,
-      withAttestation(
-        systemEvent('group.memberRemoved', { target: targetUser.nickname, actor: actingUser.nickname }),
-        acceptableAttestation(attestation, { roomId, actorId: actingUserId, type: 'group.memberRemoved', targetId: targetUserId }),
-      ),
+      systemEvent('group.memberRemoved', { target: targetUser.nickname, actor: actingUser.nickname }),
+      acceptableAttestation(attestation, { roomId, actorId: actingUserId, type: 'group.memberRemoved', targetId: targetUserId }),
     );
-    io.to(roomId).emit('message:new', await messageService.toNewView(systemMessage));
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
@@ -727,20 +739,27 @@ async function handlePromoteAdmin(io: AppServer, socket: AppSocket, deps: RoomSo
     const participants = await roomService.buildParticipantViews(updatedRoom);
     io.to(roomId).emit('group:participants-updated', { roomId, participants });
 
-    const systemMessage = await messageService.createSystemMessage(
+    await announceSystemEvent(
+      io,
+      messageService,
       roomId,
-      withAttestation(
-        systemEvent('group.adminPromoted', { target: targetUser.nickname, actor: actingUser.nickname }),
-        acceptableAttestation(attestation, { roomId, actorId: actingUserId, type: 'group.adminPromoted', targetId: targetUserId }),
-      ),
+      systemEvent('group.adminPromoted', { target: targetUser.nickname, actor: actingUser.nickname }),
+      acceptableAttestation(attestation, { roomId, actorId: actingUserId, type: 'group.adminPromoted', targetId: targetUserId }),
     );
-    io.to(roomId).emit('message:new', await messageService.toNewView(systemMessage));
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
 }
 
-async function handleBlockUser(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
+type BlockChange = (roomId: string, userId: string, blockedUserId: string) => Promise<RoomRecord | null>;
+
+async function handleBlockChange(
+  io: AppServer,
+  socket: AppSocket,
+  payload: unknown,
+  event: 'user:blocked' | 'user:unblocked',
+  change: BlockChange,
+): Promise<void> {
   const userId = requireSocketUserId(socket);
   if (!userId) {
     return;
@@ -748,38 +767,13 @@ async function handleBlockUser(io: AppServer, socket: AppSocket, deps: RoomSocke
 
   try {
     const { roomId, blockedUserId } = blockPayloadSchema.parse(payload);
-    const room = await deps.roomService.blockUser(roomId, userId, blockedUserId);
+    const room = await change(roomId, userId, blockedUserId);
     if (!room) {
       return;
     }
 
-    emitToUser(io, userId).emit('user:blocked', { roomId, blockedUserId, blockedBy: room.blockedBy, isBlocking: true });
-    emitToUser(io, blockedUserId).emit('user:blocked', {
-      roomId,
-      blockedByUserId: userId,
-      blockedBy: room.blockedBy,
-      isBlocking: false,
-    });
-  } catch (error) {
-    socket.emit('error', extractErrorPayload(error));
-  }
-}
-
-async function handleUnblockUser(io: AppServer, socket: AppSocket, deps: RoomSocketDeps, payload: unknown): Promise<void> {
-  const userId = requireSocketUserId(socket);
-  if (!userId) {
-    return;
-  }
-
-  try {
-    const { roomId, blockedUserId } = blockPayloadSchema.parse(payload);
-    const room = await deps.roomService.unblockUser(roomId, userId, blockedUserId);
-    if (!room) {
-      return;
-    }
-
-    emitToUser(io, userId).emit('user:unblocked', { roomId, blockedUserId, blockedBy: room.blockedBy, isBlocking: true });
-    emitToUser(io, blockedUserId).emit('user:unblocked', {
+    emitToUser(io, userId).emit(event, { roomId, blockedUserId, blockedBy: room.blockedBy, isBlocking: true });
+    emitToUser(io, blockedUserId).emit(event, {
       roomId,
       blockedByUserId: userId,
       blockedBy: room.blockedBy,
