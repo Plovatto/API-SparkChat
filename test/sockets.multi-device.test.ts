@@ -100,6 +100,28 @@ describe('multi-device delivery', () => {
     await unblockedNotices;
   });
 
+  it('sends the blocker and the blocked user their own block and unblock payloads', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const bob = await h.createAccount('Bob');
+    const room = await h.roomService.createPrivateRoom(alice.user.id, bob.user.id);
+    const aliceClient = await h.connectAs(alice);
+    const bobClient = await h.connectAs(bob);
+
+    const aliceBlocked = waitForEvent(aliceClient, 'user:blocked');
+    const bobBlocked = waitForEvent(bobClient, 'user:blocked');
+    aliceClient.emit('user:block', { roomId: room.id, blockedUserId: bob.user.id });
+    const blockedBy = { [bob.user.id]: alice.user.id };
+    expect(await aliceBlocked).toEqual({ roomId: room.id, blockedUserId: bob.user.id, blockedBy, isBlocking: true });
+    expect(await bobBlocked).toEqual({ roomId: room.id, blockedByUserId: alice.user.id, blockedBy, isBlocking: false });
+
+    const aliceUnblocked = waitForEvent(aliceClient, 'user:unblocked');
+    const bobUnblocked = waitForEvent(bobClient, 'user:unblocked');
+    aliceClient.emit('user:unblock', { roomId: room.id, blockedUserId: bob.user.id });
+    expect(await aliceUnblocked).toEqual({ roomId: room.id, blockedUserId: bob.user.id, blockedBy: {}, isBlocking: true });
+    expect(await bobUnblocked).toEqual({ roomId: room.id, blockedByUserId: alice.user.id, blockedBy: {}, isBlocking: false });
+  });
+
   it('removes every device of a removed member from the group', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');
