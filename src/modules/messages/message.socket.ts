@@ -100,7 +100,7 @@ function attachmentKeyViolation({ type, fileMeta, linkPreview }: Pick<SendMessag
   return null;
 }
 
-const clientTempIdSchema = z.string().trim().min(1);
+const clientTempIdSchema = z.string().trim().min(1).max(200);
 
 const sendMessagePayloadSchema = z
   .object({

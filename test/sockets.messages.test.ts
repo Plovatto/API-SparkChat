@@ -72,6 +72,19 @@ describe('message:send errors', () => {
     await expect(error).resolves.toMatchObject({ code: 'validation.invalidPayload', clientTempId: 'temp-2' });
   });
 
+  it('rejects an oversized clientTempId instead of broadcasting it to the room', async () => {
+    const h = await start();
+    const { room, aliceClient, bobClient } = await setupPair(h);
+    const delivered = collectEvents(bobClient, 'message:new');
+
+    const error = waitForEvent<ErrorEvent>(aliceClient, 'error');
+    aliceClient.emit('message:send', { roomId: room.id, content: fakeField('oi'), messageId: randomUUID(), clientTempId: 'x'.repeat(201) });
+
+    await expect(error).resolves.toMatchObject({ code: 'validation.invalidPayload' });
+    await settle(50);
+    expect(delivered).toHaveLength(0);
+  });
+
   it('returns the clientTempId when the socket is not authenticated', async () => {
     const h = await start();
     const anonymous = await h.connect();
