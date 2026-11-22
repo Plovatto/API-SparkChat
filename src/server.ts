@@ -24,6 +24,7 @@ import { createWebPushSender, PushRateLimiter, PushRepository, PushService } fro
 import { notifyRoomRotations, RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
 import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
+import { startSessionExpirySweep } from './sockets/session-expiry.js';
 import { hasVisibleUserSocket } from './sockets/user-sockets.js';
 import { SOCKET_MAX_HTTP_BUFFER_SIZE } from './sockets/socket-options.js';
 import { createR2ObjectStorage } from './storage/r2-object-storage.js';
@@ -195,6 +196,8 @@ registerSocketHandlers(io, {
   avatarService,
   transparencyService,
 });
+
+startSessionExpirySweep(io, (userId, sessionId) => userService.isSessionWithinLifetime(userId, sessionId));
 
 httpServer.listen(env.PORT, () => {
   logger.info(`Server running on port ${env.PORT}`);

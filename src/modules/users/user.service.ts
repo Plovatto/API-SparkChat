@@ -308,6 +308,11 @@ export class UserService {
     return session !== null && isSessionLive(session);
   }
 
+  async isSessionWithinLifetime(userId: string, sessionId: string): Promise<boolean> {
+    const session = await this.sessions.findByIdForUser(userId, sessionId);
+    return session !== null && Date.now() - new Date(session.createdAt).getTime() <= SESSION_MAX_LIFETIME_MS;
+  }
+
   async resumeSession(
     userId: string,
     sessionToken: string,
