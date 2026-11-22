@@ -90,6 +90,8 @@ async function joinVisibleRooms(client: TestClient): Promise<void> {
   await listed;
 }
 
+
+const DECLINE_TOKEN_SHAPE: unknown = expect.stringMatching(/^[A-Za-z0-9_-]+\.\d+\.[A-Za-z0-9_-]+$/);
 describe('push config', () => {
   it('announces the feature as disabled without VAPID keys and refuses subscriptions', async () => {
     const { h, alice, sender } = await setup({ push: false });
@@ -284,7 +286,7 @@ describe('call pushes', () => {
 
     expect(sent).toHaveLength(1);
     expect(sent[0]?.endpoint).toBe(bobSub.endpoint);
-    expect(sent[0]?.payload).toEqual({ t: 'call', callId, roomId: room.id, kind: 'video', d: expect.stringMatching(/^[A-Za-z0-9_-]+\.\d+\.[A-Za-z0-9_-]+$/) });
+    expect(sent[0]?.payload).toEqual({ t: 'call', callId, roomId: room.id, kind: 'video', d: DECLINE_TOKEN_SHAPE });
     expect(sent[0]?.options).toEqual({ TTL: 45, urgency: 'high', topic: pushTopic('call', callId) });
     expect(sent[0]?.options.topic).toMatch(/^[A-Za-z0-9_-]{32}$/);
     expect(sent[0]?.raw).not.toMatch(/Alice|Bobby|opaque-envelope/);
@@ -300,7 +302,7 @@ describe('call pushes', () => {
     await h.pushService.idle();
 
     expect(sent.map((push) => push.payload)).toEqual([
-      { t: 'call', callId, roomId: room.id, kind: 'video', d: expect.any(String) },
+      { t: 'call', callId, roomId: room.id, kind: 'video', d: DECLINE_TOKEN_SHAPE },
       { t: 'call-end', callId, reason: 'missed' },
     ]);
     expect(sent[1]?.options.topic).toBe(sent[0]?.options.topic);
