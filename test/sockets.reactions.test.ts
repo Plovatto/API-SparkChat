@@ -196,6 +196,7 @@ describe('message:react', () => {
     const mallory = await h.createAccount('Mallory');
     const group = await h.roomService.createGroupRoom(alice.user.id);
     await h.joinGroup(group.id, carol.user.id);
+    await settle(5);
     const old = await h.messageService.sendMessage({ roomId: group.id, senderId: alice.user.id, content: fakeField('antigo') });
     await h.messageService.reactToMessage(old, carol.user.id, fakeField('heart'));
     await settle(20);
