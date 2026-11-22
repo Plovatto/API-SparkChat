@@ -24,7 +24,6 @@ const acceptPayloadSchema = z.object({ callId: callIdSchema, envelope: envelopeS
 const callIdPayloadSchema = z.object({ callId: callIdSchema });
 const mediaStateSchema = z
   .object({ muted: z.boolean(), camera: z.boolean() })
-  .strict()
   .openapi({ description: 'Estado do microfone e da câmera deste aparelho. O servidor só repassa aos outros aparelhos da mesma conta, para que uma troca de aparelho mantenha o mesmo estado' });
 const heartbeatPayloadSchema = z.object({ callId: callIdSchema, relayed: z.boolean().optional().openapi({ description: 'Rota atual da mídia deste aparelho. false (conexão direta) faz o servidor revogar as credenciais TURN deste aparelho; um novo call:ice-servers emite outras quando precisar do relay' }), media: mediaStateSchema.optional() });
 const hangupPayloadSchema = z.object({ callId: callIdSchema, force: z.boolean().optional() });

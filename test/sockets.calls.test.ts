@@ -1750,7 +1750,51 @@ describe('call transfer between devices', () => {
 
     const invalid = expectError(aliceClient, 'call:heartbeat');
     aliceClient.emit('call:heartbeat', { callId, media: { muted: 'yes', camera: true } });
-    expect((await invalid).code).toBeTruthy();
+    expect((await invalid).code).toBe('validation.invalidPayload');
+  });
+
+  it('pushes a media change to the other devices of the account right away, but not to the bound device or the other participant', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    const alicePhone = await h.connectAs(alice);
+    const selfEcho = collectEvents(aliceClient, 'call:state');
+    const peerEcho = collectEvents(bobClient, 'call:state');
+
+    const first = waitForEvent<{ callId: string; media?: unknown; transferable: boolean }>(alicePhone, 'call:state');
+    aliceClient.emit('call:heartbeat', { callId, media: { muted: false, camera: false } });
+    expect(await first).toMatchObject({ callId, transferable: true, media: { muted: false, camera: false } });
+
+    const changed = waitForEvent<{ media?: unknown }>(alicePhone, 'call:state');
+    aliceClient.emit('call:heartbeat', { callId, media: { muted: true, camera: false } });
+    expect((await changed).media).toEqual({ muted: true, camera: false });
+
+    const repeats = collectEvents(alicePhone, 'call:state');
+    aliceClient.emit('call:heartbeat', { callId, media: { muted: true, camera: false } });
+    await settle(100);
+    expect(repeats).toHaveLength(0);
+    expect(selfEcho).toHaveLength(0);
+    expect(peerEcho).toHaveLength(0);
+  });
+
+  it('forgets the reported media state when the call ends', async () => {
+    const { h, alice, room, aliceClient, bobClient } = await setup();
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, callId);
+    aliceClient.emit('call:heartbeat', { callId, media: { muted: true, camera: true } });
+    await settle(100);
+    const ended = waitForEvent(bobClient, 'call:ended');
+    aliceClient.emit('call:hangup', { callId });
+    await ended;
+
+    const nextCall = await ring(h, aliceClient, [bobClient], room.id);
+    await answer(aliceClient, bobClient, nextCall);
+    const alicePhone = await h.connectAs(alice);
+    const state = waitForEvent<Record<string, unknown>>(alicePhone, 'call:state');
+    alicePhone.emit('call:sync', { callId: null });
+    const payload = await state;
+    expect(payload).toMatchObject({ callId: nextCall });
+    expect(payload).not.toHaveProperty('media');
   });
 
   it('forgets the media state of the device that moved away, so the new device reports its own', async () => {
@@ -1769,8 +1813,9 @@ describe('call transfer between devices', () => {
 
     const state = waitForEvent<Record<string, unknown>>(aliceClient, 'call:state');
     aliceClient.emit('call:sync', { callId: null });
-    expect(await state).toMatchObject({ callId, transferable: true });
-    expect(await state).not.toHaveProperty('media');
+    const payload = await state;
+    expect(payload).toMatchObject({ callId, transferable: true });
+    expect(payload).not.toHaveProperty('media');
   });
 
   it('refuses a second transfer while one is pending and drops an unanswered one after 15 seconds', async () => {

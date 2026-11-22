@@ -354,8 +354,8 @@ export class CallService {
     }
     this.clearPendingTransfer(call.id);
     const previous = this.boundSocket(call, movingRole);
-    await this.takeOver(call, movingRole, pending.socketId);
     this.forgetMedia(call.id, movingRole);
+    await this.takeOver(call, movingRole, pending.socketId);
     this.limiter.allowNextIceServers(call.id, roleUserId(call, movingRole), pending.socketId);
     if (previous !== undefined && previous !== pending.socketId) {
       this.io.to(previous).emit('call:transferred', { callId: call.id });
@@ -418,11 +418,15 @@ export class CallService {
           throw AppError.of('call.notAllowed');
         }
         await this.takeOver(call, role, actor.socketId);
-        this.rememberMedia(call.id, role, media);
+        if (media) {
+          await this.rememberMedia(call, role, actor.socketId, media);
+        } else {
+          this.forgetMedia(call.id, role);
+        }
         return;
       }
       this.markBeat(call.id, role);
-      this.rememberMedia(call.id, role, media);
+      await this.rememberMedia(call, role, actor.socketId, media);
       await this.repository.touchHeartbeat(callId, new Date(this.now()).toISOString());
       if (relayed === false) {
         await this.dropRelayCredentials(call, role);
@@ -430,13 +434,25 @@ export class CallService {
     }
   }
 
-  private rememberMedia(callId: string, role: CallRole, media: CallMediaState | undefined): void {
+  private async rememberMedia(call: CallRecord, role: CallRole, socketId: string, media: CallMediaState | undefined): Promise<void> {
     if (!media) {
       return;
     }
-    const states = this.mediaStates.get(callId) ?? {};
+    const known = this.mediaStates.get(call.id);
+    const previous = known?.[role];
+    const states = known ?? {};
     states[role] = { muted: media.muted, camera: media.camera };
-    this.mediaStates.set(callId, states);
+    this.mediaStates.set(call.id, states);
+    if (!known) {
+      const current = await this.repository.findById(call.id);
+      if (!current || current.state === 'ended') {
+        this.mediaStates.delete(call.id);
+        return;
+      }
+    }
+    if (!previous || previous.muted !== media.muted || previous.camera !== media.camera) {
+      this.io.in(userRoom(roleUserId(call, role))).except(socketId).emit('call:state', this.statePayload(call, call.state === 'accepted' ? 'accepted' : 'active', role, null));
+    }
   }
 
   private forgetMedia(callId: string, role: CallRole): void {
@@ -493,26 +509,31 @@ export class CallService {
       }
     }
 
+    const payload = this.statePayload(call, call.state, role, actor.socketId);
+    this.io.to(actor.socketId).emit('call:state', payload);
+    const invite = this.ringingInvites.get(call.id);
+    if (call.state === 'ringing' && role === 'callee' && invite && Date.parse(invite.ringExpiresAt) > this.now()) {
+      this.io.to(actor.socketId).emit('call:incoming', invite);
+    }
+  }
+
+  private statePayload(call: CallRecord, state: CallStatePayload['state'], role: CallRole, socketId: string | null): CallStatePayload {
     const payload: CallStatePayload = {
       callId: call.id,
-      state: call.state,
+      state,
       roomId: call.roomId,
       kind: call.kind,
       peerId: peerOf(call, role),
       role,
       answeredAt: call.answeredAt,
-      transferable: this.isTransferable(call, role, actor.socketId),
+      transferable: this.isTransferable(call, role, socketId ?? ''),
       peerLive: this.isPeerLive(call, role),
     };
     const media = this.mediaStates.get(call.id)?.[role];
     if (media && (call.state === 'accepted' || call.state === 'active')) {
       payload.media = { ...media };
     }
-    this.io.to(actor.socketId).emit('call:state', payload);
-    const invite = this.ringingInvites.get(call.id);
-    if (call.state === 'ringing' && role === 'callee' && invite && Date.parse(invite.ringExpiresAt) > this.now()) {
-      this.io.to(actor.socketId).emit('call:incoming', invite);
-    }
+    return payload;
   }
 
   async iceServers(actor: CallActor, input: { callId: string; protectIp: boolean }): Promise<IceServersResult> {
