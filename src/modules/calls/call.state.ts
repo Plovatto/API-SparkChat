@@ -19,6 +19,14 @@ function ended(endReason: CallEndReason): CallTransition {
   return { state: 'ended', endReason };
 }
 
+export function peerRoleOf(role: CallRole): CallRole {
+  return role === 'caller' ? 'callee' : 'caller';
+}
+
+export function isLiveState(state: CallState): boolean {
+  return state === 'accepted' || state === 'active';
+}
+
 export function transition(state: CallState, event: CallEvent): CallTransition | null {
   switch (state) {
     case 'ringing':
