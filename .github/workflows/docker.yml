@@ -1,0 +1,52 @@
+name: Docker
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the image
+        run: docker build --tag sparkchat-api:ci .
+
+      - name: Start the container
+        run: |
+          docker run --detach --name api --publish 8080:8080 \
+            --env PORT=8080 \
+            --env LOG_LEVEL=warn \
+            --env TURSO_DATABASE_URL=file:/tmp/ci.db \
+            --env TURSO_AUTH_TOKEN=ci \
+            --env RECOVERY_FILE_SECRET="$(openssl rand -hex 32)" \
+            --env GEMINI_API_KEY=ci \
+            --env AI_ASSISTANT_PRIVATE_KEY="$(openssl rand 32 | basenc --base64url | tr -d '=')" \
+            --env R2_ACCOUNT_ID=ci \
+            --env R2_ACCESS_KEY_ID=ci \
+            --env R2_SECRET_ACCESS_KEY=ci \
+            --env R2_BUCKET_NAME=ci \
+            --env R2_PUBLIC_BASE_URL=https://media.example.com \
+            --env PASSWORD_LENGTH_DECLARATION_REQUIRED=false \
+            sparkchat-api:ci
+
+      - name: Wait for the health check
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://localhost:8080/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs api
+          exit 1
+
+      - name: Check the docs page
+        run: curl --silent --fail --output /dev/null http://localhost:8080/docs/openapi.json

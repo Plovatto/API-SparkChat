@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest an improvement to the SparkChat API.
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation where the current API falls short.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Routes, socket events, or configuration you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy impact
+      description: Would the server learn anything new about users or their messages?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

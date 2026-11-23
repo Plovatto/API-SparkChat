@@ -1,0 +1,31 @@
+name: PR title
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  check:
+    name: Check pull request title
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate gitmoji and Conventional Commits format
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          pattern='^:[a-z0-9_+-]+: (feat|fix|perf|refactor|style|test|docs|chore|ci|build|revert)(\([a-z0-9-]+\))?!?: .+$'
+          if [[ "$TITLE" =~ $pattern ]]; then
+            echo "Title follows the convention: $TITLE"
+          else
+            echo "::error::The title must follow ':gitmoji: type: description', for example ':sparkles: feat: add message reactions'. See CONTRIBUTING.md."
+            exit 1
+          fi
