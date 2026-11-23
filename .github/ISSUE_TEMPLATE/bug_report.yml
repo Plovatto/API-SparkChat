@@ -1,0 +1,65 @@
+name: Bug report
+description: An endpoint, socket event, or behavior of the API is broken.
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report a problem. Security issues must be reported through the [security policy](https://github.com/Plovatto/API-SparkChat/security/policy) instead. Never paste tokens, keys, or message contents.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the route or socket event, the payload shape, and the response or error code you received.
+      placeholder: |
+        1. Emit `room:create-group` with two members
+        2. Emit `group:leave` from one of them
+        3. The remaining member never receives `e2e:rotation-required`
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Module
+      options:
+        - users (accounts, sessions, keys)
+        - rooms (chats, groups, room keys)
+        - messages and uploads
+        - calls
+        - SparkAI
+        - push notifications
+        - avatars
+        - GIFs
+        - link previews
+        - key transparency
+        - docs or deployment
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Where did it happen?
+      options:
+        - Published API (sparkchat-api.plovatto.dev)
+        - Local development
+        - Self-hosted with Docker
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      placeholder: v1.0.0 or a commit SHA
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Optional. Remove any tokens, keys, or personal data first.
+      render: text
