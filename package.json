@@ -1,6 +1,6 @@
 {
   "name": "SparkChat-API",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "SparkChat real-time API (Express + Socket.IO)",
   "type": "module",
   "main": "dist/server.js",
