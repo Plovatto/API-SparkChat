@@ -160,6 +160,10 @@ export class CallService {
     return device !== undefined && this.boundDevices.get(call.id)?.[role] === device;
   }
 
+  private nowIso(): string {
+    return new Date(this.now()).toISOString();
+  }
+
   private isBoundSocketConnected(call: CallRecord, role: CallRole): boolean {
     return this.isSocketConnected(this.boundSocket(call, role));
   }
@@ -333,7 +337,7 @@ export class CallService {
       call.id,
       actor.userId,
       actor.socketId,
-      new Date(this.now()).toISOString(),
+      this.nowIso(),
       new Date(this.now() - RING_TIMEOUT_MS).toISOString(),
     );
 
@@ -554,7 +558,7 @@ export class CallService {
       this.markBeat(call.id, role);
       this.signalQueue.drop(call.id, role);
       await this.rememberMedia(call, role, actor.socketId, media);
-      await this.repository.touchHeartbeat(callId, new Date(this.now()).toISOString());
+      await this.repository.touchHeartbeat(callId, this.nowIso());
       if (relayed === false) {
         await this.dropRelayCredentials(call, role);
       }
@@ -616,7 +620,7 @@ export class CallService {
       await this.repository.rebindAcceptedDevice(call.id, socketId);
     }
     this.markBeat(call.id, role);
-    await this.repository.touchHeartbeat(call.id, new Date(this.now()).toISOString());
+    await this.repository.touchHeartbeat(call.id, this.nowIso());
     for (const queued of this.signalQueue.take(call.id, role, this.now())) {
       this.io.to(socketId).emit('call:signal', queued);
     }
@@ -715,7 +719,7 @@ export class CallService {
 
     const previous = splitUsernames(role === 'caller' ? call.turnUsername : call.calleeTurnUsername);
     const stillPending = previous.length > 0 ? await this.revokeUsernames(provider, previous) : [];
-    const recorded = await this.repository.recordTurnIssued(call.id, role, [credential.username, ...stillPending].join(','), new Date(this.now()).toISOString());
+    const recorded = await this.repository.recordTurnIssued(call.id, role, [credential.username, ...stillPending].join(','), this.nowIso());
     this.budget.invalidate();
     if (!recorded) {
       await provider.revoke(credential.username).catch(() => undefined);
@@ -808,7 +812,7 @@ export class CallService {
     this.signalQueue.delete(call.id);
     this.limiter.forgetCall(call.id);
 
-    const payload = { callId: call.id, reason: call.endReason ?? 'failed', endedAt: call.endedAt ?? new Date(this.now()).toISOString() };
+    const payload = { callId: call.id, reason: call.endReason ?? 'failed', endedAt: call.endedAt ?? this.nowIso() };
     this.io.to(userRoom(call.callerId)).to(userRoom(call.calleeId)).emit('call:ended', payload);
     if (!call.answeredAt) {
       this.push?.callEnded({ userId: call.calleeId, callId: call.id, reason: payload.reason });
@@ -870,7 +874,7 @@ export class CallService {
       return;
     }
     const failed = await this.revokeUsernames(provider, usernames);
-    await this.repository.closeRelayWindow(call.id, role, new Date(this.now()).toISOString(), stored, failed.length > 0 ? failed.join(',') : null);
+    await this.repository.closeRelayWindow(call.id, role, this.nowIso(), stored, failed.length > 0 ? failed.join(',') : null);
     this.budget.invalidate();
   }
 
@@ -954,7 +958,7 @@ export class CallService {
     }
     const provider = this.turnProvider;
     if (!provider || (await this.revokeUsernames(provider, usernames)).length === 0) {
-      await this.repository.markRevoked(call.id, new Date(this.now()).toISOString());
+      await this.repository.markRevoked(call.id, this.nowIso());
     }
   }
 
@@ -993,7 +997,7 @@ export class CallService {
     for (const call of pending) {
       const expired = call.endedAt !== null && this.now() - Date.parse(call.endedAt) > TURN_TTL_SECONDS * 1000;
       if (expired && this.turnProvider) {
-        await this.repository.markRevoked(call.id, new Date(this.now()).toISOString());
+        await this.repository.markRevoked(call.id, this.nowIso());
         continue;
       }
       await this.revokeCredentials(call);
