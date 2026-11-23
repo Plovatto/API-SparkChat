@@ -169,18 +169,23 @@ describe('per-IP login failure budget', () => {
   });
 
   it('answers 429 over HTTP when one address rotates nicknames', async () => {
-    const { app } = await buildTestApp();
-    let limited: request.Response | null = null;
-
-    for (let i = 0; i < 40 && !limited; i += 1) {
-      const response = await request(app).post('/api/users/login').send({ nickname: `ghost-${i}`, password: PASSWORD });
-      if (response.status === 429) {
-        limited = response;
-      }
+    const { app, loginRateLimiter } = await buildTestApp();
+    const reserve = vi.spyOn(loginRateLimiter, 'reserveAttempt');
+    const first = await request(app).post('/api/users/login').send({ nickname: 'ghost-0', password: PASSWORD });
+    expect(first.status).toBe(401);
+    const address = reserve.mock.calls[0]?.[1] ?? '';
+    reserve.mockRestore();
+    let accepted = 1;
+    while (loginRateLimiter.reserveAttempt(`ghost-${accepted}`, address)) {
+      accepted += 1;
     }
 
-    expect(limited?.body).toMatchObject({ code: 'rateLimit.loginAttempts' });
-  }, 30_000);
+    const limited = await request(app).post('/api/users/login').send({ nickname: `ghost-${accepted + 1}`, password: PASSWORD });
+
+    expect(accepted).toBe(30);
+    expect(limited.status).toBe(429);
+    expect(limited.body).toMatchObject({ code: 'rateLimit.loginAttempts' });
+  });
 });
 
 describe('cross-network account ceiling', () => {
