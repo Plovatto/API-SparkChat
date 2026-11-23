@@ -1,7 +1,15 @@
 import { createApp } from '@/app.js';
 import type { GifProvider } from '@/modules/gifs/index.js';
 import { LinkPreviewRepository, LinkPreviewService, type LinkPreviewFetcher } from '@/modules/link-preview/index.js';
-import { LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from '@/modules/users/index.js';
+import {
+  LoginRateLimiter,
+  SessionRevocationNotifier,
+  SessionSignatureVerifier,
+  UserRepository,
+  UserService,
+  UserSessionRepository,
+  type SessionSignatureMode,
+} from '@/modules/users/index.js';
 import { InMemoryObjectStorage, type ObjectStorage } from '@/storage/object-storage.js';
 import { StorageQuota } from '@/storage/storage-quota.js';
 import { StorageUsageRepository } from '@/storage/storage-usage.repository.js';
@@ -19,12 +27,18 @@ export async function buildTestApp(
     objectStorage?: ObjectStorage;
     storageQuota?: StorageQuota;
     gifProvider?: GifProvider | null;
+    signatureMode?: SessionSignatureMode;
   } = {},
 ) {
   const db = await createTestDb();
   const userRepository = new UserRepository(db);
   const userSessionRepository = new UserSessionRepository(db);
-  const userService = new UserService(userRepository, userSessionRepository, TEST_RECOVERY_FILE_SECRET);
+  const userService = new UserService(
+    userRepository,
+    userSessionRepository,
+    TEST_RECOVERY_FILE_SECRET,
+    new SessionSignatureVerifier(options.signatureMode ?? 'bound'),
+  );
   const loginRateLimiter = new LoginRateLimiter();
   const sessionRevocations = new SessionRevocationNotifier();
   const linkPreviewRepository = new LinkPreviewRepository(db);

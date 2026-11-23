@@ -32,4 +32,5 @@ export interface SessionRecord {
   userAgent: string;
   createdAt: string;
   lastUsedAt: string;
+  devicePublicKey: string | null;
 }

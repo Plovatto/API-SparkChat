@@ -14,6 +14,7 @@ import { listSocketEvents } from './docs/socket-registry.js';
 import { socketEventsPanelScript } from './docs/socket-events-panel.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { createRateLimiter } from './middleware/rate-limit.js';
+import { sha256Base64Url } from './modules/users/user.session-signature.js';
 import { createApiRouter, type ApiRouterDeps } from './routes/index.js';
 
 const healthResponseSchema = z
@@ -62,7 +63,13 @@ export function createApp(deps: ApiRouterDeps): Express {
     }),
   );
   app.use(cors({ origin: env.FRONTEND_URL, credentials: true }));
-  app.use(express.json());
+  app.use(
+    express.json({
+      verify: (req, _res, buf) => {
+        (req as express.Request).rawBodySha256 = sha256Base64Url(buf);
+      },
+    }),
+  );
   app.use(
     pinoHttp({
       logger,

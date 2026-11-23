@@ -1,12 +1,14 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { logger } from '../../config/logger.js';
-import { errorPayload } from '../../lib/app-error.js';
+import { AppError, errorPayload } from '../../lib/app-error.js';
+import { describeSignedRequest, parseBearerToken, readSessionProof } from '../../middleware/auth.js';
 import { isValidNicknameFormat, NICKNAME_MAX_LENGTH, nicknameAvailabilityStatusSchema, publicUserSchema } from './user.model.js';
 import { PasswordCapacityError } from './user.password.js';
 import type { LoginRateLimiter } from './user.login-rate-limiter.js';
 import type { UserService } from './user.service.js';
 import type { SessionRevocationNotifier } from './user.session-revocations.js';
+import { devicePublicKeySchema, signatureFailurePayload } from './user.session-signature.js';
 
 const NICKNAME_INPUT_MAX_LENGTH = NICKNAME_MAX_LENGTH * 4;
 const PASSWORD_INPUT_MAX_LENGTH = 128;
@@ -30,6 +32,7 @@ export const loginBodySchema = z
       example: 'q1w2e3r4t5y6u7i8o9p0q1w2e3r4t5y6u7i8o9p0abc',
       description: 'Chave de autenticação derivada no cliente (Argon2id), base64url sem padding (32 bytes); outros formatos são recusados com 401',
     }),
+    devicePublicKey: devicePublicKeySchema.optional(),
   })
   .openapi('LoginBody');
 
@@ -44,6 +47,7 @@ export const loginResponseSchema = z
     user: publicUserSchema,
     sessionToken: z.string().openapi({ example: 'a1b2c3...' }),
     authVersion: authVersionSchema,
+    deviceKeyBound: z.boolean().openapi({ description: 'true quando a sessão foi ligada à chave do dispositivo enviada' }),
   })
   .openapi('LoginResponse');
 
@@ -64,8 +68,21 @@ export const recoveryLoginBodySchema = z
   .object({
     userId: z.string().trim().min(1).max(64).openapi({ example: '3e3f4a1e-3b7a-4f7b-8f2a-2b7a7b9b2b2a' }),
     recoveryKey: z.string().min(1).max(200).openapi({ example: 'q1w2e3r4t5y6u7i8o9p0q1w2e3r4t5y6u7i8o9p0abc', description: 'Chave derivada do segredo do arquivo de recuperação v2, base64url sem padding (32 bytes)' }),
+    devicePublicKey: devicePublicKeySchema.optional(),
   })
   .openapi('RecoveryLoginBody');
+
+export const deviceKeyBodySchema = z
+  .object({
+    publicKey: devicePublicKeySchema,
+  })
+  .openapi('DeviceKeyBody');
+
+export const deviceKeyResponseSchema = z
+  .object({
+    status: z.enum(['bound', 'unchanged']),
+  })
+  .openapi('DeviceKeyResponse');
 
 export function createUserController(
   userService: UserService,
@@ -94,7 +111,7 @@ export function createUserController(
     }
 
     try {
-      const result = await userService.login(nickname, password, req.headers['user-agent'] ?? '');
+      const result = await userService.login(nickname, password, req.headers['user-agent'] ?? '', parsed.data.devicePublicKey);
       if (!result) {
         res.status(401).json(errorPayload('auth.invalidCredentials'));
         return;
@@ -106,6 +123,7 @@ export function createUserController(
         user: userService.toPublicUser(result.user),
         sessionToken: result.sessionToken,
         authVersion: 2,
+        deviceKeyBound: result.deviceKeyBound,
       });
     } catch (error) {
       loginRateLimiter.releaseAttempt(nickname, ip);
@@ -134,7 +152,12 @@ export function createUserController(
     }
 
     try {
-      const result = await userService.loginWithRecovery(parsed.data.userId, parsed.data.recoveryKey, req.headers['user-agent'] ?? '');
+      const result = await userService.loginWithRecovery(
+        parsed.data.userId,
+        parsed.data.recoveryKey,
+        req.headers['user-agent'] ?? '',
+        parsed.data.devicePublicKey,
+      );
       if (!result) {
         res.status(401).json(errorPayload('auth.keyfileInvalid'));
         return;
@@ -146,6 +169,7 @@ export function createUserController(
         user: userService.toPublicUser(result.user),
         sessionToken: result.sessionToken,
         authVersion: 2,
+        deviceKeyBound: result.deviceKeyBound,
       });
     } catch (error) {
       loginRateLimiter.releaseAttemptByIp(ip);
@@ -215,5 +239,44 @@ export function createUserController(
     res.status(204).end();
   };
 
-  return { login, loginWithRecovery, getAuthParams, checkNicknameAvailability, logout };
+  const registerDeviceKey = async (req: Request, res: Response): Promise<void> => {
+    const credentials = parseBearerToken(req.headers.authorization);
+    if (!credentials) {
+      res.status(401).json(errorPayload('auth.required'));
+      return;
+    }
+
+    const parsed = deviceKeyBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json(errorPayload('auth.deviceKeyInvalid'));
+      return;
+    }
+
+    try {
+      const status = await userService.registerDeviceKey(
+        credentials.userId,
+        credentials.sessionToken,
+        parsed.data.publicKey,
+        readSessionProof(req),
+        describeSignedRequest(req),
+      );
+      if (!status) {
+        res.status(401).json(errorPayload('auth.sessionInvalid'));
+        return;
+      }
+      res.status(200).json({ status });
+    } catch (error) {
+      if (error instanceof AppError && error.code === 'auth.deviceKeyConflict') {
+        res.status(409).json(error.toPayload());
+        return;
+      }
+      const payload = signatureFailurePayload(error);
+      if (!payload) {
+        throw error;
+      }
+      res.status(payload.code === 'auth.deviceKeyRequired' ? 403 : 401).json(payload);
+    }
+  };
+
+  return { login, loginWithRecovery, getAuthParams, checkNicknameAvailability, logout, registerDeviceKey };
 }

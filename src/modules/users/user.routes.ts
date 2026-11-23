@@ -7,6 +7,8 @@ import {
   authParamsBodySchema,
   authParamsResponseSchema,
   createUserController,
+  deviceKeyBodySchema,
+  deviceKeyResponseSchema,
   loginBodySchema,
   loginResponseSchema,
   nicknameAvailabilityQuerySchema,
@@ -122,6 +124,29 @@ registry.registerPath({
 });
 
 registry.registerPath({
+  method: 'post',
+  path: '/api/users/session/device-key',
+  tags: ['Users'],
+  summary: 'Liga a sessão atual à chave pública do dispositivo (migração de sessões antigas)',
+  description:
+    'Exige os cabeçalhos x-spark-timestamp, x-spark-nonce e x-spark-signature assinados com a chave enviada. Depois de ligada, toda requisição autenticada e o user:join precisam ser assinados por essa chave.',
+  security: [{ sessionAuth: [] }],
+  request: {
+    body: { content: { 'application/json': { schema: deviceKeyBodySchema } } },
+  },
+  responses: {
+    200: {
+      description: 'Chave ligada (bound) ou já ligada a esta sessão (unchanged)',
+      content: { 'application/json': { schema: deviceKeyResponseSchema } },
+    },
+    400: { description: 'Chave inválida', content: { 'application/json': { schema: errorResponseSchema } } },
+    401: { description: 'Sessão ou assinatura inválida', content: { 'application/json': { schema: errorResponseSchema } } },
+    403: { description: 'Modo obrigatório: sessões antigas precisam de novo login', content: { 'application/json': { schema: errorResponseSchema } } },
+    409: { description: 'A sessão já está ligada a outra chave', content: { 'application/json': { schema: errorResponseSchema } } },
+  },
+});
+
+registry.registerPath({
   method: 'get',
   path: '/api/users/nickname-availability',
   tags: ['Users'],
@@ -148,12 +173,11 @@ export function createUserRouter(
 ): Router {
   const router = Router();
   const controller = createUserController(userService, loginRateLimiter, sessionRevocations);
-  const requireAuth = createRequireAuth(userService);
-
   router.post('/login', asyncHandler(controller.login));
   router.post('/login-with-recovery', asyncHandler(controller.loginWithRecovery));
   router.post('/auth-params', asyncHandler(controller.getAuthParams));
-  router.post('/logout', requireAuth, asyncHandler(controller.logout));
+  router.post('/logout', createRequireAuth(userService, { allowUnsigned: true }), asyncHandler(controller.logout));
+  router.post('/session/device-key', asyncHandler(controller.registerDeviceKey));
   router.get('/nickname-availability', asyncHandler(controller.checkNicknameAvailability));
 
   return router;

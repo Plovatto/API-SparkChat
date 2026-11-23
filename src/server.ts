@@ -22,7 +22,7 @@ import {
 import { setupTransparency } from './modules/transparency/index.js';
 import { createWebPushSender, PushRateLimiter, PushRepository, PushService } from './modules/push/index.js';
 import { notifyRoomRotations, RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
-import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
+import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, SessionSignatureVerifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import { startSessionExpirySweep } from './sockets/session-expiry.js';
 import { hasVisibleUserSocket } from './sockets/user-sockets.js';
@@ -48,7 +48,12 @@ await runMigrations(db);
 
 const userRepository = new UserRepository(db);
 const userSessionRepository = new UserSessionRepository(db);
-const userService = new UserService(userRepository, userSessionRepository, env.RECOVERY_FILE_SECRET);
+const userService = new UserService(
+  userRepository,
+  userSessionRepository,
+  env.RECOVERY_FILE_SECRET,
+  new SessionSignatureVerifier(env.SESSION_SIGNATURE_MODE),
+);
 const loginRateLimiter = new LoginRateLimiter();
 setInterval(() => loginRateLimiter.sweep(), 60_000).unref();
 const sessionRevocations = new SessionRevocationNotifier();
