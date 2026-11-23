@@ -10,7 +10,7 @@ import type { CallMediaState, CallServerToClientEvents, CallStatePayload } from 
 import { CallDeclineTokens } from './call-decline-token.js';
 import type { CallRateLimiter } from './call.rate-limiter.js';
 import type { CallRepository } from './call.repository.js';
-import { transition, type CallEvent } from './call.state.js';
+import { isLiveState, peerRoleOf, transition, type CallEvent } from './call.state.js';
 import {
   HEARTBEAT_TIMEOUT_MS,
   PEER_PRESENCE_MS,
@@ -29,6 +29,7 @@ import {
   type CallRole,
   type IceServer,
 } from './call.types.js';
+import { SignalQueue } from './call.signal-queue.js';
 import { STUN_ONLY_SERVERS, type TurnProvider } from './turn-credentials.js';
 
 const SWEEP_INTERVAL_MS = 2000;
@@ -36,8 +37,6 @@ const REVOKE_SWEEP_BATCH = 50;
 const MONTHLY_RELAY_SECONDS_PER_USER = 20 * 60 * 60;
 const DAILY_RELAY_SECONDS_PER_USER = 6 * 60 * 60;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const SIGNAL_QUEUE_TTL_MS = 15_000;
-const SIGNAL_QUEUE_LIMIT = 64;
 const SIGNAL_STALE_MS = 15_000;
 const ABANDONED_CALL_MS = 20_000;
 
@@ -72,12 +71,6 @@ export interface CallConfig {
   degrade: CallDegrade;
 }
 
-interface QueuedSignal {
-  role: CallRole;
-  at: number;
-  payload: { callId: string; from: string; envelope: string };
-}
-
 interface SocketBindings {
   caller?: string;
   callee?: string;
@@ -101,7 +94,7 @@ export class CallService {
   private readonly connectedAt = new Map<string, number>();
   private readonly pendingTransfers = new Map<string, { role: CallRole; socketId: string; startedAt: number }>();
   private readonly ringingInvites = new Map<string, IncomingCallPayload>();
-  private readonly pending = new Map<string, QueuedSignal[]>();
+  private readonly signalQueue = new SignalQueue();
   private readonly socketDevices = new Map<string, string>();
   private readonly boundDevices = new Map<string, Partial<Record<CallRole, string>>>();
   private readonly now: () => number;
@@ -168,26 +161,21 @@ export class CallService {
   }
 
   private isBoundSocketConnected(call: CallRecord, role: CallRole): boolean {
-    const bound = this.boundSocket(call, role);
-    return bound !== undefined && this.io.sockets.sockets.has(bound);
+    return this.isSocketConnected(this.boundSocket(call, role));
   }
 
-  private dropQueuedSignals(callId: string, role: CallRole): void {
-    const queue = this.pending.get(callId);
-    if (!queue) {
-      return;
-    }
-    const rest = queue.filter((entry) => entry.role !== role);
-    if (rest.length === 0) {
-      this.pending.delete(callId);
-    } else {
-      this.pending.set(callId, rest);
-    }
+  private emitDeclinedElsewhere(call: CallRecord, exceptSocketId?: string): void {
+    const room = this.io.in(userRoom(call.calleeId));
+    (exceptSocketId === undefined ? room : room.except(exceptSocketId)).emit('call:declined-elsewhere', { callId: call.id });
+  }
+
+  private isSocketConnected(socketId: string | undefined): socketId is string {
+    return socketId !== undefined && this.io.sockets.sockets.has(socketId);
   }
 
   private async endAbandonedCall(userId: string): Promise<void> {
     const call = await this.repository.findOpenForUser(userId);
-    if (!call || this.now() < this.graceUntil || (call.state !== 'accepted' && call.state !== 'active') || this.hasConnectedParticipant(call)) {
+    if (!call || this.now() < this.graceUntil || !isLiveState(call.state) || this.hasConnectedParticipant(call)) {
       return;
     }
     const silentFor = this.now() - Math.max(this.lastBeatOf(call, 'caller'), this.lastBeatOf(call, 'callee'), this.connectedAt.get(call.id) ?? 0);
@@ -351,7 +339,7 @@ export class CallService {
 
     if (!accepted) {
       const current = await this.repository.findById(call.id);
-      if (current && (current.state === 'accepted' || current.state === 'active')) {
+      if (current && isLiveState(current.state)) {
         return;
       }
       throw AppError.of('call.invalidState');
@@ -378,7 +366,7 @@ export class CallService {
     }
     const ended = await this.finish(callId, { type: 'decline' });
     if (ended) {
-      this.io.in(userRoom(call.calleeId)).except(actor.socketId).emit('call:declined-elsewhere', { callId });
+      this.emitDeclinedElsewhere(call, actor.socketId);
     }
   }
 
@@ -396,7 +384,7 @@ export class CallService {
     if (!ended) {
       throw AppError.of('call.invalidState');
     }
-    this.io.to(userRoom(call.calleeId)).emit('call:declined-elsewhere', { callId: call.id });
+    this.emitDeclinedElsewhere(call);
   }
 
   async hangup(actor: CallActor, callId: string, force = false): Promise<void> {
@@ -406,7 +394,7 @@ export class CallService {
       return;
     }
     const role = roleOf(call, actor.userId);
-    if (role && !force && (call.state === 'accepted' || call.state === 'active')) {
+    if (role && !force && isLiveState(call.state)) {
       if (!this.mayTakeOver(call, role, actor.socketId)) {
         throw AppError.of('call.notAllowed');
       }
@@ -416,7 +404,7 @@ export class CallService {
     }
     const ended = await this.finish(callId, { type: 'hangup', by: role ?? 'caller' });
     if (ended && role === 'callee' && call.state === 'ringing') {
-      this.io.in(userRoom(call.calleeId)).except(actor.socketId).emit('call:declined-elsewhere', { callId });
+      this.emitDeclinedElsewhere(call, actor.socketId);
     }
   }
 
@@ -428,16 +416,16 @@ export class CallService {
     if (!role) {
       throw AppError.of('call.notAllowed');
     }
-    if (call.state !== 'accepted' && call.state !== 'active') {
+    if (!isLiveState(call.state)) {
       throw AppError.of('call.invalidState');
     }
     const previous = this.boundSocket(call, role);
     if (previous === actor.socketId) {
       throw AppError.of('call.invalidState');
     }
-    const peerRole: CallRole = role === 'caller' ? 'callee' : 'caller';
+    const peerRole = peerRoleOf(role);
     const peerSocket = this.boundSocket(call, peerRole);
-    if (peerSocket === undefined || !this.io.sockets.sockets.has(peerSocket)) {
+    if (!this.isSocketConnected(peerSocket)) {
       throw AppError.of('call.invalidState');
     }
     this.expirePendingTransfers();
@@ -475,12 +463,12 @@ export class CallService {
     if (!role) {
       throw AppError.of('call.notAllowed');
     }
-    if (call.state !== 'accepted' && call.state !== 'active') {
+    if (!isLiveState(call.state)) {
       throw AppError.of('call.invalidState');
     }
     this.requireBoundSocket(call, role, actor.socketId);
     this.markBeat(call.id, role);
-    const movingRole: CallRole = role === 'caller' ? 'callee' : 'caller';
+    const movingRole = peerRoleOf(role);
     this.expirePendingTransfers();
     const pending = this.pendingTransfers.get(call.id);
     if (!pending || pending.role !== movingRole || !this.socketBelongsTo(pending.socketId, roleUserId(call, movingRole))) {
@@ -516,7 +504,7 @@ export class CallService {
     if (!role || peerOf(call, role) !== input.to) {
       throw AppError.of('call.notAllowed');
     }
-    if (call.state !== 'accepted' && call.state !== 'active') {
+    if (!isLiveState(call.state)) {
       throw AppError.of('call.invalidState');
     }
     if (!this.limiter.trySignal(call.id)) {
@@ -530,23 +518,23 @@ export class CallService {
       await this.repository.markActive(call.id);
     }
 
-    const peerRole: CallRole = role === 'caller' ? 'callee' : 'caller';
+    const peerRole = peerRoleOf(role);
     const payload = { callId: call.id, from: actor.userId, envelope: input.envelope };
     const peerSocket = this.boundSocket(call, peerRole);
     if (peerSocket !== undefined && this.socketBelongsTo(peerSocket, roleUserId(call, peerRole))) {
       this.io.to(peerSocket).emit('call:signal', payload);
       if (this.now() - this.lastBeatOf(call, peerRole) >= SIGNAL_STALE_MS) {
-        this.enqueueSignal(call.id, peerRole, payload);
+        this.signalQueue.enqueue(call.id, peerRole, payload, this.now());
       }
       return;
     }
-    this.enqueueSignal(call.id, peerRole, payload);
+    this.signalQueue.enqueue(call.id, peerRole, payload, this.now());
   }
 
   async heartbeat(actor: CallActor, callId: string, relayed?: boolean, media?: CallMediaState): Promise<void> {
     this.requireEnabled();
     const call = await this.requireParticipant(callId, actor.userId);
-    if (call.state === 'accepted' || call.state === 'active') {
+    if (isLiveState(call.state)) {
       const role = roleOf(call, actor.userId);
       if (!role) {
         throw AppError.of('call.notAllowed');
@@ -564,7 +552,7 @@ export class CallService {
         return;
       }
       this.markBeat(call.id, role);
-      this.dropQueuedSignals(call.id, role);
+      this.signalQueue.drop(call.id, role);
       await this.rememberMedia(call, role, actor.socketId, media);
       await this.repository.touchHeartbeat(callId, new Date(this.now()).toISOString());
       if (relayed === false) {
@@ -629,7 +617,9 @@ export class CallService {
     }
     this.markBeat(call.id, role);
     await this.repository.touchHeartbeat(call.id, new Date(this.now()).toISOString());
-    this.flushSignals(call.id, role, socketId);
+    for (const queued of this.signalQueue.take(call.id, role, this.now())) {
+      this.io.to(socketId).emit('call:signal', queued);
+    }
   }
 
   async sync(actor: CallActor, currentCallId?: string | null): Promise<void> {
@@ -643,7 +633,7 @@ export class CallService {
     }
 
     const inCall = currentCallId === undefined || currentCallId === call.id;
-    if (inCall && (call.state === 'accepted' || call.state === 'active')) {
+    if (inCall && isLiveState(call.state)) {
       if (this.canTakeOver(call, role, actor.socketId) || this.isSameDevice(call, role, actor.socketId)) {
         await this.takeOver(call, role, actor.socketId);
       }
@@ -673,7 +663,7 @@ export class CallService {
       payload.resumable = true;
     }
     const media = this.mediaStates.get(call.id)?.[role];
-    if (media && (call.state === 'accepted' || call.state === 'active')) {
+    if (media && isLiveState(call.state)) {
       payload.media = { ...media };
     }
     return payload;
@@ -686,7 +676,7 @@ export class CallService {
     if (!role) {
       throw AppError.of('call.notAllowed');
     }
-    if (call.state !== 'accepted' && call.state !== 'active') {
+    if (!isLiveState(call.state)) {
       throw AppError.of('call.invalidState');
     }
     if (!this.limiter.tryIceServers(call.id, actor.userId, actor.socketId)) {
@@ -815,7 +805,7 @@ export class CallService {
     this.connectedAt.delete(call.id);
     this.clearPendingTransfer(call.id);
     this.ringingInvites.delete(call.id);
-    this.pending.delete(call.id);
+    this.signalQueue.delete(call.id);
     this.limiter.forgetCall(call.id);
 
     const payload = { callId: call.id, reason: call.endReason ?? 'failed', endedAt: call.endedAt ?? new Date(this.now()).toISOString() };
@@ -913,17 +903,11 @@ export class CallService {
   }
 
   private bothParticipantsConnected(call: CallRecord): boolean {
-    return (['caller', 'callee'] as const).every((role) => {
-      const bound = this.boundSocket(call, role);
-      return bound !== undefined && this.io.sockets.sockets.has(bound);
-    });
+    return (['caller', 'callee'] as const).every((role) => this.isBoundSocketConnected(call, role));
   }
 
   private hasConnectedParticipant(call: CallRecord): boolean {
-    return (['caller', 'callee'] as const).some((role) => {
-      const bound = this.boundSocket(call, role);
-      return bound !== undefined && this.io.sockets.sockets.has(bound);
-    });
+    return (['caller', 'callee'] as const).some((role) => this.isBoundSocketConnected(call, role));
   }
 
   private boundSocket(call: CallRecord, role: CallRole): string | undefined {
@@ -935,24 +919,24 @@ export class CallService {
   }
 
   private isTransferable(call: CallRecord, role: CallRole, socketId: string): boolean {
-    if (call.state !== 'accepted' && call.state !== 'active') {
+    if (!isLiveState(call.state)) {
       return false;
     }
     if (this.boundSocket(call, role) === socketId) {
       return false;
     }
-    const peerRole: CallRole = role === 'caller' ? 'callee' : 'caller';
+    const peerRole = peerRoleOf(role);
     const peerSocket = this.boundSocket(call, peerRole);
-    return peerSocket !== undefined && this.io.sockets.sockets.has(peerSocket) && this.now() - this.lastBeatOf(call, peerRole) < PEER_PRESENCE_MS;
+    return this.isSocketConnected(peerSocket) && this.now() - this.lastBeatOf(call, peerRole) < PEER_PRESENCE_MS;
   }
 
   private isPeerLive(call: CallRecord, role: CallRole): boolean {
-    if (call.state !== 'accepted' && call.state !== 'active') {
+    if (!isLiveState(call.state)) {
       return true;
     }
-    const peerRole: CallRole = role === 'caller' ? 'callee' : 'caller';
+    const peerRole = peerRoleOf(role);
     const peerSocket = this.boundSocket(call, peerRole);
-    if (peerSocket !== undefined && this.io.sockets.sockets.has(peerSocket)) {
+    if (this.isSocketConnected(peerSocket)) {
       return true;
     }
     return this.now() - this.lastBeatOf(call, peerRole) < PEER_RESUME_GRACE_MS;
@@ -961,35 +945,6 @@ export class CallService {
   private canTakeOver(call: CallRecord, role: CallRole, socketId: string): boolean {
     const bound = this.boundSocket(call, role);
     return bound === undefined || bound === socketId || !this.io.sockets.sockets.has(bound);
-  }
-
-  private enqueueSignal(callId: string, role: CallRole, payload: QueuedSignal['payload']): void {
-    const queue = this.pending.get(callId) ?? [];
-    const current = this.now();
-    const fresh = queue.filter((entry) => current - entry.at < SIGNAL_QUEUE_TTL_MS);
-    if (fresh.length < SIGNAL_QUEUE_LIMIT) {
-      fresh.push({ role, at: current, payload });
-    }
-    this.pending.set(callId, fresh);
-  }
-
-  private flushSignals(callId: string, role: CallRole, socketId: string): void {
-    const queue = this.pending.get(callId);
-    if (!queue) {
-      return;
-    }
-    const current = this.now();
-    for (const entry of queue) {
-      if (entry.role === role && current - entry.at < SIGNAL_QUEUE_TTL_MS) {
-        this.io.to(socketId).emit('call:signal', entry.payload);
-      }
-    }
-    const rest = queue.filter((entry) => entry.role !== role && current - entry.at < SIGNAL_QUEUE_TTL_MS);
-    if (rest.length === 0) {
-      this.pending.delete(callId);
-    } else {
-      this.pending.set(callId, rest);
-    }
   }
 
   private async revokeCredentials(call: CallRecord): Promise<void> {
