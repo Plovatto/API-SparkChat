@@ -72,33 +72,76 @@ describe('call state transitions', () => {
 });
 
 describe('call rate limiter', () => {
-  it('limits starts per caller and per pair and recovers after a minute', () => {
+  it('limits rings per caller and recovers after a minute', () => {
     let now = 1_000_000;
     const limiter = new CallRateLimiter(() => now);
-
-    expect(limiter.tryStart('a', 'b')).toBe(true);
-    expect(limiter.tryStart('a', 'b')).toBe(true);
-    expect(limiter.tryStart('a', 'b')).toBe(true);
-    expect(limiter.tryStart('a', 'b')).toBe(false);
-    expect(limiter.tryStart('a', 'c')).toBe(true);
-    expect(limiter.tryStart('a', 'd')).toBe(true);
-    expect(limiter.tryStart('a', 'e')).toBe(false);
-    expect(limiter.tryStart('x', 'b')).toBe(true);
-
+    for (let i = 0; i < 8; i += 1) {
+      expect(limiter.canStart('a', `peer-${i}`)).toBe(true);
+      limiter.recordRing(`call-${i}`, 'a');
+    }
+    expect(limiter.canStart('a', 'b')).toBe(false);
+    expect(limiter.canStart('x', 'b')).toBe(true);
     now += 61_000;
-    expect(limiter.tryStart('a', 'b')).toBe(true);
+    expect(limiter.canStart('a', 'b')).toBe(true);
   });
 
-  it('caps starts per pair at thirty a day', () => {
+  it('does not consume a slot for a start that never rang', () => {
+    const limiter = new CallRateLimiter(() => 1_000_000);
+    for (let i = 0; i < 20; i += 1) {
+      expect(limiter.canStart('a', 'b')).toBe(true);
+    }
+  });
+
+  it('counts only connected calls toward the pair limit', () => {
+    let now = 1_000_000;
+    const limiter = new CallRateLimiter(() => now);
+    for (let i = 0; i < 6; i += 1) {
+      limiter.recordRing(`ring-${i}`, 'a');
+      now += 10_000;
+    }
+    expect(limiter.canStart('a', 'b')).toBe(true);
+    now += 61_000;
+    for (let i = 0; i < 6; i += 1) {
+      limiter.recordRing(`call-${i}`, i % 2 === 0 ? 'a' : 'b');
+      limiter.recordConnected(`call-${i}`, i % 2 === 0 ? 'a' : 'b', i % 2 === 0 ? 'b' : 'a');
+    }
+    expect(limiter.canStart('a', 'b')).toBe(false);
+    expect(limiter.canStart('b', 'a')).toBe(false);
+    expect(limiter.canStart('a', 'c')).toBe(true);
+    now += 61_000;
+    expect(limiter.canStart('a', 'b')).toBe(true);
+  });
+
+  it('refunds a ring the caller cancels within five seconds', () => {
+    let now = 1_000_000;
+    const limiter = new CallRateLimiter(() => now);
+    for (let i = 0; i < 8; i += 1) {
+      limiter.recordRing(`quick-${i}`, 'a');
+      now += 1_000;
+      limiter.refundQuickCancel(`quick-${i}`);
+    }
+    expect(limiter.canStart('a', 'b')).toBe(true);
+    for (let i = 0; i < 8; i += 1) {
+      limiter.recordRing(`slow-${i}`, 'a');
+    }
+    now += 6_000;
+    for (let i = 0; i < 8; i += 1) {
+      limiter.refundQuickCancel(`slow-${i}`);
+    }
+    expect(limiter.canStart('a', 'b')).toBe(false);
+  });
+
+  it('caps connected calls per pair at one hundred a day', () => {
     let now = 0;
     const limiter = new CallRateLimiter(() => now);
-    for (let i = 0; i < 30; i += 1) {
-      expect(limiter.tryStart('a', 'b')).toBe(true);
-      now += 21_000;
+    for (let i = 0; i < 100; i += 1) {
+      expect(limiter.canStart('a', 'b')).toBe(true);
+      limiter.recordConnected(`call-${i}`, 'a', 'b');
+      now += 11_000;
     }
-    expect(limiter.tryStart('a', 'b')).toBe(false);
+    expect(limiter.canStart('a', 'b')).toBe(false);
     now += 24 * 3_600_000;
-    expect(limiter.tryStart('a', 'b')).toBe(true);
+    expect(limiter.canStart('a', 'b')).toBe(true);
   });
 
   it('limits signals to 60 per second per call', () => {

@@ -489,12 +489,24 @@ describe('busy, simultaneous and rate limited calls', () => {
     await answer(aliceClient, bobClient, first);
   });
 
-  it('rate limits starts per pair and per caller', async () => {
+  it('lets the caller redial after declines', async () => {
+    const { h, room, aliceClient, bobClient } = await setup();
+    for (let i = 0; i < 7; i += 1) {
+      const callId = await ring(h, aliceClient, [bobClient], room.id);
+      bobClient.emit('call:decline', { callId });
+      await waitForEvent(aliceClient, 'call:ended');
+    }
+    const callId = await ring(h, aliceClient, [bobClient], room.id);
+    expect((await callRow(h, callId)).state).toBe('ringing');
+  });
+
+  it('rate limits rings per caller and connected calls per pair', async () => {
     const { h, alice, carol, room, aliceClient, bobClient } = await setup();
     const carolClient = await h.connectAs(carol);
 
-    for (let i = 0; i < 3; i += 1) {
+    for (let i = 0; i < 6; i += 1) {
       const callId = await ring(h, aliceClient, [bobClient], room.id);
+      await answer(aliceClient, bobClient, callId);
       aliceClient.emit('call:hangup', { callId });
       await waitForEvent(bobClient, 'call:ended');
     }
@@ -506,6 +518,7 @@ describe('busy, simultaneous and rate limited calls', () => {
     const carolRoom = await h.roomService.createPrivateRoom(alice.user.id, carol.user.id);
     for (let i = 0; i < 2; i += 1) {
       const callId = await ring(h, aliceClient, [carolClient], carolRoom.id);
+      clock.now += 6_000;
       aliceClient.emit('call:hangup', { callId });
       await waitForEvent(carolClient, 'call:ended');
     }
@@ -517,6 +530,7 @@ describe('busy, simultaneous and rate limited calls', () => {
     const callId = await ring(h, aliceClient, [bobClient], room.id);
     expect((await callRow(h, callId)).state).toBe('ringing');
   });
+
 });
 
 describe('signaling', () => {
