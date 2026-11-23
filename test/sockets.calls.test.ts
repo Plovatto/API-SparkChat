@@ -530,7 +530,6 @@ describe('busy, simultaneous and rate limited calls', () => {
     const callId = await ring(h, aliceClient, [bobClient], room.id);
     expect((await callRow(h, callId)).state).toBe('ringing');
   });
-
 });
 
 describe('signaling', () => {
