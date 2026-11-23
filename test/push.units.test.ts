@@ -222,6 +222,35 @@ describe('push service', () => {
     expect(await repository.listForUser('u1')).toHaveLength(1);
   });
 
+  it('rings every device of the callee even with a visible client, with high urgency and a ttl bounded by the ring', async () => {
+    const now = Date.UTC(2026, 0, 1);
+    const sender = vi.fn<PushSender>(() => Promise.resolve());
+    const { service, connected } = await build({ sender, now: () => now });
+    await service.subscribe('u1', 's-u1', subscription());
+    await service.subscribe('u1', 's-u1', { ...subscription(), endpoint: 'https://fcm.googleapis.com/fcm/send/second-device' });
+    connected.add('u1');
+    service.incomingCall({ userId: 'u1', callId: 'c1', roomId: 'r', kind: 'voice', ringExpiresAtMs: now + 29_500 });
+    await service.idle();
+    expect(sender).toHaveBeenCalledTimes(2);
+    expect(new Set(sender.mock.calls.map((call) => call[0].endpoint)).size).toBe(2);
+    expect(sender.mock.calls[0]?.[2]).toEqual({ TTL: 30, urgency: 'high', topic: pushTopic('call', 'c1') });
+  });
+
+  it('forgets a subscription the push service reports as gone and keeps the other devices', async () => {
+    for (const status of [404, 410]) {
+      const gone = 'https://fcm.googleapis.com/fcm/send/gone-device';
+      const sender = vi.fn<PushSender>((target) => (target.endpoint === gone ? Promise.reject(new PushDeliveryError(status)) : Promise.resolve()));
+      const { service, repository } = await build({ sender });
+      const kept = subscription();
+      await service.subscribe('u1', 's-u1', kept);
+      await service.subscribe('u1', 's-u1', { ...subscription(), endpoint: gone });
+      service.newMessage({ roomId: 'r', senderId: 'u2', recipientIds: ['u1'] });
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(2);
+      expect((await repository.listForUser('u1')).map((row) => row.endpoint)).toEqual([kept.endpoint]);
+    }
+  });
+
   it('pushes messages only to recipients without a visible client and throttles per room', async () => {
     let now = Date.UTC(2026, 0, 1);
     const sender = vi.fn<PushSender>(() => Promise.resolve());
