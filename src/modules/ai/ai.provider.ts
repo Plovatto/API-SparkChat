@@ -76,6 +76,6 @@ export class AiRouter implements AiProvider {
 }
 
 export function createGeminiRouter(apiKey: string): AiRouter {
-  const client = new GoogleGenAI({ apiKey });
+  const client = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
   return new AiRouter([new GeminiModelProvider(client, AI_PRIMARY_MODEL), new GeminiModelProvider(client, AI_FALLBACK_MODEL)]);
 }
