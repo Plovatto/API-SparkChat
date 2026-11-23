@@ -10,7 +10,7 @@ export function generateOpenApiDocument(): OpenApiDocument {
     openapi: '3.0.0',
     info: {
       title: 'SparkChat API',
-      version: '0.1.0',
+      version: '1.0.0',
       description:
         'API REST + Socket.IO do SparkChat. As rotas HTTP estão documentadas acima; os eventos de tempo real (Socket.IO) estão na seção "Eventos Socket.IO" logo abaixo, nesta mesma página.',
     },
