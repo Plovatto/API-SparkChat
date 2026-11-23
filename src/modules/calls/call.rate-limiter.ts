@@ -1,8 +1,9 @@
 const START_WINDOW_MS = 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const MAX_STARTS_PER_CALLER = 5;
-const MAX_STARTS_PER_PAIR = 3;
-const MAX_STARTS_PER_PAIR_PER_DAY = 30;
+const MAX_STARTS_PER_CALLER = 8;
+const MAX_STARTS_PER_PAIR = 6;
+const MAX_STARTS_PER_PAIR_PER_DAY = 100;
+const QUICK_CANCEL_MS = 5_000;
 const SIGNAL_WINDOW_MS = 1000;
 const MAX_SIGNALS_PER_WINDOW = 60;
 const ICE_SERVERS_COOLDOWN_MS = 10_000;
@@ -34,26 +35,49 @@ export class CallRateLimiter {
   private readonly closed = new Map<string, number>();
   private readonly transfers = new Map<string, number[]>();
   private readonly iceBypass = new Map<string, string>();
+  private readonly rings = new Map<string, { callerId: string; at: number }>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  tryStart(callerId: string, calleeId: string): boolean {
+  canStart(callerId: string, calleeId: string): boolean {
     const current = this.now();
-    const callerKey = callerId;
-    const pairKey = `${callerId}:${calleeId}`;
-    const callerRecent = (this.callerStarts.get(callerKey) ?? []).filter((timestamp) => timestamp > current - START_WINDOW_MS);
-    const pairDay = (this.pairStarts.get(pairKey) ?? []).filter((timestamp) => timestamp > current - DAY_MS);
+    const callerRecent = this.recentCallerStarts(callerId, current);
+    const pairDay = this.dailyPairStarts(callerId, calleeId, current);
     const pairRecent = pairDay.filter((timestamp) => timestamp > current - START_WINDOW_MS);
-    if (
-      callerRecent.length >= MAX_STARTS_PER_CALLER ||
-      pairRecent.length >= MAX_STARTS_PER_PAIR ||
-      pairDay.length >= MAX_STARTS_PER_PAIR_PER_DAY
-    ) {
-      return false;
+    return callerRecent.length < MAX_STARTS_PER_CALLER && pairRecent.length < MAX_STARTS_PER_PAIR && pairDay.length < MAX_STARTS_PER_PAIR_PER_DAY;
+  }
+
+  recordRing(callId: string, callerId: string): void {
+    const current = this.now();
+    this.callerStarts.set(callerId, [...this.recentCallerStarts(callerId, current), current]);
+    this.rings.set(callId, { callerId, at: current });
+  }
+
+  refundQuickCancel(callId: string): void {
+    const ring = this.rings.get(callId);
+    this.rings.delete(callId);
+    if (!ring || this.now() - ring.at >= QUICK_CANCEL_MS) {
+      return;
     }
-    this.callerStarts.set(callerKey, [...callerRecent, current]);
-    this.pairStarts.set(pairKey, [...pairDay, current]);
-    return true;
+    const timestamps = this.callerStarts.get(ring.callerId) ?? [];
+    const index = timestamps.lastIndexOf(ring.at);
+    if (index >= 0) {
+      this.callerStarts.set(ring.callerId, [...timestamps.slice(0, index), ...timestamps.slice(index + 1)]);
+    }
+  }
+
+  recordConnected(callId: string, callerId: string, calleeId: string): void {
+    const current = this.now();
+    this.rings.delete(callId);
+    this.pairStarts.set(pairKey(callerId, calleeId), [...this.dailyPairStarts(callerId, calleeId, current), current]);
+  }
+
+  private recentCallerStarts(callerId: string, current: number): number[] {
+    return (this.callerStarts.get(callerId) ?? []).filter((timestamp) => timestamp > current - START_WINDOW_MS);
+  }
+
+  private dailyPairStarts(callerId: string, calleeId: string, current: number): number[] {
+    return (this.pairStarts.get(pairKey(callerId, calleeId)) ?? []).filter((timestamp) => timestamp > current - DAY_MS);
   }
 
   trySignal(callId: string): boolean {
@@ -120,6 +144,7 @@ export class CallRateLimiter {
 
   forgetCall(callId: string): void {
     this.signals.delete(callId);
+    this.rings.delete(callId);
     this.transfers.delete(callId);
     for (const key of this.iceBypass.keys()) {
       if (key.startsWith(`${callId}:`)) {
@@ -144,6 +169,11 @@ export class CallRateLimiter {
     for (const [key, timestamps] of this.pairStarts) {
       if (!timestamps.some((timestamp) => timestamp > current - DAY_MS)) {
         this.pairStarts.delete(key);
+      }
+    }
+    for (const [key, ring] of this.rings) {
+      if (ring.at <= current - DAY_MS) {
+        this.rings.delete(key);
       }
     }
     for (const [key, window] of this.signals) {
@@ -179,4 +209,8 @@ export class CallRateLimiter {
     const expiresAt = this.closed.get(callId);
     return expiresAt !== undefined && expiresAt > this.now();
   }
+}
+
+function pairKey(a: string, b: string): string {
+  return a < b ? `${a}:${b}` : `${b}:${a}`;
 }

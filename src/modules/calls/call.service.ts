@@ -223,7 +223,7 @@ export class CallService {
       throw AppError.of('call.notAllowed');
     }
 
-    if (!this.limiter.tryStart(actor.userId, calleeId)) {
+    if (!this.limiter.canStart(actor.userId, calleeId)) {
       throw AppError.of('call.rateLimited');
     }
 
@@ -262,6 +262,7 @@ export class CallService {
       throw AppError.of('call.peerBusy');
     }
 
+    this.limiter.recordRing(input.callId, actor.userId);
     this.bindings.set(input.callId, { caller: actor.socketId });
     this.rememberBoundDevice(input.callId, 'caller', actor.socketId);
     try {
@@ -357,6 +358,7 @@ export class CallService {
     }
 
     this.ringingInvites.delete(call.id);
+    this.limiter.recordConnected(call.id, call.callerId, call.calleeId);
     const bindings = this.bindings.get(call.id) ?? {};
     bindings.callee = actor.socketId;
     this.bindings.set(call.id, bindings);
@@ -408,6 +410,9 @@ export class CallService {
       if (!this.mayTakeOver(call, role, actor.socketId)) {
         throw AppError.of('call.notAllowed');
       }
+    }
+    if (role === 'caller' && call.state === 'ringing') {
+      this.limiter.refundQuickCancel(callId);
     }
     const ended = await this.finish(callId, { type: 'hangup', by: role ?? 'caller' });
     if (ended && role === 'callee' && call.state === 'ringing') {
