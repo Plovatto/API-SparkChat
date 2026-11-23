@@ -1,11 +1,11 @@
-## O que foi feito
+## What was done
 
 - 
 
-## Detalhes
+## Details
 
 - 
 
-## Testes
+## Tests
 
 - 
