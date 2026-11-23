@@ -14,6 +14,7 @@ export interface UserServerToClientEvents {
     user: PublicUser;
     sessionToken: string;
     authMethod: AuthMethod;
+    deviceKeyBound: boolean;
   }) => void;
   'user:resumed': (payload: { user: PublicUser; authMethod: AuthMethod }) => void;
   'user:auth-failed': (payload: { mode: 'register' | 'resume'; reason: 'invalid' | 'temporary' } & ErrorPayload) => void;
@@ -51,8 +52,8 @@ export interface UserServerToClientEvents {
 export interface UserClientToServerEvents {
   'user:join': (
     payload:
-      | { mode: 'register'; nickname: string; avatar: number; password: string; authSalt: string; recoveryVerifier: string }
-      | { mode: 'resume'; userId: string; sessionToken: string },
+      | { mode: 'register'; nickname: string; avatar: number; password: string; authSalt: string; recoveryVerifier: string; devicePublicKey?: string }
+      | { mode: 'resume'; userId: string; sessionToken: string; proof?: { timestamp: number; nonce: string; signature: string } },
   ) => void;
   'user:update-profile': (payload: { nickname: string; avatar: number; currentPassword?: string }) => void;
   'user:update-status-text': (payload: { statusText: string }) => void;

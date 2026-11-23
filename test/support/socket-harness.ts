@@ -15,7 +15,7 @@ import { LoginRateLimiter, SessionRevocationNotifier } from '@/modules/users/ind
 import type { AppServer } from '@/sockets/events.js';
 import { hasVisibleUserSocket } from '@/sockets/user-sockets.js';
 import { registerSocketHandlers } from '@/sockets/index.js';
-import { SOCKET_MAX_HTTP_BUFFER_SIZE } from '@/sockets/socket-options.js';
+import { SOCKET_MAX_HTTP_BUFFER_SIZE, SOCKET_PER_MESSAGE_DEFLATE } from '@/sockets/socket-options.js';
 import type { SocketConnectionLimits } from '@/sockets/connection-limits.js';
 import type { SocketEventBudgets } from '@/sockets/socket-rate-limit.js';
 import { buildRoomService } from './build-room-service.js';
@@ -62,6 +62,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     httpServer,
     {
       maxHttpBufferSize: SOCKET_MAX_HTTP_BUFFER_SIZE,
+      perMessageDeflate: SOCKET_PER_MESSAGE_DEFLATE,
       ...(options.connectionStateRecovery ? { connectionStateRecovery: { maxDisconnectionDuration: 60_000, skipMiddlewares: true } } : {}),
     },
   );
@@ -163,7 +164,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     });
   }
 
-  return { ...services, transparency, io, callService, callRepository, pushService, pushRepository, callBudget, sessionRevocations, typingService, recordingService, presenceService, connect, connectAs, createAccount, resume, establishRoomKey, close };
+  return { ...services, transparency, io, port, callService, callRepository, pushService, pushRepository, callBudget, sessionRevocations, typingService, recordingService, presenceService, connect, connectAs, createAccount, resume, establishRoomKey, close };
 }
 
 export function waitForEvent<T = unknown>(

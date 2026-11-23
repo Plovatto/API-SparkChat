@@ -18,6 +18,15 @@ import { hashPassword, passwordHashNeedsRehash, verifyPassword } from './user.pa
 import { verifyIdentityBinding } from './user.signing-key.js';
 import type { UserRepository } from './user.repository.js';
 import type { UserSessionRepository } from './user.session.repository.js';
+import {
+  EMPTY_BODY_SHA256,
+  SessionSignatureVerifier,
+  SOCKET_JOIN_METHOD,
+  SOCKET_JOIN_PATH,
+  toSignatureError,
+  type SessionProof,
+  type SignedRequest,
+} from './user.session-signature.js';
 import { constantTimeEqual, generateToken, hashToken } from './user.token.js';
 import type { SessionRecord, UserRecord } from './user.types.js';
 import type { E2ePublicKeyEntry } from './user.events.js';
@@ -30,13 +39,17 @@ export interface RegisterAccountInput {
   recoveryVerifier: string;
   passwordLength?: number | undefined;
   userAgent?: string;
+  devicePublicKey?: string | null | undefined;
 }
 
 export interface AuthenticatedResult {
   user: UserRecord;
   sessionToken: string;
   sessionId: string;
+  deviceKeyBound: boolean;
 }
+
+export type DeviceKeyRegistration = 'bound' | 'unchanged';
 
 export interface ProfileUpdateResult {
   user: UserRecord;
@@ -85,6 +98,8 @@ const DEFAULT_THEME = { baseTheme: 'dark', colorTheme: 'duskViolet' };
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SESSION_MAX_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 export const KEYFILE_PASSWORD_RESET_WINDOW_MS = 10 * 60 * 1000;
+
+const SOCKET_JOIN_REQUEST: SignedRequest = { method: SOCKET_JOIN_METHOD, path: SOCKET_JOIN_PATH, bodyHash: EMPTY_BODY_SHA256 };
 
 export function isSessionLive(session: Pick<SessionRecord, 'createdAt' | 'lastUsedAt'>, now = Date.now()): boolean {
   const idleMs = now - new Date(session.lastUsedAt).getTime();
@@ -178,6 +193,7 @@ export class UserService {
     private readonly repository: UserRepository,
     private readonly sessions: UserSessionRepository,
     fakeSaltSecret: string,
+    private readonly signatures: SessionSignatureVerifier = new SessionSignatureVerifier('bound'),
   ) {
     this.fakeSaltKey = deriveFakeSaltKey(fakeSaltSecret);
   }
@@ -230,9 +246,9 @@ export class UserService {
     };
 
     const created = await this.repository.insert(user);
-    const { sessionId, sessionToken } = await this.createSession(created.id, 'password', input.userAgent ?? '');
+    const { sessionId, sessionToken, deviceKeyBound } = await this.createSession(created.id, 'password', input.userAgent ?? '', input.devicePublicKey);
 
-    return { user: created, sessionId, sessionToken };
+    return { user: created, sessionId, sessionToken, deviceKeyBound };
   }
 
   async getAuthParams(nickname: string): Promise<AuthParams> {
@@ -244,7 +260,7 @@ export class UserService {
     return { version: 2, salt: user.authSalt ?? fakeAuthSalt(this.fakeSaltKey, nicknameNormalized) };
   }
 
-  async loginWithRecovery(userId: string, recoveryKey: string, userAgent = ''): Promise<AuthenticatedResult | null> {
+  async loginWithRecovery(userId: string, recoveryKey: string, userAgent = '', devicePublicKey?: string | null): Promise<AuthenticatedResult | null> {
     if (!isClientSecret(recoveryKey)) {
       return null;
     }
@@ -258,11 +274,11 @@ export class UserService {
       return null;
     }
 
-    const { sessionId, sessionToken } = await this.createSession(user.id, 'keyfile', userAgent);
-    return { user, sessionId, sessionToken };
+    const { sessionId, sessionToken, deviceKeyBound } = await this.createSession(user.id, 'keyfile', userAgent, devicePublicKey);
+    return { user, sessionId, sessionToken, deviceKeyBound };
   }
 
-  async login(nickname: string, password: string, userAgent = ''): Promise<AuthenticatedResult | null> {
+  async login(nickname: string, password: string, userAgent = '', devicePublicKey?: string | null): Promise<AuthenticatedResult | null> {
     if (!isClientSecret(password)) {
       return null;
     }
@@ -279,8 +295,73 @@ export class UserService {
     }
 
     await this.rehashPasswordIfNeeded(user, password);
-    const { sessionId, sessionToken } = await this.createSession(user.id, 'password', userAgent);
-    return { user, sessionId, sessionToken };
+    const { sessionId, sessionToken, deviceKeyBound } = await this.createSession(user.id, 'password', userAgent, devicePublicKey);
+    return { user, sessionId, sessionToken, deviceKeyBound };
+  }
+
+  get signatureMode(): SessionSignatureVerifier['mode'] {
+    return this.signatures.mode;
+  }
+
+  async authenticateSignedSession(
+    userId: string,
+    sessionToken: string,
+    proof: SessionProof | null,
+    request: SignedRequest,
+  ): Promise<SessionAuthentication | null> {
+    const session = await this.findLiveSessionByToken(userId, sessionToken);
+    if (!session) {
+      return null;
+    }
+
+    this.assertSessionProof(session, proof, request);
+
+    const user = await this.repository.findById(userId);
+    if (!user) {
+      return null;
+    }
+
+    await this.sessions.touch(session.id);
+    return { user, sessionId: session.id };
+  }
+
+  async registerDeviceKey(
+    userId: string,
+    sessionToken: string,
+    devicePublicKey: string,
+    proof: SessionProof | null,
+    request: SignedRequest,
+  ): Promise<DeviceKeyRegistration | null> {
+    const session = await this.findLiveSessionByToken(userId, sessionToken);
+    if (!session) {
+      return null;
+    }
+
+    if (session.devicePublicKey !== null && session.devicePublicKey !== devicePublicKey) {
+      throw AppError.of('auth.deviceKeyConflict');
+    }
+    if (session.devicePublicKey === null && this.signatures.mode === 'required') {
+      throw AppError.of('auth.deviceKeyRequired');
+    }
+
+    const failure = this.signatures.verifyWithKey(`register:${session.id}`, userId, devicePublicKey, proof, request);
+    if (failure) {
+      throw toSignatureError(failure);
+    }
+
+    if (session.devicePublicKey === devicePublicKey) {
+      return 'unchanged';
+    }
+
+    if (await this.sessions.bindDevicePublicKey(session.id, devicePublicKey)) {
+      return 'bound';
+    }
+
+    const current = await this.sessions.findByIdForUser(userId, session.id);
+    if (current?.devicePublicKey === devicePublicKey) {
+      return 'unchanged';
+    }
+    throw AppError.of('auth.deviceKeyConflict');
   }
 
   async authenticateSession(userId: string, sessionToken: string): Promise<SessionAuthentication | null> {
@@ -316,11 +397,14 @@ export class UserService {
   async resumeSession(
     userId: string,
     sessionToken: string,
+    proof: SessionProof | null = null,
   ): Promise<{ user: UserRecord; authMethod: AuthMethod; sessionId: string } | null> {
     const session = await this.findLiveSessionByToken(userId, sessionToken);
     if (!session) {
       return null;
     }
+
+    this.assertSessionProof(session, proof, SOCKET_JOIN_REQUEST);
 
     await this.sessions.touch(session.id);
     const user = await this.repository.update(userId, {
@@ -616,11 +700,19 @@ export class UserService {
     };
   }
 
+  private assertSessionProof(session: SessionRecord, proof: SessionProof | null, request: SignedRequest): void {
+    const failure = this.signatures.verify(session, proof, request);
+    if (failure) {
+      throw toSignatureError(failure);
+    }
+  }
+
   private async createSession(
     userId: string,
     authMethod: AuthMethod,
     userAgent: string,
-  ): Promise<{ sessionId: string; sessionToken: string }> {
+    devicePublicKey?: string | null,
+  ): Promise<{ sessionId: string; sessionToken: string; deviceKeyBound: boolean }> {
     const sessionToken = generateToken();
     const sessionId = randomUUID();
     const now = new Date().toISOString();
@@ -633,9 +725,10 @@ export class UserService {
       userAgent,
       createdAt: now,
       lastUsedAt: now,
+      devicePublicKey: devicePublicKey ?? null,
     });
 
-    return { sessionId, sessionToken };
+    return { sessionId, sessionToken, deviceKeyBound: Boolean(devicePublicKey) };
   }
 
   private async findLiveSessionByToken(userId: string, sessionToken: string): Promise<SessionRecord | null> {

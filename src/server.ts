@@ -22,11 +22,11 @@ import {
 import { setupTransparency } from './modules/transparency/index.js';
 import { createWebPushSender, PushRateLimiter, PushRepository, PushService } from './modules/push/index.js';
 import { notifyRoomRotations, RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
-import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
+import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, SessionSignatureVerifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import { startSessionExpirySweep } from './sockets/session-expiry.js';
 import { hasVisibleUserSocket } from './sockets/user-sockets.js';
-import { SOCKET_MAX_HTTP_BUFFER_SIZE } from './sockets/socket-options.js';
+import { SOCKET_MAX_HTTP_BUFFER_SIZE, SOCKET_PER_MESSAGE_DEFLATE } from './sockets/socket-options.js';
 import { createR2ObjectStorage } from './storage/r2-object-storage.js';
 import { StorageQuota } from './storage/storage-quota.js';
 import { StorageUsageRepository } from './storage/storage-usage.repository.js';
@@ -48,7 +48,12 @@ await runMigrations(db);
 
 const userRepository = new UserRepository(db);
 const userSessionRepository = new UserSessionRepository(db);
-const userService = new UserService(userRepository, userSessionRepository, env.RECOVERY_FILE_SECRET);
+const userService = new UserService(
+  userRepository,
+  userSessionRepository,
+  env.RECOVERY_FILE_SECRET,
+  new SessionSignatureVerifier(env.SESSION_SIGNATURE_MODE),
+);
 const loginRateLimiter = new LoginRateLimiter();
 setInterval(() => loginRateLimiter.sweep(), 60_000).unref();
 const sessionRevocations = new SessionRevocationNotifier();
@@ -137,6 +142,7 @@ const io = new Server<
   },
   transports: ['websocket', 'polling'],
   maxHttpBufferSize: SOCKET_MAX_HTTP_BUFFER_SIZE,
+  perMessageDeflate: SOCKET_PER_MESSAGE_DEFLATE,
   pingInterval: 20000,
   pingTimeout: 25000,
   connectionStateRecovery: {

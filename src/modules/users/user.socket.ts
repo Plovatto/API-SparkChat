@@ -26,6 +26,7 @@ import {
 } from './user.model.js';
 import type { UserService } from './user.service.js';
 import type { RevokedSession } from './user.session-revocations.js';
+import { devicePublicKeySchema, sessionProofSchema, signatureFailurePayload } from './user.session-signature.js';
 
 export interface UserSocketDeps {
   userService: UserService;
@@ -50,11 +51,13 @@ const joinPayloadSchema = z.discriminatedUnion('mode', [
     authSalt: authSaltSchema,
     recoveryVerifier: clientSecretSchema,
     passwordLength: passwordLengthSchema,
+    devicePublicKey: devicePublicKeySchema.optional(),
   }),
   z.object({
     mode: z.literal('resume'),
     userId: z.string().trim().min(1).max(64),
     sessionToken: z.string().trim().min(1).max(256),
+    proof: sessionProofSchema.optional(),
   }),
 ]);
 
@@ -249,7 +252,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
       }
       loginRateLimiter.registerAttemptForRegistration(ip);
 
-      const { user, sessionId, sessionToken } = await userService.registerAccount({
+      const { user, sessionId, sessionToken, deviceKeyBound } = await userService.registerAccount({
         nickname: input.nickname,
         avatar: input.avatar,
         password: input.password,
@@ -257,6 +260,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
         recoveryVerifier: input.recoveryVerifier,
         passwordLength: input.passwordLength,
         userAgent: socket.handshake.headers['user-agent'] ?? '',
+        devicePublicKey: input.devicePublicKey,
       });
 
       if (!(await bindActiveSocketSession(socket, deps, { userId: user.id, authMethod: 'password', sessionId }))) {
@@ -266,6 +270,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
         user: userService.toPublicUser(user),
         sessionToken,
         authMethod: 'password',
+        deviceKeyBound,
       });
       deps.onAuthenticated?.({ socket, userId: user.id });
       socket.to(await contactRooms(deps, user.id)).emit('user:online', { userId: user.id, nickname: user.nickname, avatar: user.avatar });
@@ -282,7 +287,17 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
       return;
     }
 
-    const resumed = await userService.resumeSession(input.userId, input.sessionToken);
+    let resumed;
+    try {
+      resumed = await userService.resumeSession(input.userId, input.sessionToken, input.proof ?? null);
+    } catch (error) {
+      const failure = signatureFailurePayload(error);
+      if (!failure) {
+        throw error;
+      }
+      socket.emit('user:auth-failed', { mode: 'resume', reason: failure.code === 'auth.signatureStale' ? 'temporary' : 'invalid', ...failure });
+      return;
+    }
     if (!resumed) {
       socket.emit('user:auth-failed', {
         mode: 'resume',
