@@ -8,6 +8,8 @@ export { UserRepository } from './user.repository.js';
 export { createUserRouter } from './user.routes.js';
 export { UserSessionRepository } from './user.session.repository.js';
 export { SessionRevocationNotifier } from './user.session-revocations.js';
+export { SessionSignatureVerifier } from './user.session-signature.js';
+export type { SessionSignatureMode } from './user.session-signature.js';
 export type { RevokedSession } from './user.session-revocations.js';
 export { isSessionLive, UserService } from './user.service.js';
 export type { RoomRotationNotice } from './user.service.js';

@@ -98,6 +98,7 @@ PORT=3001
 FRONTEND_URL=http://localhost:5173
 LOG_LEVEL=info
 TRUST_PROXY_HOPS=0
+SESSION_SIGNATURE_MODE=bound
 TURSO_DATABASE_URL=
 TURSO_AUTH_TOKEN=
 RECOVERY_FILE_SECRET=
@@ -131,6 +132,8 @@ GIF_PROVIDER=
 `PASSWORD_SCRYPT_COST` é o custo do scrypt usado nos hashes de senha (potência de 2, padrão `65536`, máximo `131072`). Cada login usa cerca de 128 × o valor em bytes de memória (64 MB no padrão); aumente só se a hospedagem tiver memória sobrando para logins simultâneos.
 
 `TRUST_PROXY_HOPS` é o número de proxies reversos na frente da API (por exemplo, `1` atrás de um balanceador da hospedagem). Com o valor certo, os limites de requisição e de cadastro usam o IP de cada usuário em vez do IP do proxy. Mantenha `0` quando a API recebe as conexões diretamente.
+
+`SESSION_SIGNATURE_MODE` controla a ligação da sessão ao dispositivo. O cliente cria um par de chaves ECDSA P-256 não exportável, registra a chave pública na sessão e assina cada requisição autenticada e o `user:join` (método, caminho, horário, nonce e hash do corpo). Com `bound` (padrão), só as sessões que já têm chave registrada exigem assinatura e as antigas continuam funcionando até se registrarem. Com `required`, toda sessão sem chave é recusada e precisa de novo login; ative só depois que os clientes atualizados tiverem migrado as sessões.
 
 ## Documentação da API
 

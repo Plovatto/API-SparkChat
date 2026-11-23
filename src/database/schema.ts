@@ -49,6 +49,7 @@ export const sessions = sqliteTable(
     userAgent: text('user_agent').notNull(),
     createdAt: text('created_at').notNull(),
     lastUsedAt: text('last_used_at').notNull(),
+    devicePublicKey: text('device_public_key'),
   },
   (table) => [index('sessions_user_id_idx').on(table.userId)],
 );

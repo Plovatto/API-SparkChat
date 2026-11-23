@@ -16,6 +16,7 @@ const envSchema = z.object({
   FRONTEND_URL: z.string().url().default('http://localhost:5173'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
+  SESSION_SIGNATURE_MODE: z.preprocess((value) => (value === '' ? undefined : value), z.enum(['bound', 'required']).default('bound')),
   TURSO_DATABASE_URL: z.string().optional(),
   TURSO_AUTH_TOKEN: z.string().optional(),
   RECOVERY_FILE_SECRET: z.string().min(32),

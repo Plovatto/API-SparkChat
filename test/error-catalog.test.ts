@@ -11,6 +11,7 @@ const SAMPLE_PARAMS: Partial<Record<ErrorCode, object>> = {
   'internal.routeNotFound': { method: 'GET', path: '/api/x' },
   'e2e.lookupTooLarge': { maxItems: 200 },
   'room.groupFull': { maxMembers: 150 },
+  'auth.signatureStale': { serverTime: 1_700_000_000_000 },
 };
 
 const CODE_PATTERN = /^(auth|call|push|user|room|message|e2e|upload|linkPreview|gifs|rateLimit|validation|internal)\.[a-z][A-Za-z]+$/;

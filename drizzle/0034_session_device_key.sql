@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `device_public_key` text;

@@ -1,4 +1,4 @@
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { sessions } from '../../database/schema.js';
 import type { SessionRecord } from './user.types.js';
@@ -12,13 +12,15 @@ function toRecord(row: typeof sessions.$inferSelect): SessionRecord {
     userAgent: row.userAgent,
     createdAt: row.createdAt,
     lastUsedAt: row.lastUsedAt,
+    devicePublicKey: row.devicePublicKey ?? null,
   };
 }
 
 export class UserSessionRepository {
   constructor(private readonly db: Database) {}
 
-  async create(record: SessionRecord): Promise<SessionRecord> {
+  async create(input: Omit<SessionRecord, 'devicePublicKey'> & { devicePublicKey?: string | null }): Promise<SessionRecord> {
+    const record: SessionRecord = { ...input, devicePublicKey: input.devicePublicKey ?? null };
     await this.db.insert(sessions).values(record);
     return record;
   }
@@ -43,6 +45,14 @@ export class UserSessionRepository {
 
   async touch(id: string): Promise<void> {
     await this.db.update(sessions).set({ lastUsedAt: new Date().toISOString() }).where(eq(sessions.id, id));
+  }
+
+  async bindDevicePublicKey(id: string, devicePublicKey: string): Promise<boolean> {
+    const result = await this.db
+      .update(sessions)
+      .set({ devicePublicKey })
+      .where(and(eq(sessions.id, id), isNull(sessions.devicePublicKey)));
+    return result.rowsAffected > 0;
   }
 
   async listByUser(userId: string): Promise<SessionRecord[]> {
