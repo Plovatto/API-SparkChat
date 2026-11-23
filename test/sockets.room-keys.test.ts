@@ -326,9 +326,10 @@ describe('room key rotation', () => {
     expect(await h.roomKeyRepository.getState(room.id)).toMatchObject({ rotationRequired: null });
   });
 
-  it('lets exactly one of two members racing to rotate win and tells the other the winning key', async () => {
+  it('lets exactly one of two admins racing to rotate win and tells the other the winning key', async () => {
     const h = await start();
     const { alice, bob, carol, aliceClient, bobClient, carolClient, group } = await groupWithGeneration(h);
+    await h.roomService.promoteAdmin(group.id, alice.user.id, bob.user.id);
     const left = waitForEvent(aliceClient, 'e2e:rotation-required');
     carolClient.emit('group:leave', { roomId: group.id });
     await left;
@@ -354,6 +355,25 @@ describe('room key rotation', () => {
     expect(new Set(results.map((result) => result.keyId)).size).toBe(1);
     expect((await h.roomKeyRepository.getState(group.id))?.currentKeyId).toBe(results[0]?.keyId);
     expect(carol.user.id).not.toBe(alice.user.id);
+  });
+
+  it('turns away a member who is not allowed to rotate yet and still hands them the admin generation', async () => {
+    const h = await start();
+    const { alice, bob, aliceClient, bobClient, carolClient, group } = await groupWithGeneration(h);
+    const left = waitForEvent(aliceClient, 'e2e:rotation-required');
+    carolClient.emit('group:leave', { roomId: group.id });
+    await left;
+    const remaining = [alice.user.id, bob.user.id];
+    const rejected = waitForEvent<Rejection & { code: string }>(bobClient, 'e2e:room-key-rejected');
+
+    bobClient.emit('e2e:publish-room-key', batch(group.id, bob.user.id, remaining, 2));
+    await expect(rejected).resolves.toMatchObject({ code: 'e2e.rotationNotAuthorized', currentEpoch: 1 });
+
+    const delivered = waitForEvent<Delivery>(bobClient, 'e2e:room-key', (event) => event.epoch === 2);
+    const rotation = batch(group.id, alice.user.id, remaining, 2);
+    aliceClient.emit('e2e:publish-room-key', rotation);
+    await expect(delivered).resolves.toMatchObject({ senderId: alice.user.id, keyId: rotation.keyId });
+    expect((await h.roomKeyRepository.getState(group.id))?.currentKeyId).toBe(rotation.keyId);
   });
 
   it('does not rotate when a member joins, and lets a holder share the current generation with them', async () => {

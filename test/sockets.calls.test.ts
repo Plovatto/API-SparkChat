@@ -1478,9 +1478,13 @@ describe('event ordering', () => {
     for (let i = 0; i < 100; i += 1) {
       bobClient.emit('call:signal', { callId: 'x'.repeat(22), to: 'x', envelope: 'e' });
     }
-    await settle(400);
-    expect(errors.some((error) => error.code === 'call.rateLimited')).toBe(true);
-    expect(errors.some((error) => error.code === 'call.notFound')).toBe(true);
+    await vi.waitFor(
+      () => {
+        expect(errors.some((error) => error.code === 'call.rateLimited')).toBe(true);
+        expect(errors.some((error) => error.code === 'call.notFound')).toBe(true);
+      },
+      { timeout: 3000, interval: 10 },
+    );
 
     const state = waitForEvent(bobClient, 'call:state');
     bobClient.emit('call:sync', {});
