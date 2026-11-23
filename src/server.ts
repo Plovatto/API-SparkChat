@@ -26,7 +26,7 @@ import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, UserReposit
 import { registerSocketHandlers } from './sockets/index.js';
 import { startSessionExpirySweep } from './sockets/session-expiry.js';
 import { hasVisibleUserSocket } from './sockets/user-sockets.js';
-import { SOCKET_MAX_HTTP_BUFFER_SIZE } from './sockets/socket-options.js';
+import { SOCKET_MAX_HTTP_BUFFER_SIZE, SOCKET_PER_MESSAGE_DEFLATE } from './sockets/socket-options.js';
 import { createR2ObjectStorage } from './storage/r2-object-storage.js';
 import { StorageQuota } from './storage/storage-quota.js';
 import { StorageUsageRepository } from './storage/storage-usage.repository.js';
@@ -137,6 +137,7 @@ const io = new Server<
   },
   transports: ['websocket', 'polling'],
   maxHttpBufferSize: SOCKET_MAX_HTTP_BUFFER_SIZE,
+  perMessageDeflate: SOCKET_PER_MESSAGE_DEFLATE,
   pingInterval: 20000,
   pingTimeout: 25000,
   connectionStateRecovery: {
