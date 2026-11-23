@@ -133,7 +133,7 @@ GIF_PROVIDER=
 
 `TRUST_PROXY_HOPS` é o número de proxies reversos na frente da API (por exemplo, `1` atrás de um balanceador da hospedagem). Com o valor certo, os limites de requisição e de cadastro usam o IP de cada usuário em vez do IP do proxy. Mantenha `0` quando a API recebe as conexões diretamente.
 
-`SESSION_SIGNATURE_MODE` controla a ligação da sessão ao dispositivo. O cliente cria um par de chaves ECDSA P-256 não exportável, registra a chave pública na sessão e assina cada requisição autenticada e o `user:join` (método, caminho, horário, nonce e hash do corpo). Com `bound` (padrão), só as sessões que já têm chave registrada exigem assinatura e as antigas continuam funcionando até se registrarem. Com `required`, toda sessão sem chave é recusada e precisa de novo login; ative só depois que os clientes atualizados tiverem migrado as sessões.
+`SESSION_SIGNATURE_MODE` controla a ligação da sessão ao dispositivo. O cliente cria um par de chaves ECDSA P-256 não exportável, registra a chave pública na sessão e assina cada requisição autenticada e o `user:join` (método, caminho, horário, nonce e hash do corpo). Com `bound` (padrão), só as sessões que já têm chave registrada exigem assinatura e as antigas continuam funcionando até se registrarem. Com `required`, toda sessão sem chave é recusada e precisa de novo login; ative só depois que os clientes atualizados tiverem migrado as sessões. Durante o modo `bound`, quem já tiver o token de uma sessão antiga pode registrar a própria chave antes do cliente legítimo; nesse caso o cliente legítimo recebe 409 e é levado a entrar de novo. Os nonces ficam em memória, então a proteção contra repetição vale por instância e é perdida num reinício (a janela é de 5 minutos).
 
 ## Documentação da API
 

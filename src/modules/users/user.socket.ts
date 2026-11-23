@@ -295,7 +295,7 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
       if (!failure) {
         throw error;
       }
-      socket.emit('user:auth-failed', { mode: 'resume', reason: 'invalid', ...failure });
+      socket.emit('user:auth-failed', { mode: 'resume', reason: failure.code === 'auth.signatureStale' ? 'temporary' : 'invalid', ...failure });
       return;
     }
     if (!resumed) {
