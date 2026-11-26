@@ -16,7 +16,11 @@ import type { ObjectStorage } from '../../storage/object-storage.js';
 import { loadDecryptedAttachment, resolveAudioMimeType } from './ai.attachments.js';
 import { getSodium, openField, openRoomKeyEnvelope, readFieldKeyId, sealField } from './ai.crypto.js';
 import { runAssistantTurn } from '../assistant/assistant.agent.js';
-import { sealAssistantCard } from '../assistant/assistant.seal.js';
+import type { AssistantReply } from '../assistant/assistant.agent.js';
+import type { AssistantCard } from '../assistant/assistant.card.js';
+import { ANOTHER_SUGGESTION_INSTRUCTION } from '../assistant/assistant.prompt.js';
+import { QuickReplyRegistry, resolveQuickReply } from '../assistant/assistant.quick-reply.js';
+import { ASSISTANT_CARD_LABEL, sealAssistantCard } from '../assistant/assistant.seal.js';
 import { AssistantToolbox } from '../assistant/assistant.toolbox.js';
 import type { AssistantIdentity } from './ai.identity.js';
 import {
@@ -44,6 +48,7 @@ const FIELD_LABELS = {
   fileName: 'file-name',
   fileMime: 'file-mime',
   fileKey: 'file-key',
+  assistantCard: ASSISTANT_CARD_LABEL,
 } as const;
 
 type FieldLabel = (typeof FIELD_LABELS)[keyof typeof FIELD_LABELS];
@@ -85,6 +90,7 @@ export class AiService {
     private readonly objectStorage: ObjectStorage,
     private readonly userService: Pick<UserService, 'getUsersByIds' | 'getTimeZone'>,
     private readonly toolbox: AssistantToolbox = new AssistantToolbox(),
+    private readonly quickReplies: QuickReplyRegistry = new QuickReplyRegistry(),
   ) {}
 
   isAssistantRoom(room: RoomRecord): boolean {
@@ -178,6 +184,11 @@ export class AiService {
   }
 
   private async admitMessage(io: AppServer, room: RoomRecord, message: MessageRecord, locale: Locale): Promise<void> {
+    if (message.quickReply) {
+      await this.handleQuickReply(io, room, message, message.quickReply, locale);
+      return;
+    }
+
     let allowed: boolean;
     try {
       allowed = await this.usageLimiter.tryConsume(message.senderId);
@@ -210,6 +221,80 @@ export class AiService {
     });
   }
 
+  private async handleQuickReply(
+    io: AppServer,
+    room: RoomRecord,
+    message: MessageRecord,
+    quickReply: NonNullable<MessageRecord['quickReply']>,
+    locale: Locale,
+  ): Promise<void> {
+    let wantsAnother = false;
+    try {
+      const reply = await resolveQuickReply(
+        {
+          assistantUserId: this.identity.userId,
+          registry: this.quickReplies,
+          getMessage: (id) => this.messageService.getMessage(id),
+          openCard: (cardMessage) => this.openCard(room.id, cardMessage),
+          recordResolution: (cardId, userId, choice) => this.messageService.recordCardResolution(cardId, userId, choice),
+          onResolved: (cardId, choice) => {
+            wantsAnother = choice === 'another';
+            io.to(room.id).emit('message:card-resolved', { roomId: room.id, cardId, choice });
+          },
+        },
+        { userId: message.senderId, room, message, quickReply, locale },
+      );
+
+      if (reply) {
+        const roomKey = await this.resolveRoomKey(room.id);
+        if (!roomKey) {
+          await this.sendErrorMessage(io, room.id, 'ai.encryptionUnavailable');
+          return;
+        }
+        await this.sendReply(io, room, roomKey, reply);
+      } else if (wantsAnother) {
+        this.broadcastTyping(io, room.id, true);
+        void this.respondToBatch(io, room, { messageIds: [message.id], locale }, ANOTHER_SUGGESTION_INSTRUCTION[locale]);
+      }
+    } catch (error) {
+      logger.error({ err: error, roomId: room.id }, 'Falha ao resolver o botão do SparkAI');
+      await this.sendErrorMessage(io, room.id, 'ai.replyFailed').catch(() => undefined);
+    }
+  }
+
+  private async openCard(roomId: string, cardMessage: MessageRecord): Promise<AssistantCard | null> {
+    if (!cardMessage.assistantCard) {
+      return null;
+    }
+    const reader = await this.createReader(roomId, [cardMessage]);
+    const plaintext = await reader.field(cardMessage, cardMessage.assistantCard, FIELD_LABELS.assistantCard);
+    if (plaintext === null) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(plaintext) as AssistantCard;
+      return typeof parsed?.kind === 'string' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async sendReply(io: AppServer, room: RoomRecord, roomKey: CurrentRoomKey, reply: AssistantReply): Promise<void> {
+    const messageId = randomUUID();
+    const sent = await this.messageService.sendMessage({
+      roomId: room.id,
+      senderId: this.identity.userId,
+      messageId,
+      content: await this.sealText(reply.text, roomKey, room.id, messageId),
+      type: 'text',
+      participantIds: room.participants,
+      viewingUserIds: this.presenceService.getViewers(room.id),
+      ...(reply.card ? { assistantCard: await sealAssistantCard(reply.card, roomKey, room.id, messageId, this.identity.signingPrivateKey, this.identity.userId) } : {}),
+    });
+
+    io.to(room.id).emit('message:new', await this.messageService.toNewView(sent));
+  }
+
   private async markAsReadByAssistant(io: AppServer, room: RoomRecord, messageIds: string[]): Promise<void> {
     try {
       await this.messageService.markRoomAsRead(room.id, this.identity.userId, messageIds);
@@ -229,7 +314,12 @@ export class AiService {
     void this.respondToBatch(io, room, batch);
   }
 
-  private async respondToBatch(io: AppServer, room: RoomRecord, batch: PendingBatch): Promise<void> {
+  private async respondToBatch(
+    io: AppServer,
+    room: RoomRecord,
+    batch: Pick<PendingBatch, 'messageIds' | 'locale'>,
+    extraInstruction?: string,
+  ): Promise<void> {
     try {
       const roomKey = await this.resolveRoomKey(room.id);
       if (!roomKey) {
@@ -254,21 +344,10 @@ export class AiService {
         },
         toolbox: this.toolbox,
         router: this.router,
-      });
-      const messageId = randomUUID();
-
-      const sent = await this.messageService.sendMessage({
-        roomId: room.id,
-        senderId: this.identity.userId,
-        messageId,
-        content: await this.sealText(reply.text, roomKey, room.id, messageId),
-        type: 'text',
-        participantIds: room.participants,
-        viewingUserIds: this.presenceService.getViewers(room.id),
-        ...(reply.card ? { assistantCard: await sealAssistantCard(reply.card, roomKey, room.id, messageId, this.identity.signingPrivateKey, this.identity.userId) } : {}),
+        ...(extraInstruction ? { extraInstruction } : {}),
       });
 
-      io.to(room.id).emit('message:new', await this.messageService.toNewView(sent));
+      await this.sendReply(io, room, roomKey, reply);
     } catch (error) {
       logger.error({ err: error, roomId: room.id }, 'Falha ao gerar resposta da IA');
       await this.sendErrorMessage(io, room.id, 'ai.replyFailed');

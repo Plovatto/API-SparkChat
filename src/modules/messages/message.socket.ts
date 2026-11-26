@@ -22,6 +22,7 @@ import type { MessageRateLimiter } from './message.rate-limiter.js';
 import {
   messageHiddenPayloadSchema,
   messageReactionsUpdatedPayloadSchema,
+  cardResolvedPayloadSchema,
   messageViewSchema,
   messagesListPayloadSchema,
   newMessagePayloadSchema,
@@ -204,6 +205,7 @@ registerServerEvents(
     'message:hidden',
     'message:updated',
     'message:reactions-updated',
+    'message:card-resolved',
     'typing:update',
     'recording:update',
   ],
@@ -213,6 +215,7 @@ registerServerEvents(
     'message:updated': messageViewSchema,
     'message:hidden': messageHiddenPayloadSchema,
     'message:reactions-updated': messageReactionsUpdatedPayloadSchema,
+    'message:card-resolved': cardResolvedPayloadSchema,
   },
 );
 

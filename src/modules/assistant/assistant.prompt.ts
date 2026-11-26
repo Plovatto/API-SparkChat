@@ -38,6 +38,11 @@ function englishBody(input: AssistantInstructionInput): string[] {
   ];
 }
 
+export const ANOTHER_SUGGESTION_INSTRUCTION: Record<Locale, string> = {
+  pt: 'A pessoa tocou em "outra sugestão": proponha um visual diferente do cartão anterior, sem repetir o mesmo.',
+  en: 'The person tapped "another suggestion": propose a look different from the previous card, without repeating it.',
+};
+
 export function buildAssistantInstruction(input: AssistantInstructionInput): string {
   const lines = input.locale === 'en' ? englishBody(input) : portugueseBody(input);
   if (input.catalogSummary) {

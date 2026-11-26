@@ -1,4 +1,4 @@
-import type { QuickReply } from '../assistant/assistant.card.js';
+import type { QuickReply, QuickReplyChoice } from '../assistant/assistant.card.js';
 import type { SystemEvent } from './message.system-events.js';
 
 export type MessageStatus = 'sent' | 'delivered' | 'read';
@@ -91,5 +91,6 @@ export interface MessageView {
   systemEvent: SystemEvent | null;
   assistantCard?: string;
   quickReply?: QuickReply;
+  resolvedChoice?: QuickReplyChoice;
   reactions: MessageReaction[];
 }

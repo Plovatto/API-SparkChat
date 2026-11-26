@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import '../../docs/zod-extend.js';
-import { quickReplySchema } from '../assistant/assistant.card.js';
+import { quickReplyChoiceSchema, quickReplySchema } from '../assistant/assistant.card.js';
 import { SYSTEM_EVENT_TYPES } from './message.system-events.js';
 
 const messageTypeSchema = z.enum(['text', 'system', 'image', 'audio', 'file', 'error']);
@@ -77,6 +77,7 @@ export const messageViewSchema = z.object({
   systemEvent: systemEventSchema.nullable(),
   assistantCard: z.string().optional().openapi({ description: 'Cartão do SparkAI selado com a chave da sala (e2e:v2); produzido só pelo servidor' }),
   quickReply: quickReplySchema.optional().openapi({ description: 'Resposta a um cartão do SparkAI; só existe em mensagens da sala do SparkAI' }),
+  resolvedChoice: quickReplyChoiceSchema.optional().openapi({ description: 'Botão já escolhido num cartão do SparkAI; o cliente esconde os botões quando presente' }),
   reactions: z.array(messageReactionSchema).openapi({
     description: 'Reações à mensagem, no máximo uma por pessoa, ordenadas por updatedAt; vazio para mensagens apagadas para todos e de sistema',
   }),
@@ -87,6 +88,12 @@ export const messageReactionsUpdatedPayloadSchema = z.object({
   messageId: z.string(),
   messageTimestamp: z.string().openapi({ description: 'Horário da mensagem reagida; nenhuma reação é anterior a ele' }),
   reactions: z.array(messageReactionSchema),
+});
+
+export const cardResolvedPayloadSchema = z.object({
+  roomId: z.string(),
+  cardId: z.string(),
+  choice: quickReplyChoiceSchema,
 });
 
 export const newMessagePayloadSchema = messageViewSchema.extend({

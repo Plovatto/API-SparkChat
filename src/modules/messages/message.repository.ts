@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gt, inArray, lt, ne, not, or, sql, type SQL } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
-import { messageHidden, messageReactions, messages } from '../../database/schema.js';
+import { assistantCardResolutions, messageHidden, messageReactions, messages } from '../../database/schema.js';
+import type { QuickReplyChoice } from '../assistant/assistant.card.js';
 import type { MessageReaction, MessageRecord, MessageReplySnapshot } from './message.types.js';
 
 type MessageColumns = Partial<typeof messages.$inferInsert>;
@@ -199,6 +200,33 @@ export class MessageRepository {
     }
 
     return reactions;
+  }
+
+  async findCardResolutions(cardIds: string[]): Promise<Map<string, QuickReplyChoice>> {
+    const unique = [...new Set(cardIds)];
+    const resolutions = new Map<string, QuickReplyChoice>();
+    if (unique.length === 0) {
+      return resolutions;
+    }
+
+    const pages = await Promise.all(
+      chunk(unique, MAX_IN_CLAUSE_IDS).map((batch) =>
+        this.db.select().from(assistantCardResolutions).where(inArray(assistantCardResolutions.cardMessageId, batch)),
+      ),
+    );
+    for (const row of pages.flat()) {
+      resolutions.set(row.cardMessageId, row.choice as QuickReplyChoice);
+    }
+    return resolutions;
+  }
+
+  async insertCardResolution(cardMessageId: string, userId: string, choice: QuickReplyChoice): Promise<boolean> {
+    const inserted = await this.db
+      .insert(assistantCardResolutions)
+      .values({ cardMessageId, userId, choice, resolvedAt: new Date().toISOString() })
+      .onConflictDoNothing()
+      .returning({ cardMessageId: assistantCardResolutions.cardMessageId });
+    return inserted.length > 0;
   }
 
   async upsertReaction(messageId: string, reaction: MessageReaction): Promise<void> {

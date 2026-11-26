@@ -4,6 +4,9 @@ import { AiRouter } from '@/modules/ai/ai.provider.js';
 import { AiService } from '@/modules/ai/ai.service.js';
 import { AiUsageLimiter, AiUsageRepository } from '@/modules/ai/ai.usage-limiter.js';
 import { RoomPresenceService, TypingService, type MessageRecord } from '@/modules/messages/index.js';
+import type { AssistantCard, QuickReply } from '@/modules/assistant/assistant.card.js';
+import type { QuickReplyRegistry } from '@/modules/assistant/assistant.quick-reply.js';
+import { sealAssistantCard } from '@/modules/assistant/assistant.seal.js';
 import type { AssistantToolbox } from '@/modules/assistant/assistant.toolbox.js';
 import type { AppServer } from '@/sockets/events.js';
 import { buildRoomService } from './build-room-service.js';
@@ -12,8 +15,13 @@ import { TEST_V2_SIGNUP } from './test-constants.js';
 
 const PASSWORD = 'correct-horse-battery-staple-0123456789abcd';
 
-export function createFakeServer(): AppServer {
-  return { to: () => ({ emit: () => true }) } as unknown as AppServer;
+export interface EmittedEvent {
+  event: string;
+  payload: unknown;
+}
+
+export function createFakeServer(emitted: EmittedEvent[] = []): AppServer {
+  return { to: () => ({ emit: (event: string, payload: unknown) => emitted.push({ event, payload }) > 0 }) } as unknown as AppServer;
 }
 
 export interface AssistantRoomOptions {
@@ -21,6 +29,7 @@ export interface AssistantRoomOptions {
   usageLimiter?: AiUsageLimiter;
   publishKey?: boolean;
   toolbox?: AssistantToolbox;
+  quickReplies?: QuickReplyRegistry;
 }
 
 export async function setupAssistantRoom(options: AssistantRoomOptions = {}) {
@@ -82,6 +91,28 @@ export async function setupAssistantRoom(options: AssistantRoomOptions = {}) {
     return messageService.sendMessage({ roomId: room.id, senderId: alice.id, messageId, content: await sealFromAlice(text, messageId) });
   }
 
+  async function sendCardFromAssistant(card: AssistantCard): Promise<MessageRecord> {
+    const messageId = randomUUID();
+    return services.messageService.sendMessage({
+      roomId: room.id,
+      senderId: assistant.id,
+      messageId,
+      content: await sealField('card', roomKey, keyId, identity.signingPrivateKey, { roomId: room.id, senderId: assistant.id, messageId, label: 'content' }),
+      assistantCard: await sealAssistantCard(card, { keyId, roomKey }, room.id, messageId, identity.signingPrivateKey, assistant.id),
+    });
+  }
+
+  async function sendQuickReplyFromAlice(quickReply: QuickReply): Promise<MessageRecord> {
+    const messageId = randomUUID();
+    return messageService.sendMessage({
+      roomId: room.id,
+      senderId: alice.id,
+      messageId,
+      content: await sealFromAlice('tap', messageId),
+      quickReply,
+    });
+  }
+
   function openFromAssistant(message: MessageRecord): Promise<string | null> {
     return openField(message.content, roomKey, identity.signingPublicKeyBytes, {
       roomId: room.id,
@@ -107,6 +138,7 @@ export async function setupAssistantRoom(options: AssistantRoomOptions = {}) {
     objectStorage,
     userService,
     options.toolbox,
+    options.quickReplies,
   );
 
   return {
@@ -122,6 +154,8 @@ export async function setupAssistantRoom(options: AssistantRoomOptions = {}) {
     publishKey,
     sealFromAlice,
     sendFromAlice,
+    sendCardFromAssistant,
+    sendQuickReplyFromAlice,
     storeSealedAttachment,
     openFromAssistant,
     assistantTexts,

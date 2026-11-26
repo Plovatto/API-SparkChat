@@ -1,3 +1,4 @@
+import type { QuickReplyChoice } from '../assistant/assistant.card.js';
 import type { MessageFileMeta, MessageReaction, MessageType, MessageView } from './message.types.js';
 
 export interface MessageServerToClientEvents {
@@ -15,6 +16,7 @@ export interface MessageServerToClientEvents {
   }) => void;
   'message:updated': (payload: MessageView) => void;
   'message:reactions-updated': (payload: { roomId: string; messageId: string; messageTimestamp: string; reactions: MessageReaction[] }) => void;
+  'message:card-resolved': (payload: { roomId: string; cardId: string; choice: QuickReplyChoice }) => void;
   'typing:update': (payload: { roomId: string; users: string[] }) => void;
   'recording:update': (payload: { roomId: string; users: string[] }) => void;
 }

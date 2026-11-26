@@ -35,6 +35,7 @@ export interface AssistantTurnInput {
   toolbox: AssistantToolbox;
   router: AiRouter;
   catalogSummary?: string;
+  extraInstruction?: string;
 }
 
 function formatLocalNow(now: number, timeZone: string, locale: Locale): { nowLocal: string; weekday: string } {
@@ -60,13 +61,13 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
   const { nowLocal, weekday } = formatLocalNow(context.now, context.timeZone, input.locale);
   const options = {
     locale: input.locale,
-    systemInstruction: buildAssistantInstruction({
+    systemInstruction: [buildAssistantInstruction({
       locale: input.locale,
       nowLocal,
       weekday,
       timeZone: context.timeZone,
       catalogSummary: input.catalogSummary ?? '',
-    }),
+    }), input.extraInstruction].filter(Boolean).join(' '),
     tools: toolbox.declarations(),
   };
 
