@@ -81,19 +81,22 @@ export async function resolveQuickReply(deps: QuickReplyDeps, input: QuickReplyI
   if (!claimed) {
     return IGNORED;
   }
-  deps.onResolved?.(cardMessage.id, quickReply.choice);
+  const announce = (): void => deps.onResolved?.(cardMessage.id, quickReply.choice);
 
   if (quickReply.choice === 'another') {
+    announce();
     return { kind: 'another' };
   }
 
   const handler = deps.registry.handlerFor(card.kind);
   if (!handler) {
+    announce();
     return IGNORED;
   }
 
   try {
     const reply = await handler({ userId, room, card, cardMessage, choice: quickReply.choice, locale: input.locale ?? 'pt' });
+    announce();
     return reply ? { kind: 'reply', reply } : IGNORED;
   } catch (error) {
     logger.error({ err: error, roomId: room.id, kind: card.kind }, 'Falha ao tratar a resposta de botão do SparkAI');

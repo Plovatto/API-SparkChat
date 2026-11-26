@@ -123,7 +123,7 @@ describe('assistant quick replies', () => {
     await t.aiService.handleIncomingMessage(t.io, t.room, await t.sendQuickReplyFromAlice({ cardId: card.id, choice: 'another' }), 'pt');
 
     const { messages } = await t.messageService.getRoomMessagesPage(t.room.id, { limit: 20 });
-    expect(messages.some((message) => message.type === 'error')).toBe(true);
+    expect(messages.some((message) => message.type === 'error' && message.systemEvent?.type === 'ai.dailyLimitReached')).toBe(true);
     expect(generate).not.toHaveBeenCalled();
   });
 
@@ -150,9 +150,11 @@ describe('assistant quick replies', () => {
 
     expect(await t.assistantTexts()).toContain('Ops, não consegui fazer isso agora. Tenta de novo?');
     expect(await t.messageService.isCardResolved(card.id)).toBe(false);
+    expect(t.emitted.filter((entry) => entry.event === 'message:card-resolved')).toHaveLength(0);
 
     await t.aiService.handleIncomingMessage(t.io, t.room, await t.sendQuickReplyFromAlice({ cardId: card.id, choice: 'yes' }), 'pt');
     expect(t.handler).toHaveBeenCalledTimes(2);
     expect(await t.assistantTexts()).toContain('feito');
+    expect(t.emitted.filter((entry) => entry.event === 'message:card-resolved')).toHaveLength(1);
   });
 });
