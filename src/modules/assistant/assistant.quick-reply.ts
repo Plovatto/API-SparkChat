@@ -1,11 +1,13 @@
 import { logger } from '../../config/logger.js';
 import type { Locale } from '../../lib/locale.js';
+import type { AppServer } from '../../sockets/events.js';
 import type { MessageRecord } from '../messages/index.js';
 import type { RoomRecord } from '../rooms/index.js';
 import type { AssistantReply } from './assistant.agent.js';
 import type { AssistantCard, QuickReply, QuickReplyChoice } from './assistant.card.js';
 
 export interface QuickReplyContext {
+  io: AppServer;
   userId: string;
   room: RoomRecord;
   card: AssistantCard;
@@ -41,6 +43,7 @@ export interface QuickReplyDeps {
 }
 
 export interface QuickReplyInput {
+  io: AppServer;
   userId: string;
   room: RoomRecord;
   message: MessageRecord;
@@ -50,7 +53,7 @@ export interface QuickReplyInput {
 
 export type QuickReplyOutcome =
   | { kind: 'reply'; reply: AssistantReply }
-  | { kind: 'another'; settle: (succeeded: boolean) => Promise<void> }
+  | { kind: 'another'; card: AssistantCard; settle: (succeeded: boolean) => Promise<void> }
   | { kind: 'failed' }
   | { kind: 'ignored' };
 
@@ -91,6 +94,7 @@ export async function resolveQuickReply(deps: QuickReplyDeps, input: QuickReplyI
   if (quickReply.choice === 'another') {
     return {
       kind: 'another',
+      card,
       settle: async (succeeded) => {
         if (succeeded) {
           announce();
@@ -108,7 +112,7 @@ export async function resolveQuickReply(deps: QuickReplyDeps, input: QuickReplyI
   }
 
   try {
-    const reply = await handler({ userId, room, card, cardMessage, choice: quickReply.choice, locale: input.locale ?? 'pt' });
+    const reply = await handler({ io: input.io, userId, room, card, cardMessage, choice: quickReply.choice, locale: input.locale ?? 'pt' });
     announce();
     return reply ? { kind: 'reply', reply } : IGNORED;
   } catch (error) {

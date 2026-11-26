@@ -1,0 +1,1670 @@
+{
+  "bases": [
+    {
+      "id": "dark",
+      "name": "Modo Escuro"
+    },
+    {
+      "id": "light",
+      "name": "Modo Claro"
+    },
+    {
+      "id": "midnight",
+      "name": "Meia-Noite"
+    }
+  ],
+  "colors": [
+    {
+      "id": "duskViolet",
+      "namePt": "Clássico",
+      "nameEn": "Classic",
+      "accent": "#4a4fc9",
+      "tint": "#5e40b8",
+      "gradient": "linear-gradient(127deg, #3a4db0 0%, #5e40b8 50%, #7e39a8 100%)"
+    },
+    {
+      "id": "standard",
+      "namePt": "Violeta Noite",
+      "nameEn": "Violet Night",
+      "accent": "#325BBA",
+      "tint": "#2763d4",
+      "gradient": "linear-gradient(127deg,rgb(52, 84, 158) 5%, rgba(99, 60, 150, 1) 51%, rgb(96, 42, 109) 100%)"
+    },
+    {
+      "id": "black",
+      "namePt": "Preto",
+      "nameEn": "Black",
+      "accent": "#e4e4e7",
+      "tint": "#71717a",
+      "gradient": "linear-gradient(135deg, #5b5b66 0%, #0b0b0d 100%)"
+    },
+    {
+      "id": "forest",
+      "namePt": "Floresta",
+      "nameEn": "Forest",
+      "accent": "#3fb567",
+      "tint": "#2f6f45",
+      "gradient": "linear-gradient(135deg, #2f9e57 0%, #1f6e3f 100%)"
+    },
+    {
+      "id": "sunset",
+      "namePt": "Pôr do Sol",
+      "nameEn": "Sunset",
+      "accent": "#fb7a3c",
+      "tint": "#b04a30",
+      "gradient": "linear-gradient(135deg, #ee6a30 0%, #c62424 100%)"
+    },
+    {
+      "id": "lavender",
+      "namePt": "Lavanda",
+      "nameEn": "Lavender",
+      "accent": "#b3a3ff",
+      "tint": "#6e5fb8",
+      "gradient": "linear-gradient(135deg, #8d78ec 0%, #4e3d8c 100%)"
+    },
+    {
+      "id": "rose",
+      "namePt": "Rosa",
+      "nameEn": "Rose",
+      "accent": "#f562b3",
+      "tint": "#a03070",
+      "gradient": "linear-gradient(135deg, #e44aa2 0%, #b81f6a 100%)"
+    },
+    {
+      "id": "ocean",
+      "namePt": "Oceano Azul",
+      "nameEn": "Ocean Blue",
+      "accent": "#2c8ef0",
+      "tint": "#0b4f8a",
+      "gradient": null
+    },
+    {
+      "id": "tropical",
+      "namePt": "Tropical",
+      "nameEn": "Tropical",
+      "accent": "#ff7d1a",
+      "tint": "#a8541a",
+      "gradient": "linear-gradient(135deg, #f06a00 0%, #ffa11a 100%)"
+    },
+    {
+      "id": "emerald",
+      "namePt": "Esmeralda",
+      "nameEn": "Emerald",
+      "accent": "#17c58c",
+      "tint": "#0f6b50",
+      "gradient": "linear-gradient(135deg, #10b981 0%, #34d399 100%)"
+    },
+    {
+      "id": "magenta",
+      "namePt": "Magenta",
+      "nameEn": "Magenta",
+      "accent": "#dd4ff0",
+      "tint": "#7a2a86",
+      "gradient": null
+    },
+    {
+      "id": "gold",
+      "namePt": "Ouro",
+      "nameEn": "Gold",
+      "accent": "#fbbf24",
+      "tint": "#7a5a12",
+      "gradient": "linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)"
+    },
+    {
+      "id": "ruby",
+      "namePt": "Rubi",
+      "nameEn": "Ruby",
+      "accent": "#ef4040",
+      "tint": "#7a1f1f",
+      "gradient": "linear-gradient(135deg, #dc2626 0%, #ef4444 100%)"
+    },
+    {
+      "id": "neon",
+      "namePt": "Neon",
+      "nameEn": "Neon",
+      "accent": "#39ff5c",
+      "tint": "#1f8a35",
+      "gradient": "linear-gradient(135deg, #39ff5c 0%, #ff2bff 100%)"
+    },
+    {
+      "id": "cyberpunk",
+      "namePt": "Cyberpunk",
+      "nameEn": "Cyberpunk",
+      "accent": "#22f3ff",
+      "tint": "#103a48",
+      "gradient": "linear-gradient(135deg, #22f3ff 0%, #ff2e7e 100%)"
+    },
+    {
+      "id": "sunset2",
+      "namePt": "Entardecer",
+      "nameEn": "Dusk",
+      "accent": "#ff7f50",
+      "tint": "#8a3a2a",
+      "gradient": "linear-gradient(135deg, #f06238 0%, #e0127f 100%)"
+    },
+    {
+      "id": "blueViolet",
+      "namePt": "Azul Violeta",
+      "nameEn": "Blue Violet",
+      "accent": "#7a7cf5",
+      "tint": "#3c3d8a",
+      "gradient": null
+    },
+    {
+      "id": "mint",
+      "namePt": "Menta",
+      "nameEn": "Mint",
+      "accent": "#16c2dd",
+      "tint": "#0e5f6c",
+      "gradient": "linear-gradient(135deg, #06b6d4 0%, #10b981 100%)"
+    },
+    {
+      "id": "coral",
+      "namePt": "Coral",
+      "nameEn": "Coral",
+      "accent": "#ff6f6f",
+      "tint": "#8a3838",
+      "gradient": "linear-gradient(135deg, #ff6b6b 0%, #ffa5a5 100%)"
+    },
+    {
+      "id": "grape",
+      "namePt": "Uva",
+      "nameEn": "Grape",
+      "accent": "#a558f5",
+      "tint": "#4a2570",
+      "gradient": null
+    },
+    {
+      "id": "peach",
+      "namePt": "Pêssego",
+      "nameEn": "Peach",
+      "accent": "#fb7185",
+      "tint": "#8a3a48",
+      "gradient": "linear-gradient(135deg, #fb7185 0%, #fdba74 100%)"
+    },
+    {
+      "id": "midnightBlue",
+      "namePt": "Azul Meia-Noite",
+      "nameEn": "Midnight Blue",
+      "accent": "#5b7cff",
+      "tint": "#101a3a",
+      "gradient": "linear-gradient(135deg, #1e3a8a 0%, #0b1330 100%)"
+    },
+    {
+      "id": "arctic",
+      "namePt": "Ártico",
+      "nameEn": "Arctic",
+      "accent": "#5ad4ff",
+      "tint": "#1a3a4a",
+      "gradient": "linear-gradient(135deg, #38bdf8 0%, #7be3ff 100%)"
+    },
+    {
+      "id": "sakura",
+      "namePt": "Sakura",
+      "nameEn": "Sakura",
+      "accent": "#f48fc0",
+      "tint": "#5a2a44",
+      "gradient": "linear-gradient(135deg, #d9639f 0%, #8f5fb0 100%)"
+    },
+    {
+      "id": "olive",
+      "namePt": "Oliva",
+      "nameEn": "Olive",
+      "accent": "#a3c04a",
+      "tint": "#3a4225",
+      "gradient": "linear-gradient(135deg, #7a9e32 0%, #4a5c1e 100%)"
+    },
+    {
+      "id": "terracotta",
+      "namePt": "Terracota",
+      "nameEn": "Terracotta",
+      "accent": "#e07a4e",
+      "tint": "#4a2a1e",
+      "gradient": "linear-gradient(135deg, #c9562e 0%, #8f3a1f 100%)"
+    },
+    {
+      "id": "slate",
+      "namePt": "Ardósia",
+      "nameEn": "Slate",
+      "accent": "#94a3b8",
+      "tint": "#334155",
+      "gradient": "linear-gradient(135deg, #64748b 0%, #334155 100%)"
+    },
+    {
+      "id": "mocha",
+      "namePt": "Mocha",
+      "nameEn": "Mocha",
+      "accent": "#c99a6a",
+      "tint": "#3a2a20",
+      "gradient": "linear-gradient(135deg, #8a5a3a 0%, #4a2e1e 100%)"
+    },
+    {
+      "id": "aurora",
+      "namePt": "Aurora",
+      "nameEn": "Aurora",
+      "accent": "#2dd4bf",
+      "tint": "#1a2f3a",
+      "gradient": "linear-gradient(135deg, #10a596 0%, #7c3aed 100%)"
+    },
+    {
+      "id": "nordic",
+      "namePt": "Nórdico",
+      "nameEn": "Nordic",
+      "accent": "#88c0d0",
+      "tint": "#3b4252",
+      "gradient": "linear-gradient(135deg, #5e81ac 0%, #81a1c1 100%)"
+    },
+    {
+      "id": "dracula",
+      "namePt": "Drácula",
+      "nameEn": "Dracula",
+      "accent": "#bd93f9",
+      "tint": "#44475a",
+      "gradient": "linear-gradient(135deg, #bd93f9 0%, #ff79c6 100%)"
+    },
+    {
+      "id": "solar",
+      "namePt": "Solar",
+      "nameEn": "Solar",
+      "accent": "#fcd34d",
+      "tint": "#4a3a12",
+      "gradient": "linear-gradient(135deg, #f59e0b 0%, #fde047 100%)"
+    },
+    {
+      "id": "lime",
+      "namePt": "Limão",
+      "nameEn": "Lime",
+      "accent": "#a3e635",
+      "tint": "#1f2a10",
+      "gradient": "linear-gradient(135deg, #65a30d 0%, #365314 100%)"
+    },
+    {
+      "id": "indigo",
+      "namePt": "Índigo",
+      "nameEn": "Indigo",
+      "accent": "#818cf8",
+      "tint": "#262a5a",
+      "gradient": "linear-gradient(135deg, #4f46e5 0%, #312e81 100%)"
+    },
+    {
+      "id": "cobalt",
+      "namePt": "Cobalto",
+      "nameEn": "Cobalt",
+      "accent": "#3d7bff",
+      "tint": "#0a1f4a",
+      "gradient": "linear-gradient(135deg, #0047ab 0%, #0ea5e9 100%)"
+    },
+    {
+      "id": "wine",
+      "namePt": "Vinho",
+      "nameEn": "Wine",
+      "accent": "#e0708f",
+      "tint": "#3a1a26",
+      "gradient": "linear-gradient(135deg, #9b2a52 0%, #4a1027 100%)"
+    },
+    {
+      "id": "sand",
+      "namePt": "Areia",
+      "nameEn": "Sand",
+      "accent": "#d9b064",
+      "tint": "#3a3226",
+      "gradient": "linear-gradient(135deg, #a8763a 0%, #5c4020 100%)"
+    },
+    {
+      "id": "retro",
+      "namePt": "Retrô",
+      "nameEn": "Retro",
+      "accent": "#f0b429",
+      "tint": "#3a3226",
+      "gradient": "linear-gradient(135deg, #0f766e 0%, #b8860b 100%)"
+    },
+    {
+      "id": "candy",
+      "namePt": "Doce",
+      "nameEn": "Candy",
+      "accent": "#ee5fa9",
+      "tint": "#3a1a30",
+      "gradient": "linear-gradient(135deg, #ec4899 0%, #0ea5e9 100%)"
+    },
+    {
+      "id": "abyss",
+      "namePt": "Abismo",
+      "nameEn": "Abyss",
+      "accent": "#22b8cf",
+      "tint": "#071a22",
+      "gradient": "linear-gradient(135deg, #0f5c6b 0%, #041a20 100%)"
+    },
+    {
+      "id": "steel",
+      "namePt": "Aço",
+      "nameEn": "Steel",
+      "accent": "#fb923c",
+      "tint": "#1e293b",
+      "gradient": "linear-gradient(135deg, #475569 0%, #1e293b 100%)"
+    },
+    {
+      "id": "paper",
+      "namePt": "Papel",
+      "nameEn": "Paper",
+      "accent": "#e7e2d6",
+      "tint": "#2a2822",
+      "gradient": "linear-gradient(135deg, #4a463c 0%, #1e1c18 100%)"
+    },
+    {
+      "id": "violetNight",
+      "namePt": "Ametista",
+      "nameEn": "Amethyst",
+      "accent": "#a855f7",
+      "tint": "#1e0f3a",
+      "gradient": "linear-gradient(135deg, #7c3aed 0%, #c026d3 100%)"
+    },
+    {
+      "id": "jade",
+      "namePt": "Jade",
+      "nameEn": "Jade",
+      "accent": "#3ccf9a",
+      "tint": "#10332a",
+      "gradient": "linear-gradient(135deg, #0f8a66 0%, #b8921f 100%)"
+    },
+    {
+      "id": "flamingo",
+      "namePt": "Flamingo",
+      "nameEn": "Flamingo",
+      "accent": "#fb6b86",
+      "tint": "#3a1a24",
+      "gradient": "linear-gradient(135deg, #ee5470 0%, #0d9488 100%)"
+    },
+    {
+      "id": "cherry",
+      "namePt": "Cereja",
+      "nameEn": "Cherry",
+      "accent": "#f25c5c",
+      "tint": "#3a1414",
+      "gradient": "linear-gradient(135deg, #b91c1c 0%, #5a0d0d 100%)"
+    },
+    {
+      "id": "mist",
+      "namePt": "Névoa",
+      "nameEn": "Mist",
+      "accent": "#b4b2dc",
+      "tint": "#2a2a3a",
+      "gradient": "linear-gradient(135deg, #6b6a94 0%, #3d3c5a 100%)"
+    },
+    {
+      "id": "copper",
+      "namePt": "Cobre",
+      "nameEn": "Copper",
+      "accent": "#e8863a",
+      "tint": "#3a2418",
+      "gradient": "linear-gradient(135deg, #c2410c 0%, #0f766e 100%)"
+    },
+    {
+      "id": "galaxy",
+      "namePt": "Galáxia",
+      "nameEn": "Galaxy",
+      "accent": "#a78bfa",
+      "tint": "#12082a",
+      "gradient": "linear-gradient(135deg, #312e81 0%, #7c3aed 50%, #be185d 100%)"
+    },
+    {
+      "id": "caribe",
+      "namePt": "Caribe",
+      "nameEn": "Caribbean",
+      "accent": "#00b4c4",
+      "tint": "#ffd93d",
+      "gradient": "linear-gradient(135deg, #00b4c4 0%, #ffd93d 100%)"
+    },
+    {
+      "id": "mediterranean",
+      "namePt": "Mediterrâneo",
+      "nameEn": "Mediterranean",
+      "accent": "#fb7185",
+      "tint": "#fb7185",
+      "gradient": "linear-gradient(135deg, #1d4ed8 0%, #fb7185 100%)"
+    },
+    {
+      "id": "popArt",
+      "namePt": "Pop Art",
+      "nameEn": "Pop Art",
+      "accent": "#ff0a78",
+      "tint": "#ffc400",
+      "gradient": "linear-gradient(135deg, #ff0a78 0%, #ffc400 100%)"
+    },
+    {
+      "id": "pinkLemonade",
+      "namePt": "Limonada Rosa",
+      "nameEn": "Pink Lemonade",
+      "accent": "#ffcc33",
+      "tint": "#ff5fa2",
+      "gradient": "linear-gradient(135deg, #ffcc33 0%, #ff5fa2 100%)"
+    },
+    {
+      "id": "watermelon",
+      "namePt": "Melancia",
+      "nameEn": "Watermelon",
+      "accent": "#ff4867",
+      "tint": "#22c56e",
+      "gradient": "linear-gradient(135deg, #ff4867 0%, #22c56e 100%)"
+    },
+    {
+      "id": "cityDusk",
+      "namePt": "Fim de Tarde",
+      "nameEn": "City Dusk",
+      "accent": "#ff8a3d",
+      "tint": "#ff8a3d",
+      "gradient": "linear-gradient(135deg, #2447c9 0%, #ff8a3d 100%)"
+    },
+    {
+      "id": "radioactive",
+      "namePt": "Radioativo",
+      "nameEn": "Radioactive",
+      "accent": "#a3e635",
+      "tint": "#a3e635",
+      "gradient": "linear-gradient(135deg, #6d28d9 0%, #a3e635 100%)"
+    },
+    {
+      "id": "citrus",
+      "namePt": "Cítrico",
+      "nameEn": "Citrus",
+      "accent": "#06c3e0",
+      "tint": "#9ae22c",
+      "gradient": "linear-gradient(135deg, #06c3e0 0%, #9ae22c 100%)"
+    },
+    {
+      "id": "ipe",
+      "namePt": "Ipê",
+      "nameEn": "Ipê",
+      "accent": "#f5bf0f",
+      "tint": "#e0569b",
+      "gradient": "linear-gradient(135deg, #f5bf0f 0%, #e0569b 100%)"
+    },
+    {
+      "id": "acai",
+      "namePt": "Açaí",
+      "nameEn": "Açaí",
+      "accent": "#6a1a5e",
+      "tint": "#6a1a5e",
+      "gradient": "linear-gradient(135deg, #2c0b3e 0%, #6a1a5e 50%, #a8326f 100%)"
+    },
+    {
+      "id": "passionFruit",
+      "namePt": "Maracujá",
+      "nameEn": "Passion Fruit",
+      "accent": "#fccf14",
+      "tint": "#6a1b9a",
+      "gradient": "linear-gradient(135deg, #fccf14 0%, #6a1b9a 100%)"
+    },
+    {
+      "id": "arpoador",
+      "namePt": "Arpoador",
+      "nameEn": "Arpoador",
+      "accent": "#ff9a5a",
+      "tint": "#ff5e7e",
+      "gradient": "linear-gradient(160deg, #ff9a5a 0%, #ff5e7e 50%, #3a6ea5 100%)"
+    },
+    {
+      "id": "cerrado",
+      "namePt": "Cerrado",
+      "nameEn": "Cerrado",
+      "accent": "#a63d1e",
+      "tint": "#d9a441",
+      "gradient": "linear-gradient(135deg, #a63d1e 0%, #d9a441 50%, #4f6d2e 100%)"
+    },
+    {
+      "id": "lencois",
+      "namePt": "Lençóis",
+      "nameEn": "Lençóis",
+      "accent": "#efe0c2",
+      "tint": "#3fc1c9",
+      "gradient": "linear-gradient(135deg, #efe0c2 0%, #3fc1c9 100%)"
+    },
+    {
+      "id": "carnival",
+      "namePt": "Carnaval",
+      "nameEn": "Carnival",
+      "accent": "#ff2e93",
+      "tint": "#ffd000",
+      "gradient": "linear-gradient(120deg, #ff2e93 0%, #ffd000 50%, #00c2a8 100%)"
+    },
+    {
+      "id": "cashew",
+      "namePt": "Caju",
+      "nameEn": "Cashew",
+      "accent": "#ffb627",
+      "tint": "#e2412b",
+      "gradient": "linear-gradient(135deg, #ffb627 0%, #e2412b 100%)"
+    },
+    {
+      "id": "holographic",
+      "namePt": "Holográfico",
+      "nameEn": "Holographic",
+      "accent": "#a5b4fc",
+      "tint": "#f0abfc",
+      "gradient": "linear-gradient(120deg, #a5b4fc 0%, #f0abfc 50%, #99f6e4 100%)"
+    },
+    {
+      "id": "opal",
+      "namePt": "Opala",
+      "nameEn": "Opal",
+      "accent": "#fcc9dc",
+      "tint": "#fcc9dc",
+      "gradient": "linear-gradient(135deg, #9fe6e2 0%, #fcc9dc 100%)"
+    },
+    {
+      "id": "cottonCandy",
+      "namePt": "Algodão-Doce",
+      "nameEn": "Cotton Candy",
+      "accent": "#9dbdfc",
+      "tint": "#f9b8e6",
+      "gradient": "linear-gradient(135deg, #9dbdfc 0%, #f9b8e6 100%)"
+    },
+    {
+      "id": "iris",
+      "namePt": "Íris",
+      "nameEn": "Iris",
+      "accent": "#f6cf65",
+      "tint": "#f6cf65",
+      "gradient": "linear-gradient(135deg, #8e7cc3 0%, #f6cf65 100%)"
+    },
+    {
+      "id": "sorbet",
+      "namePt": "Sorbet",
+      "nameEn": "Sorbet",
+      "accent": "#ffad9e",
+      "tint": "#ffe08a",
+      "gradient": "linear-gradient(120deg, #ffad9e 0%, #ffe08a 50%, #a8eec0 100%)"
+    },
+    {
+      "id": "sage",
+      "namePt": "Sálvia",
+      "nameEn": "Sage",
+      "accent": "#d5dfc2",
+      "tint": "#d5dfc2",
+      "gradient": "linear-gradient(135deg, #8fa67a 0%, #d5dfc2 100%)"
+    },
+    {
+      "id": "autumn",
+      "namePt": "Outono",
+      "nameEn": "Autumn",
+      "accent": "#d9692e",
+      "tint": "#d9692e",
+      "gradient": "linear-gradient(135deg, #5f7224 0%, #d9692e 100%)"
+    },
+    {
+      "id": "matcha",
+      "namePt": "Matcha",
+      "nameEn": "Matcha",
+      "accent": "#55752a",
+      "tint": "#bccd82",
+      "gradient": "linear-gradient(135deg, #55752a 0%, #bccd82 100%)"
+    },
+    {
+      "id": "duneSea",
+      "namePt": "Duna & Mar",
+      "nameEn": "Dune & Sea",
+      "accent": "#e2bd7f",
+      "tint": "#22728f",
+      "gradient": "linear-gradient(135deg, #e2bd7f 0%, #22728f 100%)"
+    },
+    {
+      "id": "peacock",
+      "namePt": "Pavão",
+      "nameEn": "Peacock",
+      "accent": "#00796b",
+      "tint": "#1e40af",
+      "gradient": "linear-gradient(135deg, #00796b 0%, #1e40af 100%)"
+    },
+    {
+      "id": "eucalyptus",
+      "namePt": "Eucalipto",
+      "nameEn": "Eucalyptus",
+      "accent": "#3f6e5d",
+      "tint": "#9fc1b8",
+      "gradient": "linear-gradient(135deg, #3f6e5d 0%, #9fc1b8 100%)"
+    },
+    {
+      "id": "canyon",
+      "namePt": "Cânion",
+      "nameEn": "Canyon",
+      "accent": "#d98c4a",
+      "tint": "#d98c4a",
+      "gradient": "linear-gradient(135deg, #9a3b2e 0%, #d98c4a 50%, #5b3a6b 100%)"
+    },
+    {
+      "id": "magma",
+      "namePt": "Magma",
+      "nameEn": "Magma",
+      "accent": "#ff4500",
+      "tint": "#5c0a3d",
+      "gradient": "linear-gradient(135deg, #ff4500 0%, #5c0a3d 100%)"
+    },
+    {
+      "id": "ember",
+      "namePt": "Brasa",
+      "nameEn": "Ember",
+      "accent": "#ff7a1a",
+      "tint": "#ff7a1a",
+      "gradient": "linear-gradient(135deg, #6e0f20 0%, #ff7a1a 100%)"
+    },
+    {
+      "id": "whisky",
+      "namePt": "Whisky",
+      "nameEn": "Whisky",
+      "accent": "#c8771f",
+      "tint": "#561c13",
+      "gradient": "linear-gradient(135deg, #c8771f 0%, #561c13 100%)"
+    },
+    {
+      "id": "noir",
+      "namePt": "Noir Rubro",
+      "nameEn": "Red Noir",
+      "accent": "#c1121f",
+      "tint": "#c1121f",
+      "gradient": "linear-gradient(135deg, #0d0b10 0%, #c1121f 100%)"
+    },
+    {
+      "id": "terminal",
+      "namePt": "Terminal",
+      "nameEn": "Terminal",
+      "accent": "#22e05b",
+      "tint": "#22e05b",
+      "gradient": "linear-gradient(135deg, #0a120c 0%, #22e05b 100%)"
+    },
+    {
+      "id": "industrial",
+      "namePt": "Industrial",
+      "nameEn": "Industrial",
+      "accent": "#ff6a00",
+      "tint": "#ff6a00",
+      "gradient": "linear-gradient(135deg, #2b2b2e 0%, #ff6a00 100%)"
+    },
+    {
+      "id": "vaporwave",
+      "namePt": "Vaporwave",
+      "nameEn": "Vaporwave",
+      "accent": "#ff71ce",
+      "tint": "#01cdfe",
+      "gradient": "linear-gradient(120deg, #ff71ce 0%, #01cdfe 50%, #05ffa1 100%)"
+    },
+    {
+      "id": "arcade",
+      "namePt": "Arcade",
+      "nameEn": "Arcade",
+      "accent": "#f5d300",
+      "tint": "#fe53bb",
+      "gradient": "linear-gradient(120deg, #08d9f5 0%, #fe53bb 50%, #f5d300 100%)"
+    },
+    {
+      "id": "thunder",
+      "namePt": "Trovão",
+      "nameEn": "Thunder",
+      "accent": "#f9c80e",
+      "tint": "#f9c80e",
+      "gradient": "linear-gradient(135deg, #3a0ca3 0%, #f9c80e 100%)"
+    },
+    {
+      "id": "halloween",
+      "namePt": "Halloween",
+      "nameEn": "Halloween",
+      "accent": "#ff7518",
+      "tint": "#5b2a86",
+      "gradient": "linear-gradient(135deg, #ff7518 0%, #5b2a86 100%)"
+    },
+    {
+      "id": "miami",
+      "namePt": "Miami 86",
+      "nameEn": "Miami 86",
+      "accent": "#ff6ec7",
+      "tint": "#ffb86c",
+      "gradient": "linear-gradient(140deg, #ff6ec7 0%, #ffb86c 50%, #6cc8f5 100%)"
+    },
+    {
+      "id": "ultraviolet",
+      "namePt": "Ultravioleta",
+      "nameEn": "Ultraviolet",
+      "accent": "#5b21ff",
+      "tint": "#00e5ff",
+      "gradient": "linear-gradient(135deg, #5b21ff 0%, #00e5ff 100%)"
+    },
+    {
+      "id": "roseGold",
+      "namePt": "Ouro Rosé",
+      "nameEn": "Rose Gold",
+      "accent": "#e8c4a0",
+      "tint": "#e8c4a0",
+      "gradient": "linear-gradient(135deg, #b76e79 0%, #e8c4a0 100%)"
+    },
+    {
+      "id": "imperial",
+      "namePt": "Imperial",
+      "nameEn": "Imperial",
+      "accent": "#c9a227",
+      "tint": "#c9a227",
+      "gradient": "linear-gradient(135deg, #1a237e 0%, #c9a227 100%)"
+    },
+    {
+      "id": "champagne",
+      "namePt": "Champagne",
+      "nameEn": "Champagne",
+      "accent": "#f1e2c4",
+      "tint": "#f1e2c4",
+      "gradient": "linear-gradient(135deg, #b89b72 0%, #f1e2c4 100%)"
+    },
+    {
+      "id": "iridescent",
+      "namePt": "Iridescente",
+      "nameEn": "Iridescent",
+      "accent": "#93c5fd",
+      "tint": "#93c5fd",
+      "gradient": "linear-gradient(120deg, #6b7280 0%, #93c5fd 50%, #f0abfc 100%)"
+    },
+    {
+      "id": "blackPearl",
+      "namePt": "Pérola Negra",
+      "nameEn": "Black Pearl",
+      "accent": "#c9c3dc",
+      "tint": "#5a5a74",
+      "gradient": "linear-gradient(135deg, #1c1c26 0%, #5a5a74 50%, #c9c3dc 100%)"
+    },
+    {
+      "id": "sapphireRose",
+      "namePt": "Safira & Rosa",
+      "nameEn": "Sapphire & Rose",
+      "accent": "#0f2f7a",
+      "tint": "#e58fb5",
+      "gradient": "linear-gradient(135deg, #0f2f7a 0%, #e58fb5 100%)"
+    },
+    {
+      "id": "emeraldCopper",
+      "namePt": "Malaquita",
+      "nameEn": "Malachite",
+      "accent": "#0b5d4b",
+      "tint": "#c8794a",
+      "gradient": "linear-gradient(135deg, #0b5d4b 0%, #c8794a 100%)"
+    }
+  ],
+  "wallpapers": [
+    {
+      "id": "default",
+      "namePt": "Padrão",
+      "nameEn": "Default",
+      "kind": "none"
+    },
+    {
+      "id": "gradient1",
+      "namePt": "Oceano",
+      "nameEn": "Ocean",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient2",
+      "namePt": "Pôr do Sol",
+      "nameEn": "Sunset",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient3",
+      "namePt": "Floresta",
+      "nameEn": "Forest",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient4",
+      "namePt": "Aurora",
+      "nameEn": "Aurora",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient5",
+      "namePt": "Crepúsculo",
+      "nameEn": "Twilight",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient6",
+      "namePt": "Noite Estrelada",
+      "nameEn": "Starry Night",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient7",
+      "namePt": "Fogo",
+      "nameEn": "Fire",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient8",
+      "namePt": "Água Tropical",
+      "nameEn": "Tropical Water",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient9",
+      "namePt": "Roxo Profundo",
+      "nameEn": "Deep Purple",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient10",
+      "namePt": "Verde Menta",
+      "nameEn": "Mint Green",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient11",
+      "namePt": "Céu de Verão",
+      "nameEn": "Summer Sky",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient12",
+      "namePt": "Chama Elétrica",
+      "nameEn": "Electric Flame",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient13",
+      "namePt": "Ametista",
+      "nameEn": "Amethyst",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient14",
+      "namePt": "Esmeralda",
+      "nameEn": "Emerald",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient15",
+      "namePt": "Lavanda",
+      "nameEn": "Lavender",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient16",
+      "namePt": "Dourado",
+      "nameEn": "Golden",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient17",
+      "namePt": "Chocolate",
+      "nameEn": "Chocolate",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient18",
+      "namePt": "Rosa Choque",
+      "nameEn": "Hot Pink",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient19",
+      "namePt": "Grafite",
+      "nameEn": "Graphite",
+      "kind": "gradient"
+    },
+    {
+      "id": "gradient20",
+      "namePt": "Céu de Inverno",
+      "nameEn": "Winter Sky",
+      "kind": "gradient"
+    },
+    {
+      "id": "unsplash1",
+      "namePt": "Montanhas ao Amanhecer",
+      "nameEn": "Mountains at Dawn",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash2",
+      "namePt": "Praia Tropical",
+      "nameEn": "Tropical Beach",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash3",
+      "namePt": "Cidade ao Entardecer",
+      "nameEn": "City at Dusk",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash4",
+      "namePt": "Trilha na Floresta",
+      "nameEn": "Forest Trail",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash5",
+      "namePt": "Via Láctea",
+      "nameEn": "Milky Way",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash6",
+      "namePt": "Flores Amarelas",
+      "nameEn": "Yellow Flowers",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash7",
+      "namePt": "Praia ao Entardecer",
+      "nameEn": "Beach at Sunset",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash8",
+      "namePt": "Floresta ao Pôr do Sol",
+      "nameEn": "Forest at Sunset",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash9",
+      "namePt": "Folha de Palmeira",
+      "nameEn": "Palm Leaf",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash10",
+      "namePt": "Aurora sobre a Neve",
+      "nameEn": "Aurora over Snow",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash11",
+      "namePt": "Estrada no Canyon",
+      "nameEn": "Canyon Road",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash12",
+      "namePt": "Lua Cheia",
+      "nameEn": "Full Moon",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash13",
+      "namePt": "Arte em Aquarela",
+      "nameEn": "Watercolor Art",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash14",
+      "namePt": "Aurora Boreal",
+      "nameEn": "Northern Lights",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash15",
+      "namePt": "Flores Pastel",
+      "nameEn": "Pastel Flowers",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash16",
+      "namePt": "Estrada Nevada",
+      "nameEn": "Snowy Road",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash17",
+      "namePt": "Copa das Árvores",
+      "nameEn": "Tree Canopy",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash18",
+      "namePt": "Bando de Pássaros",
+      "nameEn": "Flock of Birds",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash19",
+      "namePt": "Arte Abstrata",
+      "nameEn": "Abstract Art",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash20",
+      "namePt": "Pato no Lago",
+      "nameEn": "Duck on the Lake",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash21",
+      "namePt": "Ondas do Mar",
+      "nameEn": "Ocean Waves",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash22",
+      "namePt": "Floresta de Outono",
+      "nameEn": "Autumn Forest",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash23",
+      "namePt": "Cachoeira",
+      "nameEn": "Waterfall",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash24",
+      "namePt": "Campo de Lavanda",
+      "nameEn": "Lavender Field",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash25",
+      "namePt": "Flor de Cerejeira",
+      "nameEn": "Cherry Blossom",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash26",
+      "namePt": "Céu Estrelado no Deserto",
+      "nameEn": "Starry Desert Sky",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash27",
+      "namePt": "Pico Nevado",
+      "nameEn": "Snowy Peak",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash28",
+      "namePt": "Campo na Toscana",
+      "nameEn": "Tuscan Countryside",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash29",
+      "namePt": "Chuva na Cidade",
+      "nameEn": "Rain in the City",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash30",
+      "namePt": "Floresta Tropical",
+      "nameEn": "Rainforest",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash31",
+      "namePt": "Pôr do Sol Colorido",
+      "nameEn": "Colorful Sunset",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash32",
+      "namePt": "Aurora Boreal no Lago",
+      "nameEn": "Northern Lights over a Lake",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash33",
+      "namePt": "Campo de Girassóis",
+      "nameEn": "Sunflower Field",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash34",
+      "namePt": "Floresta de Inverno",
+      "nameEn": "Winter Forest",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash35",
+      "namePt": "Arquitetura Moderna",
+      "nameEn": "Modern Architecture",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash36",
+      "namePt": "Gato de Perto",
+      "nameEn": "Cat Close-up",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash37",
+      "namePt": "Cachorro Fofo",
+      "nameEn": "Fluffy Dog",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash38",
+      "namePt": "Café Aconchegante",
+      "nameEn": "Cozy Café",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash39",
+      "namePt": "Cantinho de Leitura",
+      "nameEn": "Reading Nook",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash40",
+      "namePt": "Neon Noturno",
+      "nameEn": "Neon Night",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash41",
+      "namePt": "Recife de Coral",
+      "nameEn": "Coral Reef",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash42",
+      "namePt": "Vulcão em Erupção",
+      "nameEn": "Erupting Volcano",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash43",
+      "namePt": "Balões de Ar",
+      "nameEn": "Hot Air Balloons",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash44",
+      "namePt": "Carro Vintage",
+      "nameEn": "Vintage Car",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash45",
+      "namePt": "Fogueira Noturna",
+      "nameEn": "Night Campfire",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash46",
+      "namePt": "Jardim Zen",
+      "nameEn": "Zen Garden",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash47",
+      "namePt": "Arco-íris na Montanha",
+      "nameEn": "Rainbow over the Mountain",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash48",
+      "namePt": "Floresta com Neblina",
+      "nameEn": "Misty Forest",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash49",
+      "namePt": "Mercado Colorido",
+      "nameEn": "Colorful Market",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash50",
+      "namePt": "Nebulosa Colorida",
+      "nameEn": "Colorful Nebula",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash51",
+      "namePt": "Cabana na Neve",
+      "nameEn": "Snowy Cabin",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash52",
+      "namePt": "Farol no Mar",
+      "nameEn": "Lighthouse by the Sea",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash53",
+      "namePt": "Ponte Suspensa",
+      "nameEn": "Suspension Bridge",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash54",
+      "namePt": "Tempestade Elétrica",
+      "nameEn": "Lightning Storm",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash55",
+      "namePt": "Arte Urbana",
+      "nameEn": "Street Art",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash56",
+      "namePt": "Chá Matcha",
+      "nameEn": "Matcha Tea",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash57",
+      "namePt": "Fardos de Feno",
+      "nameEn": "Hay Bales",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash58",
+      "namePt": "Iceberg Polar",
+      "nameEn": "Polar Iceberg",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash59",
+      "namePt": "Trilha na Montanha",
+      "nameEn": "Mountain Trail",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash60",
+      "namePt": "Vinhedo Dourado",
+      "nameEn": "Golden Vineyard",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash61",
+      "namePt": "Água-viva Luminosa",
+      "nameEn": "Glowing Jellyfish",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash62",
+      "namePt": "Metrô Noturno",
+      "nameEn": "Night Subway",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash63",
+      "namePt": "Palmeiras ao Pôr do Sol",
+      "nameEn": "Palm Trees at Sunset",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash64",
+      "namePt": "Cacto em Detalhe",
+      "nameEn": "Cactus Detail",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash65",
+      "namePt": "Lago Alpino com Barcos",
+      "nameEn": "Alpine Lake Boats",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash66",
+      "namePt": "Vale Nevado",
+      "nameEn": "Snowy Valley",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash67",
+      "namePt": "Montanha sob Estrelas",
+      "nameEn": "Mountain Under Stars",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash68",
+      "namePt": "Vale de Yosemite",
+      "nameEn": "Yosemite Valley",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash69",
+      "namePt": "Half Dome na Neblina",
+      "nameEn": "Misty Half Dome",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash70",
+      "namePt": "Monte Rainier",
+      "nameEn": "Mount Rainier",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash71",
+      "namePt": "Casa no Lago",
+      "nameEn": "Lake House",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash72",
+      "namePt": "Raios de Sol no Vale",
+      "nameEn": "Sunbeams in the Valley",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash73",
+      "namePt": "Vestrahorn, Islândia",
+      "nameEn": "Vestrahorn, Iceland",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash74",
+      "namePt": "Amanhecer na Patagônia",
+      "nameEn": "Patagonia Sunrise",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash75",
+      "namePt": "Árvore Solitária",
+      "nameEn": "Lone Tree",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash76",
+      "namePt": "Monte Fuji à Noite",
+      "nameEn": "Mount Fuji at Night",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash77",
+      "namePt": "Vernazza, Itália",
+      "nameEn": "Vernazza, Italy",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash78",
+      "namePt": "Trem nas Highlands",
+      "nameEn": "Highlands Train",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash79",
+      "namePt": "Caminho até o Píer",
+      "nameEn": "Path to the Pier",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash80",
+      "namePt": "Himalaia Estrelado",
+      "nameEn": "Starry Himalayas",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash81",
+      "namePt": "Pássaros sobre o Mar",
+      "nameEn": "Birds Over the Sea",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash82",
+      "namePt": "Coqueiro na Praia",
+      "nameEn": "Beach Palm Tree",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash83",
+      "namePt": "Barco em Água Azul",
+      "nameEn": "Boat on Blue Water",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash84",
+      "namePt": "Onda na Areia",
+      "nameEn": "Wave on Sand",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash85",
+      "namePt": "Mar Turquesa nas Rochas",
+      "nameEn": "Turquoise Sea on Rocks",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash86",
+      "namePt": "Rio de Janeiro Aéreo",
+      "nameEn": "Rio de Janeiro Aerial",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash87",
+      "namePt": "Calçadão de Copacabana",
+      "nameEn": "Copacabana Boardwalk",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash88",
+      "namePt": "Mar na Hora Dourada",
+      "nameEn": "Golden Hour Sea",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash89",
+      "namePt": "Céu Rosa e Lilás",
+      "nameEn": "Pink and Lilac Sky",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash90",
+      "namePt": "Píer no Lago Enevoado",
+      "nameEn": "Misty Lake Pier",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash91",
+      "namePt": "Nuvens Pastel",
+      "nameEn": "Pastel Clouds",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash92",
+      "namePt": "Mar de Nuvens",
+      "nameEn": "Sea of Clouds",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash93",
+      "namePt": "Luzes do Norte",
+      "nameEn": "Northern Lights",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash94",
+      "namePt": "Via Láctea nas Montanhas",
+      "nameEn": "Milky Way Over Mountains",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash95",
+      "namePt": "Céu Noturno entre Árvores",
+      "nameEn": "Night Sky Through Trees",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash96",
+      "namePt": "Planeta Roxo",
+      "nameEn": "Purple Planet",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash97",
+      "namePt": "Saturno",
+      "nameEn": "Saturn",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash98",
+      "namePt": "Terra vista do Espaço",
+      "nameEn": "Earth from Space",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash99",
+      "namePt": "Mar Visto de Baixo",
+      "nameEn": "Sea from Below",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash100",
+      "namePt": "Água Cristalina",
+      "nameEn": "Crystal Water",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash101",
+      "namePt": "Ondas Azul e Laranja",
+      "nameEn": "Blue and Orange Waves",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash102",
+      "namePt": "Fluido Azul e Roxo",
+      "nameEn": "Blue and Purple Fluid",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash103",
+      "namePt": "Ondas Roxo e Rosa",
+      "nameEn": "Purple and Pink Waves",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash104",
+      "namePt": "Esferas Pastel",
+      "nameEn": "Pastel Spheres",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash105",
+      "namePt": "Luz Azul e Rosa",
+      "nameEn": "Blue and Pink Light",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash106",
+      "namePt": "Luz Roxa e Laranja",
+      "nameEn": "Purple and Orange Light",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash107",
+      "namePt": "Desfoque Roxo",
+      "nameEn": "Purple Blur",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash108",
+      "namePt": "Mármore Branco",
+      "nameEn": "White Marble",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash109",
+      "namePt": "Mármore Negro",
+      "nameEn": "Black Marble",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash110",
+      "namePt": "Mármore com Dourado",
+      "nameEn": "Gold Marble",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash111",
+      "namePt": "Onda de Areia Escura",
+      "nameEn": "Dark Sand Ripple",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash112",
+      "namePt": "Dunas Onduladas",
+      "nameEn": "Rolling Dunes",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash113",
+      "namePt": "Deserto e Céu Azul",
+      "nameEn": "Desert and Blue Sky",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash114",
+      "namePt": "Shibuya em Neon",
+      "nameEn": "Neon Shibuya",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash115",
+      "namePt": "Rua Japonesa à Noite",
+      "nameEn": "Japanese Street at Night",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash116",
+      "namePt": "Escadas em Tons Pastel",
+      "nameEn": "Pastel Staircases",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash117",
+      "namePt": "Chuva na Janela",
+      "nameEn": "Rain on the Window",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash118",
+      "namePt": "Chuva à Noite",
+      "nameEn": "Rainy Night",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash119",
+      "namePt": "Folhas de Costela-de-Adão",
+      "nameEn": "Monstera Leaves",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash120",
+      "namePt": "Folha com Gotas",
+      "nameEn": "Leaf with Droplets",
+      "kind": "image"
+    },
+    {
+      "id": "unsplash121",
+      "namePt": "Gato Preto",
+      "nameEn": "Black Cat",
+      "kind": "image"
+    }
+  ],
+  "appearanceRanges": {
+    "overlayOpacity": [
+      0,
+      100
+    ],
+    "overlayBlur": [
+      0,
+      20
+    ],
+    "ownBubbleOpacity": [
+      10,
+      100
+    ],
+    "ownTextIntensity": [
+      0,
+      100
+    ],
+    "otherBubbleOpacity": [
+      10,
+      100
+    ],
+    "otherTextIntensity": [
+      0,
+      100
+    ],
+    "bubbleBlur": [
+      0,
+      20
+    ]
+  }
+}

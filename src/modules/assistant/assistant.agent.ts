@@ -2,6 +2,8 @@ import type { Locale } from '../../lib/locale.js';
 import type { AiConversationMessage, AiRouter, AiTurn } from '../ai/ai.provider.js';
 import type { AssistantCard } from './assistant.card.js';
 import { buildAssistantInstruction } from './assistant.prompt.js';
+import { catalogSummary } from './look.catalog.js';
+import { mergeAppliedCards } from './look.merge.js';
 import type { AssistantContext, AssistantToolbox } from './assistant.toolbox.js';
 
 export const ASSISTANT_MAX_TOOL_ROUNDS = 3;
@@ -67,7 +69,7 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
       nowLocal,
       weekday,
       timeZone: context.timeZone,
-      catalogSummary: input.catalogSummary ?? '',
+      catalogSummary: input.catalogSummary ?? (toolbox.has('suggest_look') || toolbox.has('apply_look') ? catalogSummary(input.locale) : ''),
       toolNames: toolbox.declarations().map((declaration) => declaration.name),
     }), input.extraInstruction].filter(Boolean).join(' '),
     tools: toolbox.declarations(),
@@ -93,7 +95,7 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
       executedCalls += 1;
       const result = await toolbox.run(call.name, call.args, context);
       if (result.card) {
-        card = result.card;
+        card = mergeAppliedCards(card, result.card);
       }
       responses.push({ id: call.id, name: call.name, response: result.response });
     }

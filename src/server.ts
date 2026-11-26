@@ -14,6 +14,10 @@ import { QuickReplyRegistry } from './modules/assistant/assistant.quick-reply.js
 import { AssistantToolbox } from './modules/assistant/assistant.toolbox.js';
 import { appHelpTool } from './modules/assistant/tools/app-help.tool.js';
 import { capabilitiesTool } from './modules/assistant/tools/capabilities.tool.js';
+import { createApplyLookTool } from './modules/assistant/tools/apply-look.tool.js';
+import { suggestLookTool } from './modules/assistant/tools/suggest-look.tool.js';
+import { LookService } from './modules/assistant/look.service.js';
+import { registerLookQuickReplies } from './modules/assistant/look.quick-reply.js';
 import { httpLinkPreviewFetcher, LinkPreviewRepository, LinkPreviewService } from './modules/link-preview/index.js';
 import {
   MessageRateLimiter,
@@ -106,6 +110,9 @@ await aiUsageRepository
   .purgeBefore(currentUsageDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)))
   .catch((error: unknown) => logger.warn({ err: error }, 'AI usage purge failed'));
 const aiUsageLimiter = new AiUsageLimiter(aiUsageRepository);
+const lookService = new LookService(userService);
+const quickReplyRegistry = new QuickReplyRegistry();
+registerLookQuickReplies(quickReplyRegistry, lookService);
 const aiService = new AiService(
   assistantIdentity,
   roomKeyRepository,
@@ -116,8 +123,8 @@ const aiService = new AiService(
   aiUsageLimiter,
   objectStorage,
   userService,
-  new AssistantToolbox().register(capabilitiesTool).register(appHelpTool),
-  new QuickReplyRegistry(),
+  new AssistantToolbox().register(capabilitiesTool).register(appHelpTool).register(suggestLookTool).register(createApplyLookTool(lookService)),
+  quickReplyRegistry,
 );
 
 const gifProvider = createGifProvider({ nodeEnv: env.NODE_ENV, provider: env.GIF_PROVIDER, klipyApiKey: env.KLIPY_API_KEY });

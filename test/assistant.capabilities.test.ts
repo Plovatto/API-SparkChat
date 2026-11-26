@@ -11,7 +11,7 @@ import { openField } from '@/modules/ai/ai.crypto.js';
 import { createFakeServer, setupAssistantRoom } from './support/ai-fixture.js';
 import { createTestDb } from './support/create-test-db.js';
 
-const CONTEXT: AssistantContext = { userId: 'u', roomId: 'r', locale: 'pt', timeZone: 'America/Sao_Paulo', now: 0 };
+const CONTEXT: AssistantContext = { userId: 'u', roomId: 'r', locale: 'pt', io: {} as never, timeZone: 'America/Sao_Paulo', now: 0 };
 
 function toolbox(): AssistantToolbox {
   return new AssistantToolbox().register(capabilitiesTool).register(appHelpTool);
