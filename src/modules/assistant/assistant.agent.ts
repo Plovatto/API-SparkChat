@@ -5,6 +5,7 @@ import { buildAssistantInstruction } from './assistant.prompt.js';
 import { catalogSummary } from './look.catalog.js';
 import { mergeAppliedCards } from './look.merge.js';
 import type { AssistantContext, AssistantToolbox } from './assistant.toolbox.js';
+import { nowLocalString } from './zoned-time.js';
 
 export const ASSISTANT_MAX_TOOL_ROUNDS = 3;
 export const ASSISTANT_MAX_TOOL_CALLS = 5;
@@ -42,20 +43,9 @@ export interface AssistantTurnInput {
 }
 
 function formatLocalNow(now: number, timeZone: string, locale: Locale): { nowLocal: string; weekday: string } {
-  const date = new Date(now);
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(date);
-  const pick = (type: string): string => parts.find((part) => part.type === type)?.value ?? '00';
   return {
-    nowLocal: `${pick('year')}-${pick('month')}-${pick('day')}T${pick('hour')}:${pick('minute')}`,
-    weekday: new Intl.DateTimeFormat(locale === 'pt' ? 'pt-BR' : 'en-US', { timeZone, weekday: 'long' }).format(date),
+    nowLocal: nowLocalString(now, timeZone),
+    weekday: new Intl.DateTimeFormat(locale === 'pt' ? 'pt-BR' : 'en-US', { timeZone, weekday: 'long' }).format(new Date(now)),
   };
 }
 
