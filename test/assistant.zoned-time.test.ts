@@ -3,6 +3,7 @@ import {
   formatForUser,
   localToUtc,
   nextOccurrence,
+  anchorFromLocal,
   nowLocalString,
   parseLocalDateTime,
   utcToLocalParts,
@@ -20,6 +21,13 @@ describe('parseLocalDateTime', () => {
     for (const value of ['2026-02-30T09:00', '2026-13-01T09:00', '2026-11-27T24:00', '2026-11-27T09:60', '2026-11-27', '2026-11-27T09:00:00Z', 'x']) {
       expect(parseLocalDateTime(value)).toBeNull();
     }
+  });
+});
+
+describe('anchorFromLocal', () => {
+  it('extracts day and wall time', () => {
+    expect(anchorFromLocal('2027-01-31T08:15')).toEqual({ day: 31, hour: 8, minute: 15 });
+    expect(anchorFromLocal('2027-02-30T08:15')).toBeNull();
   });
 });
 
@@ -74,6 +82,15 @@ describe('nextOccurrence', () => {
     expect(next - first).toBe(25 * 3600000);
   });
 
+  it('daily returns to the original wall time after a spring-forward gap', () => {
+    const anchor = anchorFromLocal('2027-03-13T02:30')!;
+    const gap = localToUtc('2027-03-14T02:30', NY);
+    expect(nowLocalString(gap, NY)).toBe('2027-03-14T03:00');
+    const next = nextOccurrence(gap, { freq: 'daily' }, NY, anchor);
+    expect(nowLocalString(next, NY)).toBe('2027-03-15T02:30');
+    expect(nowLocalString(nextOccurrence(gap, { freq: 'daily' }, NY), NY)).toBe('2027-03-15T03:00');
+  });
+
   it('daily respects interval', () => {
     const first = localToUtc('2026-11-27T08:00', SP);
     expect(nextOccurrence(first, { freq: 'daily', interval: 3 }, SP)).toBe(localToUtc('2026-11-30T08:00', SP));
@@ -99,9 +116,9 @@ describe('nextOccurrence', () => {
     const jan = localToUtc('2027-01-31T08:00', SP);
     const feb = nextOccurrence(jan, { freq: 'monthly' }, SP);
     expect(feb).toBe(localToUtc('2027-02-28T08:00', SP));
-    const mar = nextOccurrence(feb, { freq: 'monthly' }, SP, 31);
+    const mar = nextOccurrence(feb, { freq: 'monthly' }, SP, anchorFromLocal('2027-01-31T08:00')!);
     expect(mar).toBe(localToUtc('2027-03-31T08:00', SP));
-    const apr = nextOccurrence(mar, { freq: 'monthly' }, SP, 31);
+    const apr = nextOccurrence(mar, { freq: 'monthly' }, SP, anchorFromLocal('2027-01-31T08:00')!);
     expect(apr).toBe(localToUtc('2027-04-30T08:00', SP));
   });
 

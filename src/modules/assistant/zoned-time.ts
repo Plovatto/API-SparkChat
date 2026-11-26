@@ -8,6 +8,12 @@ export interface LocalDateTime {
   minute: number;
 }
 
+export interface RecurrenceAnchor {
+  day: number;
+  hour: number;
+  minute: number;
+}
+
 export interface LocalParts extends LocalDateTime {
   weekday: number;
 }
@@ -105,29 +111,35 @@ function addDays(wall: LocalDateTime, days: number): LocalDateTime {
   return { ...wall, year: moved.getUTCFullYear(), month: moved.getUTCMonth() + 1, day: moved.getUTCDate() };
 }
 
-function nextWall(previous: LocalParts, recurrence: Recurrence, anchorDay: number): LocalDateTime {
+function nextWall(previous: LocalParts, recurrence: Recurrence, anchor: RecurrenceAnchor): LocalDateTime {
+  const { hour, minute } = anchor;
   const interval = Math.max(1, Math.floor(recurrence.interval ?? 1));
-  if (recurrence.freq === 'daily') return addDays(previous, interval);
+  if (recurrence.freq === 'daily') return { ...addDays(previous, interval), hour, minute };
 
   if (recurrence.freq === 'weekly') {
     const weekdays = recurrence.weekdays && recurrence.weekdays.length > 0 ? recurrence.weekdays : [previous.weekday];
     for (let offset = 1; offset <= 7 * interval + 7; offset += 1) {
       const weekday = (previous.weekday + offset) % 7;
       const weekIndex = Math.floor((previous.weekday + offset) / 7);
-      if (weekdays.includes(weekday) && weekIndex % interval === 0) return addDays(previous, offset);
+      if (weekdays.includes(weekday) && weekIndex % interval === 0) return { ...addDays(previous, offset), hour, minute };
     }
-    return addDays(previous, 7 * interval);
+    return { ...addDays(previous, 7 * interval), hour, minute };
   }
 
   const monthIndex = previous.year * 12 + (previous.month - 1) + interval;
   const year = Math.floor(monthIndex / 12);
   const month = (monthIndex % 12) + 1;
-  return { year, month, day: Math.min(anchorDay, daysInMonth(year, month)), hour: previous.hour, minute: previous.minute };
+  return { year, month, day: Math.min(anchor.day, daysInMonth(year, month)), hour, minute };
 }
 
-export function nextOccurrence(previousFireAt: number, recurrence: Recurrence, timeZone: string, anchorDay?: number): number {
+export function anchorFromLocal(local: string): RecurrenceAnchor | null {
+  const wall = parseLocalDateTime(local);
+  return wall ? { day: wall.day, hour: wall.hour, minute: wall.minute } : null;
+}
+
+export function nextOccurrence(previousFireAt: number, recurrence: Recurrence, timeZone: string, originalAnchor?: RecurrenceAnchor): number {
   const previous = utcToLocalParts(previousFireAt, timeZone);
-  const anchor = anchorDay ?? previous.day;
+  const anchor = originalAnchor ?? { day: previous.day, hour: previous.hour, minute: previous.minute };
   let current: LocalParts = previous;
   let result = previousFireAt;
   for (let guard = 0; guard < 8 && result <= previousFireAt; guard += 1) {
