@@ -90,17 +90,19 @@ describe('message:send quickReply', () => {
   });
 
   it('rejects an unknown choice', async () => {
-    const { aiRoom, aiKeyId, client } = await setup();
+    const { h, aiRoom, aiKeyId, client } = await setup();
+    const messageId = randomUUID();
 
     const error = waitForEvent<ErrorEvent>(client, 'error');
     client.emit('message:send', {
       roomId: aiRoom.id,
       content: fakeField('Sim', aiKeyId),
-      messageId: randomUUID(),
+      messageId,
       quickReply: { cardId: randomUUID(), choice: 'explode' },
     });
 
-    expect((await error).code).toBeTruthy();
+    expect((await error).code).toBe('validation.invalidPayload');
+    expect(await h.messageService.getMessage(messageId)).toBeNull();
   });
 
   it('never stores an assistantCard sent by the client', async () => {

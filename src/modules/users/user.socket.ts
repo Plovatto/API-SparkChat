@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { logger } from '../../config/logger.js';
 import { getClientIp } from '../../config/client-ip.js';
 import { errorPayloadSchema } from '../../docs/common-schemas.js';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
@@ -336,6 +337,20 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
   }
 }
 
+async function syncHandshakeTimeZone(socket: AppSocket, deps: UserSocketDeps, userId: string): Promise<void> {
+  const timeZone = socket.data.timeZone;
+  if (!timeZone) {
+    return;
+  }
+  try {
+    if ((await deps.userService.getTimeZone(userId)) !== timeZone) {
+      await deps.userService.setTimeZone(userId, timeZone);
+    }
+  } catch (error) {
+    logger.warn({ err: error, userId }, 'Failed to persist the handshake time zone');
+  }
+}
+
 async function bindActiveSocketSession(
   socket: AppSocket,
   deps: UserSocketDeps,
@@ -346,9 +361,7 @@ async function bindActiveSocketSession(
   }
 
   if (await deps.userService.isSessionActive(binding.userId, binding.sessionId)) {
-    if (socket.data.timeZone) {
-      await deps.userService.setTimeZone(binding.userId, socket.data.timeZone);
-    }
+    await syncHandshakeTimeZone(socket, deps, binding.userId);
     return true;
   }
 

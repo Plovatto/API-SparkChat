@@ -6,8 +6,8 @@ import { resolveObjectKey } from '../../storage/object-storage-url.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import type { StorageQuota } from '../../storage/storage-quota.js';
 import type { UploadRegistry } from '../../storage/upload-registry.js';
-import type { UserService } from '../users/index.js';
 import type { QuickReply } from '../assistant/assistant.card.js';
+import type { UserService } from '../users/index.js';
 import { nextTimestamp } from './message.clock.js';
 import type { MessageRepository, RoomDigest, RoomDigestRequest, UnreadCounts } from './message.repository.js';
 
@@ -268,6 +268,8 @@ export class MessageService {
       caption: null,
       linkPreview: null,
       replyTo: null,
+      assistantCard: null,
+      quickReply: null,
     });
     if (!updated) {
       throw AppError.of('message.notFound');

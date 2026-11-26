@@ -66,8 +66,8 @@ export interface MessageRecord {
   caption: string | null;
   linkPreview: MessageLinkPreview | null;
   systemEvent: SystemEvent | null;
-  assistantCard?: string;
-  quickReply?: QuickReply;
+  assistantCard?: string | null;
+  quickReply?: QuickReply | null;
 }
 
 export interface MessageView {
