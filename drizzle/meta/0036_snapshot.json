@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "685f8f30-6c65-4526-a954-ccbaedbec359",
+  "id": "9f884238-27e3-4d7e-b567-d05a7458619f",
   "prevId": "f78b2a03-b8d8-491c-ac27-01154ba673ff",
   "tables": {
     "ai_daily_usage": {
@@ -869,6 +869,13 @@
         },
         "last_fired_at": {
           "name": "last_fired_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "snooze_at": {
+          "name": "snooze_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,

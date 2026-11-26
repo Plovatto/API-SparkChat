@@ -17,6 +17,7 @@ CREATE TABLE `reminders` (
 	`anchor` text,
 	`status` text DEFAULT 'active' NOT NULL,
 	`last_fired_at` integer,
+	`snooze_at` integer,
 	`created_at` integer NOT NULL
 );
 --> statement-breakpoint

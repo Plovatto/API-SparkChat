@@ -4,7 +4,7 @@ import { confirmCard } from '../assistant.confirm.js';
 import { defineTool, type AssistantContext, type ToolResult } from '../assistant.toolbox.js';
 import { ASSISTANT_TEXTS, confirmSummary, formatWhen, truncate } from '../reminder.texts.js';
 import { REMINDER_MAX_LEAD_MS, REMINDER_MIN_LEAD_MS, REMINDER_TEXT_MAX_LENGTH, type RemindersService } from '../reminders.service.js';
-import { localToUtc, parseLocalDateTime } from '../zoned-time.js';
+import { localToUtc, parseLocalDateTime, snapToRecurrence } from '../zoned-time.js';
 
 const PREVIEW_LENGTH = 80;
 
@@ -40,13 +40,17 @@ function evaluate({ text, whenLocal, recurrence: rawRecurrence }: CreateArgs, ct
   if (clean.length === 0) {
     return { response: { error: 'empty' } };
   }
+  if (Array.from(clean).length > REMINDER_TEXT_MAX_LENGTH) {
+    return { response: { error: 'too_long' } };
+  }
   if (!whenLocal) {
     return { response: { error: 'need_time' } };
   }
   if (!parseLocalDateTime(whenLocal)) {
     return { response: { error: 'invalid_time' } };
   }
-  const fireAt = localToUtc(whenLocal, ctx.timeZone);
+  const firstLocal = snapToRecurrence(whenLocal, recurrence);
+  const fireAt = localToUtc(firstLocal, ctx.timeZone);
   if (fireAt < ctx.now + REMINDER_MIN_LEAD_MS) {
     return { response: { error: 'too_soon' } };
   }
@@ -56,7 +60,7 @@ function evaluate({ text, whenLocal, recurrence: rawRecurrence }: CreateArgs, ct
   const summary = confirmSummary(clean, formatWhen(fireAt, ctx.timeZone, ctx.locale), recurrence, ctx.locale);
   return {
     response: { awaitingConfirmation: true, summary },
-    card: confirmCard({ type: 'reminder', text: clean, fireAtLocal: whenLocal, timeZone: ctx.timeZone, recurrence }, ctx.locale),
+    card: confirmCard({ type: 'reminder', text: clean, fireAtLocal: firstLocal, timeZone: ctx.timeZone, recurrence }, ctx.locale),
   };
 }
 
@@ -65,7 +69,7 @@ export function createCreateReminderTool() {
     declaration: {
       name: 'create_reminder',
       description:
-        'Asks the person to confirm a reminder. whenLocal is local time without offset, like 2026-11-27T09:00. If the person did not say when, call without whenLocal and then ask them for the time. Never make up a time.',
+        'Asks the person to confirm a reminder. whenLocal is local time without offset, like 2026-11-27T09:00. If the person did not say when, call without whenLocal (it returns need_time) and then ask them for the time. Never make up a time. For weekly reminders pass weekdays; the first fire snaps to the first matching weekday.',
       parameters: {
         type: 'object',
         properties: {
@@ -76,7 +80,7 @@ export function createCreateReminderTool() {
         required: ['text'],
       },
     },
-    schema: z.object({ text: z.string().max(REMINDER_TEXT_MAX_LENGTH), whenLocal: z.string().optional(), recurrence: recurrenceSchema.optional() }),
+    schema: z.object({ text: z.string(), whenLocal: z.string().optional(), recurrence: recurrenceSchema.optional() }),
     run: (args, ctx) => Promise.resolve(evaluate(args, ctx)),
   });
 }

@@ -137,6 +137,21 @@ export function anchorFromLocal(local: string): RecurrenceAnchor | null {
   return wall ? { day: wall.day, hour: wall.hour, minute: wall.minute } : null;
 }
 
+export function snapToRecurrence(local: string, recurrence: Recurrence | null): string {
+  const wall = parseLocalDateTime(local);
+  const weekdays = recurrence?.freq === 'weekly' ? recurrence.weekdays : undefined;
+  if (!wall || !weekdays || weekdays.length === 0) return local;
+  const base = Date.UTC(wall.year, wall.month - 1, wall.day);
+  const weekday = new Date(base).getUTCDay();
+  for (let offset = 0; offset < 7; offset += 1) {
+    if (weekdays.includes((weekday + offset) % 7)) {
+      const moved = new Date(base + offset * DAY);
+      return `${pad(moved.getUTCFullYear(), 4)}-${pad(moved.getUTCMonth() + 1)}-${pad(moved.getUTCDate())}T${pad(wall.hour)}:${pad(wall.minute)}`;
+    }
+  }
+  return local;
+}
+
 export function nextOccurrence(previousFireAt: number, recurrence: Recurrence, timeZone: string, originalAnchor?: RecurrenceAnchor): number {
   const previous = utcToLocalParts(previousFireAt, timeZone);
   const anchor = originalAnchor ?? { day: previous.day, hour: previous.hour, minute: previous.minute };

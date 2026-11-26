@@ -20,7 +20,7 @@ const TOOL_RULES: Record<Locale, Record<string, string>> = {
     list_notes: 'Quando pedir para ver as anotações, use list_notes.',
     delete_note: 'Quando pedir para apagar uma anotação, use delete_note com o id devolvido por list_notes.',
     create_reminder:
-      'Quando pedir um lembrete, use create_reminder com whenLocal e, se for recorrente, recurrence. Se a pessoa não disse quando, pergunte o horário antes de chamar a ferramenta e nunca invente um. Depois de chamar, repita o resumo devolvido (summary) e pergunte se confirma.',
+      'Quando pedir um lembrete, use create_reminder com whenLocal e, se for recorrente, recurrence. Se a pessoa não disse quando, chame sem whenLocal (a ferramenta devolve need_time), pergunte o horário e nunca invente um. Depois de chamar com horário, repita o resumo devolvido (summary) e pergunte se confirma.',
     list_reminders: 'Quando pedir para ver os lembretes, use list_reminders.',
     cancel_reminder: 'Quando pedir para cancelar um lembrete, use cancel_reminder com o id devolvido por list_reminders.',
     set_status: 'Quando pedir para mudar o status, use set_status.',
@@ -37,7 +37,7 @@ const TOOL_RULES: Record<Locale, Record<string, string>> = {
     list_notes: 'When they ask to see their notes, use list_notes.',
     delete_note: 'When they ask to delete a note, use delete_note with the id returned by list_notes.',
     create_reminder:
-      'When they ask for a reminder, use create_reminder with whenLocal and, if it repeats, recurrence. If the person did not say when, ask for the time before calling the tool and never make one up. After calling it, repeat the returned summary and ask them to confirm.',
+      'When they ask for a reminder, use create_reminder with whenLocal and, if it repeats, recurrence. If the person did not say when, call without whenLocal (the tool returns need_time), ask for the time and never make one up. After calling with a time, repeat the returned summary and ask them to confirm.',
     list_reminders: 'When they ask to see their reminders, use list_reminders.',
     cancel_reminder: 'When they ask to cancel a reminder, use cancel_reminder with the id returned by list_reminders.',
     set_status: 'When they ask to change their status, use set_status.',

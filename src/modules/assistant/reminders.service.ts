@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { logger } from '../../config/logger.js';
 import type { Locale } from '../../lib/locale.js';
 import type { Recurrence } from './assistant.card.js';
 import type { AssistantHost } from './assistant.host.js';
@@ -37,6 +38,10 @@ export interface NewReminder {
   anchor: RecurrenceAnchor | null;
 }
 
+export type CompleteResult = { kind: 'missing' } | { kind: 'done' } | { kind: 'recurring'; next: number };
+
+export type SnoozeResult = { kind: 'missing' } | { kind: 'done' } | { kind: 'ok'; at: number };
+
 export type CreateReminderResult = { ok: true; reminder: Reminder } | { ok: false; error: 'empty' | 'too_long' | 'limit' | 'unavailable' };
 
 function toLocale(value: string): Locale {
@@ -68,7 +73,7 @@ export class RemindersService {
     if (text.length === 0) {
       return { ok: false, error: 'empty' };
     }
-    if (text.length > REMINDER_TEXT_MAX_LENGTH) {
+    if (Array.from(text).length > REMINDER_TEXT_MAX_LENGTH) {
       return { ok: false, error: 'too_long' };
     }
     const id = randomUUID();
@@ -87,6 +92,7 @@ export class RemindersService {
       anchor: input.anchor,
       status: 'active',
       lastFiredAt: null,
+      snoozeAt: null,
       createdAt: this.now(),
     };
     if (!(await this.repository.insertIfBelow(row, REMINDERS_MAX_ACTIVE))) {
@@ -119,31 +125,47 @@ export class RemindersService {
     return this.repository.cancel(userId, id);
   }
 
-  async complete(userId: string, id: string): Promise<boolean> {
+  async complete(userId: string, id: string): Promise<CompleteResult> {
     const row = await this.repository.find(userId, id);
     if (!row || row.status === 'cancelled') {
-      return false;
+      return { kind: 'missing' };
     }
-    if (!row.recurrence) {
-      await this.repository.markDone(userId, id);
+    if (row.recurrence) {
+      await this.repository.clearSnooze(userId, id);
+      return { kind: 'recurring', next: row.nextFireAt };
     }
-    return true;
+    await this.repository.markDone(userId, id);
+    return { kind: 'done' };
   }
 
-  snooze(userId: string, id: string, minutes: number): Promise<number | null> {
-    return this.repository.snooze(userId, id, this.now() + minutes * 60_000);
+  async snooze(userId: string, id: string, minutes: number): Promise<SnoozeResult> {
+    const row = await this.repository.find(userId, id);
+    if (!row || row.status === 'cancelled') {
+      return { kind: 'missing' };
+    }
+    if (row.status === 'done') {
+      return { kind: 'done' };
+    }
+    const at = this.now() + minutes * 60_000;
+    const changed = row.recurrence ? await this.repository.setSnooze(userId, id, at) : await this.repository.reactivate(userId, id, at);
+    return changed ? { kind: 'ok', at } : { kind: 'missing' };
   }
 
   async claimDue(now: number, limit: number = REMINDER_DUE_BATCH): Promise<FiredReminder[]> {
     const due = await this.repository.listDue(now, limit);
     const fired: FiredReminder[] = [];
     for (const row of due) {
-      const claimed = await this.repository.claim(row, { nextFireAt: this.following(row, now), firedAt: now });
-      if (!claimed) {
-        continue;
+      try {
+        const keepSchedule = row.snoozeAt !== null && row.snoozeAt <= now && row.nextFireAt > now;
+        const claimed = await this.repository.claim(row, { nextFireAt: keepSchedule ? row.nextFireAt : this.following(row, now), firedAt: now, keepSchedule });
+        if (!claimed) {
+          continue;
+        }
+        const text = await this.host.open(row.userId, 'reminder', row.id, row.textSealed).catch(() => null);
+        fired.push({ ...view(row, ''), text });
+      } catch (error) {
+        logger.error({ err: error, reminderId: row.id }, 'Falha ao reivindicar lembrete do SparkAI');
       }
-      const text = await this.host.open(row.userId, 'reminder', row.id, row.textSealed);
-      fired.push({ ...view(row, ''), text });
     }
     return fired;
   }
@@ -152,10 +174,15 @@ export class RemindersService {
     if (!row.recurrence) {
       return null;
     }
-    let next = row.nextFireAt;
-    for (let step = 0; step < MAX_CATCH_UP_STEPS && next <= now; step += 1) {
-      next = nextOccurrence(next, row.recurrence, row.timeZone, row.anchor ?? undefined);
+    try {
+      let next = row.nextFireAt;
+      for (let step = 0; step < MAX_CATCH_UP_STEPS && next <= now; step += 1) {
+        next = nextOccurrence(next, row.recurrence, row.timeZone, row.anchor ?? undefined);
+      }
+      return next > now ? next : null;
+    } catch (error) {
+      logger.error({ err: error, reminderId: row.id }, 'Não foi possível calcular a próxima ocorrência do lembrete');
+      return null;
     }
-    return next;
   }
 }

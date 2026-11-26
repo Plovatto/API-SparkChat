@@ -110,6 +110,27 @@ describe('reminder tools', () => {
     expect((await t.toolbox.run('cancel_reminder', { reminderId: id }, t.toolContext())).response).toEqual({ error: 'not_found' });
   });
 
+  it('refuses over-long reminder text counted in characters and snaps weekly reminders to the first matching weekday', async () => {
+    const t = await setupTasks();
+    const long = await t.toolbox.run('create_reminder', { text: 'x'.repeat(501), whenLocal: '2026-11-27T09:00' }, t.toolContext());
+    expect(long.response).toEqual({ error: 'too_long' });
+    const emojis = await t.toolbox.run('create_reminder', { text: '😀'.repeat(500), whenLocal: '2026-11-27T09:00' }, t.toolContext());
+    expect(emojis.response).toMatchObject({ awaitingConfirmation: true });
+    expect((await t.notes.add(t.alice.id, '😀'.repeat(1000))).ok).toBe(true);
+
+    const weekly = await t.toolbox.run('create_reminder', { text: 'aula', whenLocal: '2026-11-26T09:00', recurrence: { freq: 'weekly', weekdays: [1] } }, t.toolContext());
+    expect(weekly.card).toMatchObject({ action: { fireAtLocal: '2026-11-30T09:00', recurrence: { freq: 'weekly', weekdays: [1] } } });
+    expect(String(weekly.response.summary)).toContain('seg, 30/11 às 09:00');
+  });
+
+  it('cancelling another user reminder has no effect', async () => {
+    const t = await setupTasks();
+    const created = await t.reminders.create({ userId: t.alice.id, text: 'ligar', fireAt: TOMORROW_9H, timeZone: TIME_ZONE, locale: 'pt', recurrence: null, anchor: null });
+    const id = created.ok ? created.reminder.id : '';
+    expect(await t.reminders.cancel('outra-pessoa', id)).toBe(false);
+    expect((await rows(t))[0]?.status).toBe('active');
+  });
+
   it('snooze10 and snooze60 move the reminder and done completes it', async () => {
     const t = await setupTasks();
     const created = await t.reminders.create({ userId: t.alice.id, text: 'ligar', fireAt: T0 - 1000, timeZone: TIME_ZONE, locale: 'pt', recurrence: null, anchor: null });
@@ -129,7 +150,7 @@ describe('reminder tools', () => {
     const first = await t.postCard(card);
     await t.tap(first.id, 'snooze10');
     expect((await rows(t))[0]).toMatchObject({ status: 'active', nextFireAt: T0 + 10 * 60_000 });
-    expect((await t.assistantTexts()).at(-1)).toBe('Adiado! Te lembro de novo às 09:10.');
+    expect((await t.assistantTexts()).at(-1)).toBe('Adiado! Te lembro de novo em qui, 26/11 às 09:10.');
 
     const second = await t.postCard(card);
     await t.tap(second.id, 'snooze60');

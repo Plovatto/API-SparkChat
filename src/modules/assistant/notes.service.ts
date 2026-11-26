@@ -25,7 +25,7 @@ export class NotesService {
     if (text.length === 0) {
       return { ok: false, error: 'empty' };
     }
-    if (text.length > NOTE_MAX_LENGTH) {
+    if (Array.from(text).length > NOTE_MAX_LENGTH) {
       return { ok: false, error: 'too_long' };
     }
     const id = randomUUID();

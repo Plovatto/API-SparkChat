@@ -384,6 +384,7 @@ export const reminders = sqliteTable(
     anchor: text('anchor', { mode: 'json' }).$type<{ day: number; hour: number; minute: number } | null>(),
     status: text('status').notNull().default('active'),
     lastFiredAt: integer('last_fired_at'),
+    snoozeAt: integer('snooze_at'),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [index('reminders_status_next_fire_idx').on(table.status, table.nextFireAt), index('reminders_user_idx').on(table.userId)],

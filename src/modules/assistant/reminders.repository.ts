@@ -1,4 +1,4 @@
-import { and, asc, eq, lte, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { reminders } from '../../database/schema.js';
 import type { Database } from '../../database/turso-client.js';
 import type { Recurrence } from './assistant.card.js';
@@ -15,12 +15,14 @@ export interface ReminderRow {
   anchor: RecurrenceAnchor | null;
   status: string;
   lastFiredAt: number | null;
+  snoozeAt: number | null;
   createdAt: number;
 }
 
 export interface FireUpdate {
   nextFireAt: number | null;
   firedAt: number;
+  keepSchedule: boolean;
 }
 
 export class RemindersRepository {
@@ -28,10 +30,10 @@ export class RemindersRepository {
 
   async insertIfBelow(row: ReminderRow, limit: number): Promise<boolean> {
     const result = await this.db.run(sql`
-      INSERT INTO reminders (id, user_id, text_sealed, next_fire_at, time_zone, locale, recurrence, anchor, status, last_fired_at, created_at)
+      INSERT INTO reminders (id, user_id, text_sealed, next_fire_at, time_zone, locale, recurrence, anchor, status, last_fired_at, snooze_at, created_at)
       SELECT ${row.id}, ${row.userId}, ${row.textSealed}, ${row.nextFireAt}, ${row.timeZone}, ${row.locale},
         ${row.recurrence ? JSON.stringify(row.recurrence) : null}, ${row.anchor ? JSON.stringify(row.anchor) : null},
-        'active', NULL, ${row.createdAt}
+        'active', NULL, NULL, ${row.createdAt}
       WHERE (SELECT COUNT(*) FROM reminders WHERE user_id = ${row.userId} AND status = 'active') < ${limit}
     `);
     return result.rowsAffected > 0;
@@ -57,7 +59,7 @@ export class RemindersRepository {
     return this.db
       .select()
       .from(reminders)
-      .where(and(eq(reminders.status, 'active'), lte(reminders.nextFireAt, now)))
+      .where(and(eq(reminders.status, 'active'), or(lte(reminders.nextFireAt, now), lte(reminders.snoozeAt, now))))
       .orderBy(asc(reminders.nextFireAt))
       .limit(limit);
   }
@@ -67,9 +69,17 @@ export class RemindersRepository {
       .update(reminders)
       .set({
         lastFiredAt: update.firedAt,
-        ...(update.nextFireAt === null ? { status: 'done' } : { nextFireAt: update.nextFireAt }),
+        snoozeAt: null,
+        ...(update.keepSchedule ? {} : update.nextFireAt === null ? { status: 'fired' } : { nextFireAt: update.nextFireAt }),
       })
-      .where(and(eq(reminders.id, row.id), eq(reminders.status, 'active'), eq(reminders.nextFireAt, row.nextFireAt)))
+      .where(
+        and(
+          eq(reminders.id, row.id),
+          eq(reminders.status, 'active'),
+          eq(reminders.nextFireAt, row.nextFireAt),
+          row.snoozeAt === null ? isNull(reminders.snoozeAt) : eq(reminders.snoozeAt, row.snoozeAt),
+        ),
+      )
       .returning();
     return claimed ?? null;
   }
@@ -86,19 +96,32 @@ export class RemindersRepository {
   async markDone(userId: string, id: string): Promise<void> {
     await this.db
       .update(reminders)
-      .set({ status: 'done' })
-      .where(and(eq(reminders.id, id), eq(reminders.userId, userId), eq(reminders.status, 'active')));
+      .set({ status: 'done', snoozeAt: null })
+      .where(and(eq(reminders.id, id), eq(reminders.userId, userId), inArray(reminders.status, ['active', 'fired'])));
   }
 
-  async snooze(userId: string, id: string, fireAt: number): Promise<number | null> {
-    const [row] = await this.db
+  async clearSnooze(userId: string, id: string): Promise<void> {
+    await this.db
       .update(reminders)
-      .set({
-        status: 'active',
-        nextFireAt: sql`CASE WHEN ${reminders.recurrence} IS NOT NULL AND ${reminders.status} = 'active' AND ${reminders.nextFireAt} < ${fireAt} THEN ${reminders.nextFireAt} ELSE ${fireAt} END`,
-      })
-      .where(and(eq(reminders.id, id), eq(reminders.userId, userId), ne(reminders.status, 'cancelled')))
-      .returning({ nextFireAt: reminders.nextFireAt });
-    return row?.nextFireAt ?? null;
+      .set({ snoozeAt: null })
+      .where(and(eq(reminders.id, id), eq(reminders.userId, userId)));
+  }
+
+  async setSnooze(userId: string, id: string, at: number): Promise<boolean> {
+    const rows = await this.db
+      .update(reminders)
+      .set({ snoozeAt: at })
+      .where(and(eq(reminders.id, id), eq(reminders.userId, userId), eq(reminders.status, 'active')))
+      .returning({ id: reminders.id });
+    return rows.length > 0;
+  }
+
+  async reactivate(userId: string, id: string, at: number): Promise<boolean> {
+    const rows = await this.db
+      .update(reminders)
+      .set({ status: 'active', nextFireAt: at, snoozeAt: null })
+      .where(and(eq(reminders.id, id), eq(reminders.userId, userId), inArray(reminders.status, ['active', 'fired'])))
+      .returning({ id: reminders.id });
+    return rows.length > 0;
   }
 }

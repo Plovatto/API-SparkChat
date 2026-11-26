@@ -32,15 +32,6 @@ export function formatWhen(ms: number, timeZone: string, locale: Locale): string
   return `${(parts.weekday ?? '').replace(/\.$/, '')}, ${parts.day}/${parts.month} às ${parts.hour}:${parts.minute}`;
 }
 
-export function formatClock(ms: number, timeZone: string, locale: Locale): string {
-  return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'pt-BR', {
-    timeZone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: locale === 'en' ? 'h12' : 'h23',
-  }).format(new Date(ms));
-}
-
 export function confirmSummary(text: string, when: string, recurrence: Recurrence | null, locale: Locale): string {
   const repeat = recurrence ? ` (${RECURRENCE_LABEL[locale][recurrence.freq]})` : '';
   return locale === 'en' ? `Remind you '${text}' on ${when}${repeat}?` : `Lembrar '${text}' em ${when}${repeat}?`;
@@ -61,7 +52,10 @@ export const ASSISTANT_TEXTS = {
   cancelled: { pt: 'Lembrete cancelado.', en: 'Reminder cancelled.' } satisfies Record<Locale, string>,
   reminderMissing: { pt: 'Não achei esse lembrete.', en: "I couldn't find that reminder." } satisfies Record<Locale, string>,
   done: { pt: 'Concluído! ✅', en: 'Done! ✅' } satisfies Record<Locale, string>,
-  snoozed: (clock: string, locale: Locale): string => (locale === 'en' ? `Snoozed! I'll remind you again at ${clock}.` : `Adiado! Te lembro de novo às ${clock}.`),
+  doneRecurring: (when: string, locale: Locale): string =>
+    locale === 'en' ? `Done! I'll remind you again on ${when}.` : `Concluído! Te lembro de novo em ${when}.`,
+  alreadyDone: { pt: 'Esse lembrete já foi concluído.', en: 'That reminder is already done.' } satisfies Record<Locale, string>,
+  snoozed: (when: string, locale: Locale): string => (locale === 'en' ? `Snoozed! I'll remind you again on ${when}.` : `Adiado! Te lembro de novo em ${when}.`),
   fired: (text: string): string => `⏰ ${text}`,
   firedFallback: { pt: 'Lembrete', en: 'Reminder' } satisfies Record<Locale, string>,
   remindersTitle: { pt: 'Seus lembretes', en: 'Your reminders' } satisfies Record<Locale, string>,

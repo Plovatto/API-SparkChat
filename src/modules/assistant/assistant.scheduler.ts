@@ -52,6 +52,7 @@ export class AssistantScheduler {
     const text = reminder.text ?? ASSISTANT_TEXTS.firedFallback[reminder.locale];
     const roomId = await host.roomIdOf(reminder.userId);
     if (!roomId) {
+      logger.warn({ reminderId: reminder.id }, 'Lembrete vencido sem sala do SparkAI para entregar');
       return;
     }
     try {
