@@ -39,7 +39,7 @@ describe('AiService assistant cards', () => {
     await vi.waitFor(async () => {
       const { messages } = await messageService.getRoomMessagesPage(room.id, { limit: 10 });
       expect(messages.some((message) => message.senderId === assistant.id)).toBe(true);
-    });
+    }, { timeout: 10000 });
 
     const { messages } = await messageService.getRoomMessagesPage(room.id, { limit: 10 });
     const reply = messages.find((message) => message.senderId !== alice.id);

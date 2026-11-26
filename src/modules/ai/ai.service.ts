@@ -16,7 +16,7 @@ import type { ObjectStorage } from '../../storage/object-storage.js';
 import { loadDecryptedAttachment, resolveAudioMimeType } from './ai.attachments.js';
 import { getSodium, openField, openRoomKeyEnvelope, readFieldKeyId, sealField } from './ai.crypto.js';
 import { runAssistantTurn } from '../assistant/assistant.agent.js';
-import type { AssistantCard } from '../assistant/assistant.card.js';
+import { sealAssistantCard } from '../assistant/assistant.seal.js';
 import { AssistantToolbox } from '../assistant/assistant.toolbox.js';
 import type { AssistantIdentity } from './ai.identity.js';
 import {
@@ -44,7 +44,6 @@ const FIELD_LABELS = {
   fileName: 'file-name',
   fileMime: 'file-mime',
   fileKey: 'file-key',
-  assistantCard: 'assistantCard',
 } as const;
 
 type FieldLabel = (typeof FIELD_LABELS)[keyof typeof FIELD_LABELS];
@@ -256,9 +255,6 @@ export class AiService {
         toolbox: this.toolbox,
         router: this.router,
       });
-      if (!reply.text && !reply.card) {
-        throw new Error('Resposta vazia do SparkAI.');
-      }
       const messageId = randomUUID();
 
       const sent = await this.messageService.sendMessage({
@@ -269,7 +265,7 @@ export class AiService {
         type: 'text',
         participantIds: room.participants,
         viewingUserIds: this.presenceService.getViewers(room.id),
-        ...(reply.card ? { assistantCard: await this.sealAssistantCard(reply.card, roomKey, room.id, messageId) } : {}),
+        ...(reply.card ? { assistantCard: await sealAssistantCard(reply.card, roomKey, room.id, messageId, this.identity.signingPrivateKey, this.identity.userId) } : {}),
       });
 
       io.to(room.id).emit('message:new', await this.messageService.toNewView(sent));
@@ -303,15 +299,6 @@ export class AiService {
       senderId: this.identity.userId,
       messageId,
       label: FIELD_LABELS.content,
-    });
-  }
-
-  private sealAssistantCard(card: AssistantCard, roomKey: CurrentRoomKey, roomId: string, messageId: string): Promise<string> {
-    return sealField(JSON.stringify(card), roomKey.roomKey, roomKey.keyId, this.identity.signingPrivateKey, {
-      roomId,
-      senderId: this.identity.userId,
-      messageId,
-      label: FIELD_LABELS.assistantCard,
     });
   }
 

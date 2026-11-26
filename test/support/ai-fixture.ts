@@ -1,10 +1,10 @@
-import type { AssistantToolbox } from '@/modules/assistant/assistant.toolbox.js';
 import { randomUUID } from 'node:crypto';
 import { deriveKeyId, getSodium, openField, sealField } from '@/modules/ai/ai.crypto.js';
 import { AiRouter } from '@/modules/ai/ai.provider.js';
 import { AiService } from '@/modules/ai/ai.service.js';
 import { AiUsageLimiter, AiUsageRepository } from '@/modules/ai/ai.usage-limiter.js';
 import { RoomPresenceService, TypingService, type MessageRecord } from '@/modules/messages/index.js';
+import type { AssistantToolbox } from '@/modules/assistant/assistant.toolbox.js';
 import type { AppServer } from '@/sockets/events.js';
 import { buildRoomService } from './build-room-service.js';
 import { createIdentity, sealAttachmentBytes, sealEnvelope } from './room-keys.js';

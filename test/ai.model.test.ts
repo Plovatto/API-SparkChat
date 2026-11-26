@@ -13,8 +13,16 @@ describe('buildAssistantInstruction', () => {
 
   it('sets english as the default reply language for en while following the language the person writes in', () => {
     const instruction = buildAssistantInstruction({ ...BASE, locale: 'en' });
-    expect(instruction).toContain('O idioma configurado pela pessoa no SparkChat é inglês.');
-    expect(instruction).toContain('Responda em inglês por padrão, mas, se a pessoa escrever em outro idioma, responda no idioma em que ela escreveu.');
+    expect(instruction).toContain('The language the person configured in SparkChat is English.');
+    expect(instruction).toContain('Reply in English by default, but if the person writes in another language, reply in the language they wrote in.');
+    expect(instruction).not.toContain('Responda');
+  });
+
+  it.each(['pt', 'en'] as const)('carries the key rules and context in %s', (locale) => {
+    const instruction = buildAssistantInstruction({ ...BASE, locale, catalogSummary: 'CATALOG' });
+    for (const part of ['2026-11-27T09:00', 'sexta-feira', 'America/Sao_Paulo', 'suggest_look', 'apply_look', 'CATALOG']) {
+      expect(instruction).toContain(part);
+    }
   });
 
   it('includes the local time, time zone, tool rules and catalog summary', () => {

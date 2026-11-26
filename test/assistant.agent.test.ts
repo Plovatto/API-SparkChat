@@ -109,6 +109,49 @@ describe('runAssistantTurn', () => {
     expect(reply).toEqual({ text: 'fim', card: CHOICES });
   });
 
+  it('turns a throwing tool into tool_failed and keeps going', async () => {
+    const { router, seen } = scripted([
+      { text: '', calls: [call('c1')] },
+      { text: 'desculpa', calls: [] },
+    ]);
+    const toolbox = new AssistantToolbox();
+    toolbox.register(
+      defineTool({
+        declaration: { name: 'echo', description: 'echo' },
+        schema: z.object({ value: z.string() }),
+        run: () => Promise.reject(new Error('boom')),
+      }),
+    );
+
+    const reply = await runAssistantTurn({ history: [], locale: 'pt', context: CONTEXT, toolbox, router });
+
+    expect(reply.text).toBe('desculpa');
+    expect(seen[1]?.messages.at(-1)).toEqual({ role: 'user', functionResponse: [{ id: 'c1', name: 'echo', response: { error: 'tool_failed' } }] });
+  });
+
+  it.each([
+    ['pt', 'Pronto! ✨', 'Não consegui concluir agora, tenta de novo?'],
+    ['en', 'Done! ✨', "I couldn't finish that right now, try again?"],
+  ] as const)('never returns empty text in %s', async (locale, done, gaveUp) => {
+    const withCard = scripted([
+      { text: '', calls: [call('c1')] },
+      { text: '', calls: [] },
+    ]);
+    const cardToolbox = new AssistantToolbox();
+    cardToolbox.register(
+      defineTool({
+        declaration: { name: 'echo', description: 'echo' },
+        schema: z.object({ value: z.string() }),
+        run: () => Promise.resolve({ response: {}, card: CARD }),
+      }),
+    );
+    await expect(runAssistantTurn({ history: [], locale, context: CONTEXT, toolbox: cardToolbox, router: withCard.router })).resolves.toEqual({ text: done, card: CARD });
+
+    const exhausted = scripted([{ text: '', calls: [call('c')] }]);
+    const { toolbox } = echoToolbox();
+    await expect(runAssistantTurn({ history: [], locale, context: CONTEXT, toolbox, router: exhausted.router })).resolves.toEqual({ text: gaveUp, card: null });
+  });
+
   it('reports an unknown tool to the model', async () => {
     const toolbox = new AssistantToolbox();
     await expect(toolbox.run('nope', {}, CONTEXT)).resolves.toEqual({ response: { error: 'unknown_tool' } });

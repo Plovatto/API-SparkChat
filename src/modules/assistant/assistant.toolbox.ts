@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import { logger } from '../../config/logger.js';
 import type { Locale } from '../../lib/locale.js';
 import type { AiToolDeclaration } from '../ai/ai.provider.js';
 import type { AssistantCard } from './assistant.card.js';
@@ -47,6 +48,11 @@ export class AssistantToolbox {
     if (!parsed.success) {
       return { response: { error: 'invalid_args' } };
     }
-    return tool.run(parsed.data, ctx);
+    try {
+      return await tool.run(parsed.data, ctx);
+    } catch (error) {
+      logger.error({ err: error, tool: name, roomId: ctx.roomId }, 'Falha ao executar ferramenta do SparkAI');
+      return { response: { error: 'tool_failed' } };
+    }
   }
 }

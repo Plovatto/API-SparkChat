@@ -6,6 +6,23 @@ import type { AssistantContext, AssistantToolbox } from './assistant.toolbox.js'
 
 export const ASSISTANT_MAX_TOOL_ROUNDS = 3;
 
+const DONE_TEXT: Record<Locale, string> = {
+  pt: 'Pronto! ✨',
+  en: 'Done! ✨',
+};
+
+const GAVE_UP_TEXT: Record<Locale, string> = {
+  pt: 'Não consegui concluir agora, tenta de novo?',
+  en: "I couldn't finish that right now, try again?",
+};
+
+function withFallbackText(text: string, card: AssistantCard | null, locale: Locale): AssistantReply {
+  if (text) {
+    return { text, card };
+  }
+  return { text: card ? DONE_TEXT[locale] : GAVE_UP_TEXT[locale], card };
+}
+
 export interface AssistantReply {
   text: string;
   card: AssistantCard | null;
@@ -60,7 +77,7 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
   for (let round = 0; round < ASSISTANT_MAX_TOOL_ROUNDS; round += 1) {
     turn = await router.generate(messages, options);
     if (turn.calls.length === 0) {
-      return { text: turn.text, card };
+      return withFallbackText(turn.text, card, input.locale);
     }
 
     const responses: NonNullable<AiConversationMessage['functionResponse']> = [];
@@ -75,5 +92,5 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
     messages.push({ role: 'user', functionResponse: responses });
   }
 
-  return { text: turn.text, card };
+  return withFallbackText(turn.text, card, input.locale);
 }
