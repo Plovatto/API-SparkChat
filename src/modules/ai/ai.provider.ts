@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { GoogleGenAI, type GenerateContentResponse } from '@google/genai';
+import {
+  ApiError,
+  FinishReason,
+  GoogleGenAI,
+  type GenerateContentParameters,
+  type GenerateContentResponse,
+} from '@google/genai';
+import { logger } from '../../config/logger.js';
 import type { Locale } from '../../lib/locale.js';
 import { AI_FALLBACK_MODEL, AI_MAX_OUTPUT_TOKENS, AI_PRIMARY_MODEL } from './ai.model.js';
 
@@ -102,13 +109,64 @@ function extractCalls(response: GenerateContentResponse): AiToolCall[] {
   return calls;
 }
 
-class GeminiModelProvider implements AiProvider {
+export interface GeminiClient {
+  models: {
+    generateContent(params: GenerateContentParameters): Promise<GenerateContentResponse>;
+  };
+}
+
+class MalformedFunctionCallError extends Error {
+  constructor() {
+    super('MALFORMED_FUNCTION_CALL');
+  }
+}
+
+function stripToolParts(messages: AiConversationMessage[]): AiConversationMessage[] {
+  const stripped: AiConversationMessage[] = [];
+  for (const message of messages) {
+    const responses = (message.functionResponse ?? []).map((item) => `${item.name}: ${JSON.stringify(item.response)}`);
+    const text = [message.text, ...responses].filter((value): value is string => Boolean(value)).join('\n');
+    if (!text && !message.inlineData?.length) {
+      continue;
+    }
+    stripped.push({
+      role: message.role,
+      ...(text ? { text } : {}),
+      ...(message.inlineData ? { inlineData: message.inlineData } : {}),
+    });
+  }
+  return stripped;
+}
+
+export class GeminiModelProvider implements AiProvider {
   constructor(
-    private readonly client: GoogleGenAI,
+    private readonly client: GeminiClient,
     private readonly model: string,
   ) {}
 
   async generate(messages: AiConversationMessage[], options: AiGenerateOptions): Promise<AiTurn> {
+    if (options.tools.length === 0) {
+      return this.request(messages, options);
+    }
+
+    try {
+      return await this.request(messages, options);
+    } catch (error) {
+      const malformed = error instanceof MalformedFunctionCallError;
+      if (!malformed && !(error instanceof ApiError && error.status === 400)) {
+        throw error;
+      }
+      logger.warn(
+        { model: this.model, code: malformed ? 'MALFORMED_FUNCTION_CALL' : 400 },
+        'Gemini rejeitou a requisição com ferramentas; repetindo sem ferramentas',
+      );
+    }
+
+    const plain = await this.request(stripToolParts(messages), { ...options, tools: [] });
+    return { text: plain.text, calls: [] };
+  }
+
+  private async request(messages: AiConversationMessage[], options: AiGenerateOptions): Promise<AiTurn> {
     const response = await this.client.models.generateContent({
       model: this.model,
       contents: messages.map((message) => ({ role: message.role, parts: toGeminiParts(message) })),
@@ -134,6 +192,9 @@ class GeminiModelProvider implements AiProvider {
     const calls = extractCalls(response);
     const text = response.text?.trim() ?? '';
     if (!text && calls.length === 0) {
+      if (response.candidates?.[0]?.finishReason === FinishReason.MALFORMED_FUNCTION_CALL) {
+        throw new MalformedFunctionCallError();
+      }
       throw new Error(`Resposta vazia do modelo ${this.model}.`);
     }
 
