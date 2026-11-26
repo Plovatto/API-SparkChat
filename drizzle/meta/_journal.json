@@ -253,6 +253,13 @@
       "when": 1795720785457,
       "tag": "0035_assistant_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1795735108454,
+      "tag": "0036_assistant_notes_reminders",
+      "breakpoints": true
     }
   ]
 }

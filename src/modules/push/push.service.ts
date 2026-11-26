@@ -24,6 +24,7 @@ import {
 } from './push.types.js';
 
 const CALL_END_TTL_SECONDS = 60 * 60;
+const REMINDER_TTL_SECONDS = 60 * 60;
 const MESSAGE_TTL_SECONDS = 24 * 60 * 60;
 const TOUCH_INTERVAL_MS = 60 * 60 * 1000;
 const PURGE_INTERVAL_MS = 60_000;
@@ -54,6 +55,13 @@ export interface CallEndedPush {
   userId: string;
   callId: string;
   reason: PushCallEndReason;
+}
+
+export interface ReminderPush {
+  userId: string;
+  reminderId: string;
+  text: string;
+  roomId: string;
 }
 
 export interface NewMessagePush {
@@ -91,6 +99,26 @@ export function buildMessagePushPayload(input: NewMessagePush): PushPayload {
   }
   const withoutContent: PushPayload = { ...base, m: preview };
   return payloadBytes(withoutContent) <= MAX_PUSH_PAYLOAD_BYTES ? withoutContent : base;
+}
+
+export function buildReminderPushPayload(input: Omit<ReminderPush, 'userId'>): PushPayload {
+  const build = (x: string): PushPayload => ({ t: 'reminder', id: input.reminderId, roomId: input.roomId, x });
+  const chars = Array.from(input.text);
+  let low = 0;
+  let high = chars.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (payloadBytes(build(chars.slice(0, middle).join(''))) <= MAX_PUSH_PAYLOAD_BYTES) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return build(chars.slice(0, low).join(''));
+}
+
+export function reminderTopic(reminderId: string): string {
+  return `r-${createHash('sha256').update(reminderId).digest('base64url').slice(0, 30)}`;
 }
 
 export function pushTopic(scope: 'call' | 'room', id: string): string {
@@ -246,6 +274,15 @@ export class PushService {
       }
       this.sendMessage(userId, input.roomId, topic, payload);
     }
+  }
+
+  reminder(input: ReminderPush): void {
+    if (!this.enabled || !this.limiter.tryReminder(input.userId)) {
+      return;
+    }
+    const topic = reminderTopic(input.reminderId);
+    const payload = buildReminderPushPayload(input);
+    this.enqueue(topic, () => this.deliver(input.userId, payload, { TTL: REMINDER_TTL_SECONDS, urgency: 'high', topic }));
   }
 
   private scheduleMessage(key: string, message: Omit<PendingMessage, 'timer'>, delay: number): void {

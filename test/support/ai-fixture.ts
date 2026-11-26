@@ -139,6 +139,7 @@ export async function setupAssistantRoom(options: AssistantRoomOptions = {}) {
     userService,
     options.toolbox,
     options.quickReplies,
+    roomService,
   );
 
   return {

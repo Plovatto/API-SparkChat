@@ -10,7 +10,7 @@ import {
   type SystemEventType,
   type TypingService,
 } from '../messages/index.js';
-import type { RoomKeyRepository, RoomRecord } from '../rooms/index.js';
+import type { RoomKeyRepository, RoomRecord, RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import { loadDecryptedAttachment, resolveAudioMimeType } from './ai.attachments.js';
@@ -22,6 +22,7 @@ import { HELP_SHORTCUTS, HELP_SHORTCUT_REPLY } from '../assistant/assistant.help
 import { anotherSuggestionInstruction, QUICK_REPLY_FAILED_TEXT } from '../assistant/assistant.prompt.js';
 import { QuickReplyRegistry, resolveQuickReply } from '../assistant/assistant.quick-reply.js';
 import { ASSISTANT_CARD_LABEL, sealAssistantCard } from '../assistant/assistant.seal.js';
+import type { AssistantHost, VaultLabel } from '../assistant/assistant.host.js';
 import { AssistantToolbox } from '../assistant/assistant.toolbox.js';
 import type { AssistantIdentity } from './ai.identity.js';
 import {
@@ -74,7 +75,7 @@ interface PendingBatch {
   timer: ReturnType<typeof setTimeout>;
 }
 
-export class AiService {
+export class AiService implements AssistantHost {
   private readonly pendingBatchByRoom = new Map<string, PendingBatch>();
   private readonly pendingWelcomeByRoom = new Map<string, { locale: Locale; timer: ReturnType<typeof setTimeout> }>();
   private readonly roomKeyCache = new Map<string, Uint8Array>();
@@ -92,10 +93,58 @@ export class AiService {
     private readonly userService: Pick<UserService, 'getUsersByIds' | 'getTimeZone'>,
     private readonly toolbox: AssistantToolbox = new AssistantToolbox(),
     private readonly quickReplies: QuickReplyRegistry = new QuickReplyRegistry(),
+    private readonly roomLookup: Pick<RoomService, 'findPrivateRoomBetween'> | null = null,
   ) {}
 
   isAssistantRoom(room: RoomRecord): boolean {
     return room.type === 'private' && room.participants.includes(this.identity.userId);
+  }
+
+  async seal(userId: string, label: VaultLabel, itemId: string, plaintext: string): Promise<string | null> {
+    const room = await this.assistantRoomOf(userId);
+    const roomKey = room ? await this.resolveRoomKey(room.id) : null;
+    if (!room || !roomKey) {
+      return null;
+    }
+    return sealField(plaintext, roomKey.roomKey, roomKey.keyId, this.identity.signingPrivateKey, {
+      roomId: room.id,
+      senderId: this.identity.userId,
+      messageId: itemId,
+      label,
+    });
+  }
+
+  async open(userId: string, label: VaultLabel, itemId: string, sealed: string): Promise<string | null> {
+    const room = await this.assistantRoomOf(userId);
+    const keyId = readFieldKeyId(sealed);
+    const roomKey = room && keyId ? await this.loadRoomKey(room.id, keyId) : null;
+    if (!room || !roomKey) {
+      return null;
+    }
+    return openField(sealed, roomKey, this.identity.signingPublicKeyBytes, {
+      roomId: room.id,
+      senderId: this.identity.userId,
+      messageId: itemId,
+      label,
+    });
+  }
+
+  async roomIdOf(userId: string): Promise<string | null> {
+    return (await this.assistantRoomOf(userId))?.id ?? null;
+  }
+
+  async post(io: AppServer, userId: string, reply: AssistantReply): Promise<void> {
+    const room = await this.assistantRoomOf(userId);
+    const roomKey = room ? await this.resolveRoomKey(room.id) : null;
+    if (!room || !roomKey) {
+      throw new Error('Sala do SparkAI indisponível para entregar a mensagem.');
+    }
+    await this.sendReply(io, room, roomKey, reply);
+  }
+
+  private async assistantRoomOf(userId: string): Promise<RoomRecord | null> {
+    const room = (await this.roomLookup?.findPrivateRoomBetween(userId, this.identity.userId)) ?? null;
+    return room && this.isAssistantRoom(room) ? room : null;
   }
 
   async sendWelcomeMessage(io: AppServer, room: RoomRecord, locale: Locale): Promise<void> {

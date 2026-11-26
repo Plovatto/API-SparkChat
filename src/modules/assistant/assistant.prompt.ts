@@ -16,10 +16,11 @@ const TOOL_RULES: Record<Locale, Record<string, string>> = {
     app_help: 'Quando perguntar como usar algum recurso do SparkChat, use app_help com o tópico certo em vez de explicar de memória.',
     suggest_look: 'Quando a pessoa pedir para sugerir um visual ou tema, use suggest_look.',
     apply_look: 'Quando pedir para escolher ou aplicar um visual ou tema, use apply_look, no máximo uma vez por resposta.',
-    save_note: 'Quando a pessoa pedir para anotar ou guardar algo, use save_note.',
+    save_note: 'Quando a pessoa pedir para anotar ou guardar algo, use save_note e confirme em uma frase curta.',
     list_notes: 'Quando pedir para ver as anotações, use list_notes.',
     delete_note: 'Quando pedir para apagar uma anotação, use delete_note com o id devolvido por list_notes.',
-    create_reminder: 'Quando pedir um lembrete, use create_reminder.',
+    create_reminder:
+      'Quando pedir um lembrete, use create_reminder com whenLocal e, se for recorrente, recurrence. Se a pessoa não disse quando, pergunte o horário antes de chamar a ferramenta e nunca invente um. Depois de chamar, repita o resumo devolvido (summary) e pergunte se confirma.',
     list_reminders: 'Quando pedir para ver os lembretes, use list_reminders.',
     cancel_reminder: 'Quando pedir para cancelar um lembrete, use cancel_reminder com o id devolvido por list_reminders.',
     set_status: 'Quando pedir para mudar o status, use set_status.',
@@ -32,10 +33,11 @@ const TOOL_RULES: Record<Locale, Record<string, string>> = {
     app_help: 'When they ask how to use a SparkChat feature, use app_help with the right topic instead of explaining from memory.',
     suggest_look: 'When the person asks you to suggest a look or theme, use suggest_look.',
     apply_look: 'When they ask you to pick or apply a look or theme, use apply_look, at most once per reply.',
-    save_note: 'When the person asks you to note or save something, use save_note.',
+    save_note: 'When the person asks you to note or save something, use save_note and confirm in one short sentence.',
     list_notes: 'When they ask to see their notes, use list_notes.',
     delete_note: 'When they ask to delete a note, use delete_note with the id returned by list_notes.',
-    create_reminder: 'When they ask for a reminder, use create_reminder.',
+    create_reminder:
+      'When they ask for a reminder, use create_reminder with whenLocal and, if it repeats, recurrence. If the person did not say when, ask for the time before calling the tool and never make one up. After calling it, repeat the returned summary and ask them to confirm.',
     list_reminders: 'When they ask to see their reminders, use list_reminders.',
     cancel_reminder: 'When they ask to cancel a reminder, use cancel_reminder with the id returned by list_reminders.',
     set_status: 'When they ask to change their status, use set_status.',
@@ -60,7 +62,7 @@ function portugueseBody(): string[] {
     'Se faltar o horário de um lembrete, status com prazo ou mensagem agendada, pergunte à pessoa. Nunca invente horários.',
     'Nunca invente ids: use apenas ids devolvidos pelas ferramentas.',
     'Nunca diga que fez algo sem ter usado a ferramenta correspondente.',
-    'Se a pessoa pedir algo que o SparkAI vai fazer mas ainda não tem ferramenta (temas, anotações, lembretes, status, mensagens agendadas), responda com carinho que isso chega muito em breve e nunca finja que foi feito.',
+    'Se a pessoa pedir algo que o SparkAI vai fazer mas ainda não tem ferramenta (status, mensagens agendadas), responda com carinho que isso chega muito em breve e nunca finja que foi feito.',
     'Você não tem acesso a outras conversas do usuário nem a informações fora desta conversa, a não ser pelas ferramentas.',
   ];
 }
@@ -75,7 +77,7 @@ function englishBody(): string[] {
     'If the time is missing for a reminder, a timed status or a scheduled message, ask the person. Never make up times.',
     'Never make up ids: only use ids returned by the tools.',
     'Never say you did something without having used the matching tool.',
-    'If the person asks for something SparkAI will do but has no tool for yet (themes, notes, reminders, status, scheduled messages), answer warmly that it is coming very soon and never pretend it was done.',
+    'If the person asks for something SparkAI will do but has no tool for yet (status, scheduled messages), answer warmly that it is coming very soon and never pretend it was done.',
     "You have no access to the user's other conversations or to information outside this conversation, except through the tools.",
   ];
 }

@@ -16,6 +16,16 @@ import { appHelpTool } from './modules/assistant/tools/app-help.tool.js';
 import { capabilitiesTool } from './modules/assistant/tools/capabilities.tool.js';
 import { createApplyLookTool } from './modules/assistant/tools/apply-look.tool.js';
 import { suggestLookTool } from './modules/assistant/tools/suggest-look.tool.js';
+import { AssistantScheduler } from './modules/assistant/assistant.scheduler.js';
+import { ConfirmDispatcher } from './modules/assistant/assistant.confirm.js';
+import type { AssistantHost } from './modules/assistant/assistant.host.js';
+import { NotesRepository } from './modules/assistant/notes.repository.js';
+import { NotesService } from './modules/assistant/notes.service.js';
+import { registerNoteConfirms, registerReminderConfirms, registerReminderFiredReplies } from './modules/assistant/reminder.quick-reply.js';
+import { RemindersRepository } from './modules/assistant/reminders.repository.js';
+import { RemindersService } from './modules/assistant/reminders.service.js';
+import { createDeleteNoteTool, createListNotesTool, createSaveNoteTool } from './modules/assistant/tools/note.tools.js';
+import { createCancelReminderTool, createCreateReminderTool, createListRemindersTool } from './modules/assistant/tools/reminder.tools.js';
 import { LookService } from './modules/assistant/look.service.js';
 import { registerLookQuickReplies } from './modules/assistant/look.quick-reply.js';
 import { httpLinkPreviewFetcher, LinkPreviewRepository, LinkPreviewService } from './modules/link-preview/index.js';
@@ -113,6 +123,18 @@ const aiUsageLimiter = new AiUsageLimiter(aiUsageRepository);
 const lookService = new LookService(userService);
 const quickReplyRegistry = new QuickReplyRegistry();
 registerLookQuickReplies(quickReplyRegistry, lookService);
+const assistantHost: AssistantHost = {
+  seal: (userId, label, itemId, plaintext) => aiService.seal(userId, label, itemId, plaintext),
+  open: (userId, label, itemId, sealed) => aiService.open(userId, label, itemId, sealed),
+  roomIdOf: (userId) => aiService.roomIdOf(userId),
+  post: (ioServer, userId, reply) => aiService.post(ioServer, userId, reply),
+};
+const notesService = new NotesService(new NotesRepository(db), assistantHost);
+const remindersService = new RemindersService(new RemindersRepository(db), assistantHost);
+const confirmDispatcher = new ConfirmDispatcher().attachTo(quickReplyRegistry);
+registerNoteConfirms(confirmDispatcher, notesService);
+registerReminderConfirms(confirmDispatcher, remindersService);
+registerReminderFiredReplies(quickReplyRegistry, remindersService, (userId) => userService.getTimeZone(userId));
 const aiService = new AiService(
   assistantIdentity,
   roomKeyRepository,
@@ -123,8 +145,19 @@ const aiService = new AiService(
   aiUsageLimiter,
   objectStorage,
   userService,
-  new AssistantToolbox().register(capabilitiesTool).register(appHelpTool).register(suggestLookTool).register(createApplyLookTool(lookService)),
+  new AssistantToolbox()
+    .register(capabilitiesTool)
+    .register(appHelpTool)
+    .register(suggestLookTool)
+    .register(createApplyLookTool(lookService))
+    .register(createSaveNoteTool(notesService))
+    .register(createListNotesTool(notesService))
+    .register(createDeleteNoteTool(notesService))
+    .register(createCreateReminderTool())
+    .register(createListRemindersTool(remindersService))
+    .register(createCancelReminderTool(remindersService)),
   quickReplyRegistry,
+  roomService,
 );
 
 const gifProvider = createGifProvider({ nodeEnv: env.NODE_ENV, provider: env.GIF_PROVIDER, klipyApiKey: env.KLIPY_API_KEY });
@@ -195,6 +228,7 @@ const pushService = new PushService({
   isSessionLive: (session, now) => isSessionLive(session, now),
 });
 pushService.startMaintenance();
+new AssistantScheduler({ io, host: assistantHost, reminders: remindersService, push: pushService }).start();
 logger.info(`Web Push: ${pushService.enabled ? 'enabled' : 'disabled (WEB_PUSH_* not set)'}`);
 
 const callService = new CallService(io, callRepository, roomService, messageService, new CallBudget(callRepository), new CallRateLimiter(), turnProvider, {
