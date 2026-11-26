@@ -334,6 +334,26 @@ describe('accept, decline and hangup', () => {
     expect(await systemEventTypes(h, room.id)).toEqual(['call.missed']);
   });
 
+  it('fires the incoming push before the room reveal finishes', async () => {
+    const { h, room, aliceClient, bobClient } = await setup({ hiddenRoom: true });
+    const pushes = vi.spyOn(h.pushService, 'incomingCall');
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const makeVisible = h.roomService.makeVisibleForAll.bind(h.roomService);
+    const reveal = vi.spyOn(h.roomService, 'makeVisibleForAll').mockImplementation(async (...args) => {
+      await gate;
+      return makeVisible(...args);
+    });
+    const incoming = waitForEvent(bobClient, 'call:incoming');
+    aliceClient.emit('call:start', { callId: newCallId(), roomId: room.id, kind: 'voice', envelope: ENVELOPE });
+    await vi.waitFor(() => expect(reveal).toHaveBeenCalled());
+    expect(pushes).toHaveBeenCalledTimes(1);
+    release();
+    await incoming;
+  });
+
   it('declines from the push notification with the call scoped token even with no socket of the callee involved', async () => {
     const { h, room, aliceClient, bobClient } = await setup();
     const pushes = vi.spyOn(h.pushService, 'incomingCall');

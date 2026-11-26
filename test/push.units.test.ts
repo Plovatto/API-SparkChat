@@ -251,24 +251,123 @@ describe('push service', () => {
     }
   });
 
-  it('pushes messages only to recipients without a visible client and throttles per room', async () => {
-    let now = Date.UTC(2026, 0, 1);
+  it('pushes messages only to recipients without a visible client and coalesces bursts per room into one trailing push', async () => {
+    vi.useFakeTimers();
+    try {
+      const sender = vi.fn<PushSender>(() => Promise.resolve());
+      const { service, connected } = await build({ sender, now: () => Date.now() });
+      await service.subscribe('u1', 's-u1', subscription());
+      await service.subscribe('u2', 's-u2', subscription());
+      connected.add('u2');
+      service.newMessage({ roomId: 'r1', senderId: 'u2', recipientIds: ['u1', 'u2', 'u1'] });
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(1);
+      service.newMessage({ roomId: 'r1', senderId: 'u2', recipientIds: ['u1'], message: { id: 'm2', type: 'text', content: 'a' } });
+      service.newMessage({ roomId: 'r1', senderId: 'u2', recipientIds: ['u1'], message: { id: 'm3', type: 'text', content: 'b' } });
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(3_100);
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(sender.mock.calls[1]?.[1] as string)).toMatchObject({ t: 'msg', roomId: 'r1', m: { id: 'm3' } });
+      expect(sender.mock.calls[1]?.[2]).toEqual({ TTL: 86_400, urgency: 'high', topic: pushTopic('room', 'r1') });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries a coalesced message at the next window opening instead of losing it', async () => {
+    vi.useFakeTimers();
+    try {
+      const sender = vi.fn<PushSender>(() => Promise.resolve());
+      const { service } = await build({ sender, now: () => Date.now() });
+      await service.subscribe('u1', 's-u1', subscription());
+      for (let index = 0; index < 30; index += 1) {
+        service.newMessage({ roomId: `room-${index}`, senderId: 'u2', recipientIds: ['u1'] });
+      }
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(30);
+      service.newMessage({ roomId: 'room-late', senderId: 'u2', recipientIds: ['u1'] });
+      await vi.advanceTimersByTimeAsync(30_000);
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(30);
+      await vi.advanceTimersByTimeAsync(31_000);
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(31);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts sending right after listing subscriptions and cleans orphans afterwards', async () => {
     const sender = vi.fn<PushSender>(() => Promise.resolve());
-    const { service, connected } = await build({ sender, now: () => now });
+    const { service, repository } = await build({ sender });
     await service.subscribe('u1', 's-u1', subscription());
-    await service.subscribe('u2', 's-u2', subscription());
-    connected.add('u2');
-    service.newMessage({ roomId: 'r1', senderId: 'u2', recipientIds: ['u1', 'u2', 'u1'] });
+    const order: string[] = [];
+    const deleteOrphans = repository.deleteOrphans.bind(repository);
+    vi.spyOn(repository, 'deleteOrphans').mockImplementation(async (userId) => {
+      order.push('orphans');
+      await deleteOrphans(userId);
+    });
+    sender.mockImplementation(() => {
+      order.push('send');
+      return Promise.resolve();
+    });
+    service.newMessage({ roomId: 'r', senderId: 'u2', recipientIds: ['u1'] });
     await service.idle();
-    expect(sender).toHaveBeenCalledTimes(1);
-    service.newMessage({ roomId: 'r1', senderId: 'u2', recipientIds: ['u1', 'u2'] });
-    await service.idle();
-    expect(sender).toHaveBeenCalledTimes(1);
-    now += 11_000;
-    service.newMessage({ roomId: 'r1', senderId: 'u2', recipientIds: ['u1', 'u2'] });
-    await service.idle();
-    expect(sender).toHaveBeenCalledTimes(2);
-    expect(sender.mock.calls[1]?.[2]).toEqual({ TTL: 86_400, urgency: 'high', topic: pushTopic('room', 'r1') });
+    expect(order).toEqual(['send', 'orphans']);
+  });
+
+  it('repeats the ringing push every 10 seconds with the remaining ttl until the call ends', async () => {
+    vi.useFakeTimers();
+    try {
+      const sender = vi.fn<PushSender>(() => Promise.resolve());
+      const { service } = await build({ sender, now: () => Date.now() });
+      await service.subscribe('u1', 's-u1', subscription());
+      service.incomingCall({ userId: 'u1', callId: 'c1', roomId: 'r', kind: 'voice', ringExpiresAtMs: Date.now() + 35_000 });
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(sender.mock.calls[0]?.[1] as string)).not.toHaveProperty('r');
+      await vi.advanceTimersByTimeAsync(10_000);
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(2);
+      expect(JSON.parse(sender.mock.calls[1]?.[1] as string)).toMatchObject({ t: 'call', callId: 'c1', r: 1 });
+      expect(sender.mock.calls[1]?.[2]).toEqual({ TTL: 25, urgency: 'high', topic: pushTopic('call', 'c1') });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(3);
+      service.callEnded({ userId: 'u1', callId: 'c1', reason: 'cancelled' });
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(4);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops repeating the ringing push once the ring expires and clears timers on shutdown', async () => {
+    vi.useFakeTimers();
+    try {
+      const sender = vi.fn<PushSender>(() => Promise.resolve());
+      const { service } = await build({ sender, now: () => Date.now() });
+      await service.subscribe('u1', 's-u1', subscription());
+      service.incomingCall({ userId: 'u1', callId: 'c1', roomId: 'r', kind: 'voice', ringExpiresAtMs: Date.now() + 25_000 });
+      await vi.advanceTimersByTimeAsync(60_000);
+      await service.idle();
+      expect(sender).toHaveBeenCalledTimes(3);
+      const stop = service.startMaintenance();
+      service.incomingCall({ userId: 'u1', callId: 'c2', roomId: 'r', kind: 'voice', ringExpiresAtMs: Date.now() + 60_000 });
+      await service.idle();
+      stop();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('updates last use at most once an hour', async () => {
@@ -323,6 +422,42 @@ describe('push service', () => {
     await service.idle();
     expect(sender).toHaveBeenCalledTimes(100);
     expect(peak).toBeLessThanOrEqual(32);
+  });
+
+  it('sends call pushes ahead of queued message pushes', async () => {
+    const order: string[] = [];
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const sender = vi.fn<PushSender>(async (_subscription, payload) => {
+      order.push((JSON.parse(payload) as { t: string }).t);
+      await gate;
+    });
+    const { db, service, repository } = await build({ sender });
+    const recipients = ['u1', 'u2', 'u3', 'u4'];
+    for (const id of ['u3', 'u4']) {
+      const nowIso = new Date().toISOString();
+      await db.insert(users).values({ id, nickname: id, nicknameNormalized: id, avatar: 0, passwordHash: 'x', recoveryTokenHash: 'x', createdAt: nowIso, lastSeen: nowIso });
+      await db.insert(sessions).values({ id: `s-${id}`, userId: id, tokenHash: `t-${id}`, authMethod: 'password', userAgent: 'test', createdAt: nowIso, lastUsedAt: nowIso });
+    }
+    for (const id of recipients) {
+      for (let index = 0; index < 10; index += 1) {
+        await repository.save({ id: `sub-${id}-${index}`, userId: id, sessionId: `s-${id}`, ...subscription(), p256dh: 'x', auth: 'y', userAgent: null, nowIso: new Date().toISOString() });
+      }
+    }
+    service.newMessage({ roomId: 'r1', senderId: 'nobody', recipientIds: recipients });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    for (const id of recipients) {
+      service.incomingCall({ userId: id, callId: `c-${id}`, roomId: 'r', kind: 'voice', ringExpiresAtMs: Date.now() + 30_000 });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    release();
+    await service.idle();
+    expect(order).toHaveLength(80);
+    expect(order.slice(0, 32)).toEqual(Array(32).fill('msg'));
+    expect(order.slice(32, 72)).toEqual(Array(40).fill('call'));
+    expect(order.slice(72)).toEqual(Array(8).fill('msg'));
   });
 
   it('derives stable 32 character topics that differ per call and per room', () => {

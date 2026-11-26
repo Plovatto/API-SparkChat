@@ -32,6 +32,7 @@ export interface SocketData {
   sessionId?: string;
   locale?: Locale;
   hidden?: boolean;
+  inattentive?: boolean;
   sessionRevoked?: boolean;
 }
 

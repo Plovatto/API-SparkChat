@@ -47,6 +47,10 @@ export function hasVisibleUserSocket(io: AppServer, userId: string): boolean {
   return listUserSockets(io, userId).some((socket) => socket.data.hidden !== true);
 }
 
+export function hasAttentiveUserSocket(io: AppServer, userId: string): boolean {
+  return listUserSockets(io, userId).some((socket) => socket.data.hidden !== true && socket.data.inattentive !== true);
+}
+
 export async function joinUserSocketsToRoom(io: AppServer, userId: string, roomId: string): Promise<void> {
   await Promise.all(
     listUserSockets(io, userId).map(async (socket) => {
