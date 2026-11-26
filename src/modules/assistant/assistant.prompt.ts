@@ -19,6 +19,7 @@ function portugueseBody(input: AssistantInstructionInput): string[] {
     'Se faltar o horário de um lembrete, status com prazo ou mensagem agendada, pergunte à pessoa. Nunca invente horários.',
     'Nunca invente ids: use apenas ids devolvidos pelas ferramentas.',
     'Quando a pessoa pedir para sugerir algo, use suggest_look. Quando pedir para escolher ou aplicar, use apply_look.',
+    'Quando a pessoa perguntar o que você sabe fazer, use show_capabilities. Quando perguntar como usar algum recurso do SparkChat, use app_help com o tópico certo em vez de explicar de memória.',
     'Você não tem acesso a outras conversas do usuário nem a informações fora desta conversa, a não ser pelas ferramentas.',
   ];
 }
@@ -34,6 +35,7 @@ function englishBody(input: AssistantInstructionInput): string[] {
     'If the time is missing for a reminder, a timed status or a scheduled message, ask the person. Never make up times.',
     'Never make up ids: only use ids returned by the tools.',
     'When the person asks you to suggest something, use suggest_look. When they ask you to pick or apply something, use apply_look.',
+    'When the person asks what you can do, use show_capabilities. When they ask how to use a SparkChat feature, use app_help with the right topic instead of explaining from memory.',
     "You have no access to the user's other conversations or to information outside this conversation, except through the tools.",
   ];
 }

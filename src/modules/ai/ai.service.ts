@@ -18,6 +18,7 @@ import { getSodium, openField, openRoomKeyEnvelope, readFieldKeyId, sealField } 
 import { runAssistantTurn } from '../assistant/assistant.agent.js';
 import type { AssistantReply } from '../assistant/assistant.agent.js';
 import type { AssistantCard } from '../assistant/assistant.card.js';
+import { HELP_SHORTCUTS, HELP_SHORTCUT_REPLY } from '../assistant/assistant.help-catalog.js';
 import { ANOTHER_SUGGESTION_INSTRUCTION, QUICK_REPLY_FAILED_TEXT } from '../assistant/assistant.prompt.js';
 import { QuickReplyRegistry, resolveQuickReply } from '../assistant/assistant.quick-reply.js';
 import { ASSISTANT_CARD_LABEL, sealAssistantCard } from '../assistant/assistant.seal.js';
@@ -164,6 +165,14 @@ export class AiService {
       type: 'text',
       participantIds: room.participants,
       viewingUserIds: this.presenceService.getViewers(room.id),
+      assistantCard: await sealAssistantCard(
+        { v: 1, kind: 'capabilities' },
+        roomKey,
+        room.id,
+        messageId,
+        this.identity.signingPrivateKey,
+        this.identity.userId,
+      ),
     });
 
     io.to(room.id).emit('message:new', await this.messageService.toNewView(message));
@@ -186,6 +195,10 @@ export class AiService {
   private async admitMessage(io: AppServer, room: RoomRecord, message: MessageRecord, locale: Locale): Promise<void> {
     if (message.quickReply) {
       await this.handleQuickReply(io, room, message, message.quickReply, locale);
+      return;
+    }
+
+    if (await this.answerHelpShortcut(io, room, message, locale)) {
       return;
     }
 
@@ -219,6 +232,29 @@ export class AiService {
       locale,
       timer: setTimeout(() => this.flushBatch(io, room), AI_BATCH_DEBOUNCE_MS),
     });
+  }
+
+  private async answerHelpShortcut(io: AppServer, room: RoomRecord, message: MessageRecord, locale: Locale): Promise<boolean> {
+    if (message.type !== 'text') {
+      return false;
+    }
+    try {
+      const reader = await this.createReader(room.id, [message]);
+      const text = await reader.field(message, message.content, FIELD_LABELS.content);
+      if (text === null || !HELP_SHORTCUTS.has(text.trim().toLowerCase())) {
+        return false;
+      }
+      const roomKey = await this.resolveRoomKey(room.id);
+      if (!roomKey) {
+        await this.sendErrorMessage(io, room.id, 'ai.encryptionUnavailable');
+        return true;
+      }
+      await this.sendReply(io, room, roomKey, { text: HELP_SHORTCUT_REPLY[locale], card: { v: 1, kind: 'capabilities' } });
+      return true;
+    } catch (error) {
+      logger.error({ err: error, roomId: room.id }, 'Falha ao responder o atalho de ajuda do SparkAI');
+      return false;
+    }
   }
 
   private async handleQuickReply(

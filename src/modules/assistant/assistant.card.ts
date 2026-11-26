@@ -30,6 +30,28 @@ export interface AssistantLook {
   }>;
 }
 
+export const HELP_TOPICS = [
+  'themes',
+  'wallpaper',
+  'bubbles',
+  'calls',
+  'screen-share',
+  'gifs',
+  'reactions',
+  'profile-photo',
+  'groups',
+  'invite-link',
+  'translation',
+  'notifications',
+  'install-app',
+  'reminders',
+  'scheduled-messages',
+] as const;
+
+export type HelpTopic = (typeof HELP_TOPICS)[number];
+
+export type HelpTarget = 'appearance' | 'profile' | 'new-group' | 'notifications-settings' | 'install' | 'none';
+
 export interface AssistantButton {
   choice: QuickReplyChoice;
   label: string;
@@ -55,5 +77,6 @@ export type AssistantCard =
   | { v: 1; kind: 'reminder-fired'; reminderId: string; text: string; buttons: AssistantButton[] }
   | { v: 1; kind: 'scheduled-failed'; roomId: string; text: string; buttons: AssistantButton[] }
   | { v: 1; kind: 'list'; title: string; items: { id: string; text: string; detail?: string }[] }
+  | { v: 1; kind: 'help'; topic: HelpTopic; target: HelpTarget }
   | { v: 1; kind: 'capabilities' }
   | { v: 1; kind: 'choices'; buttons: AssistantButton[] };

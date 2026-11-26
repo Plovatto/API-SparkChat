@@ -11,6 +11,8 @@ import { AvatarRepository, AvatarService } from './modules/avatars/index.js';
 import { createGifProvider } from './modules/gifs/index.js';
 import { AiService, AiUsageLimiter, AiUsageRepository, createGeminiRouter, currentUsageDate, ensureAssistantUser, loadAssistantIdentity } from './modules/ai/index.js';
 import { AssistantToolbox } from './modules/assistant/assistant.toolbox.js';
+import { appHelpTool } from './modules/assistant/tools/app-help.tool.js';
+import { capabilitiesTool } from './modules/assistant/tools/capabilities.tool.js';
 import { QuickReplyRegistry } from './modules/assistant/assistant.quick-reply.js';
 import { httpLinkPreviewFetcher, LinkPreviewRepository, LinkPreviewService } from './modules/link-preview/index.js';
 import {
@@ -114,7 +116,7 @@ const aiService = new AiService(
   aiUsageLimiter,
   objectStorage,
   userService,
-  new AssistantToolbox(),
+  new AssistantToolbox().register(capabilitiesTool).register(appHelpTool),
   new QuickReplyRegistry(),
 );
 
