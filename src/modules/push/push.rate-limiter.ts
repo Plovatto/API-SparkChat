@@ -2,7 +2,7 @@ const WINDOW_MS = 60_000;
 const MAX_SUBSCRIPTION_CHANGES_PER_USER = 10;
 const MAX_CALL_PUSHES_PER_USER = 20;
 const MAX_MESSAGE_PUSHES_PER_USER = 30;
-const MESSAGE_ROOM_COOLDOWN_MS = 10_000;
+const MESSAGE_ROOM_COOLDOWN_MS = 3_000;
 
 export class PushRateLimiter {
   private readonly windows = new Map<string, number[]>();
@@ -18,17 +18,20 @@ export class PushRateLimiter {
     return this.tryWindow(`call:${userId}`, MAX_CALL_PUSHES_PER_USER);
   }
 
-  tryMessage(userId: string, roomId: string): boolean {
+  messageDelayMs(userId: string, roomId: string): number {
     const current = this.now();
-    const roomKey = `${userId}:${roomId}`;
-    const last = this.roomCooldowns.get(roomKey);
-    if (last !== undefined && current - last < MESSAGE_ROOM_COOLDOWN_MS) {
+    const last = this.roomCooldowns.get(`${userId}:${roomId}`);
+    const cooldown = last === undefined ? 0 : Math.max(0, last + MESSAGE_ROOM_COOLDOWN_MS - current);
+    const recent = (this.windows.get(`msg:${userId}`) ?? []).filter((timestamp) => timestamp > current - WINDOW_MS);
+    const window = recent.length >= MAX_MESSAGE_PUSHES_PER_USER ? Math.max(0, (recent[0] ?? current) + WINDOW_MS - current + 1) : 0;
+    return Math.max(cooldown, window);
+  }
+
+  tryMessage(userId: string, roomId: string): boolean {
+    if (this.messageDelayMs(userId, roomId) > 0 || !this.tryWindow(`msg:${userId}`, MAX_MESSAGE_PUSHES_PER_USER)) {
       return false;
     }
-    if (!this.tryWindow(`msg:${userId}`, MAX_MESSAGE_PUSHES_PER_USER)) {
-      return false;
-    }
-    this.roomCooldowns.set(roomKey, current);
+    this.roomCooldowns.set(`${userId}:${roomId}`, this.now());
     return true;
   }
 

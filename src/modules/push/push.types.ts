@@ -3,7 +3,7 @@ export type PushUrgency = 'very-low' | 'low' | 'normal' | 'high';
 export type PushCallEndReason = 'completed' | 'missed' | 'declined' | 'cancelled' | 'busy' | 'failed' | 'connection-lost' | 'answered';
 
 export type PushPayload =
-  | { t: 'call'; callId: string; roomId: string; kind: 'voice' | 'video'; d?: string; e?: number }
+  | { t: 'call'; callId: string; roomId: string; kind: 'voice' | 'video'; d?: string; e?: number; r?: 1 }
   | { t: 'call-end'; callId: string; reason: PushCallEndReason }
   | { t: 'msg'; roomId: string; m?: PushMessagePreview };
 

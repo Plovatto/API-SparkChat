@@ -13,7 +13,7 @@ import { MessageRateLimiter, RecordingService, RoomPresenceService, TypingServic
 import { RoomActionRateLimiter } from '@/modules/rooms/index.js';
 import { LoginRateLimiter, SessionRevocationNotifier } from '@/modules/users/index.js';
 import type { AppServer } from '@/sockets/events.js';
-import { hasVisibleUserSocket } from '@/sockets/user-sockets.js';
+import { hasAttentiveUserSocket } from '@/sockets/user-sockets.js';
 import { registerSocketHandlers } from '@/sockets/index.js';
 import { SOCKET_MAX_HTTP_BUFFER_SIZE, SOCKET_PER_MESSAGE_DEFLATE } from '@/sockets/socket-options.js';
 import type { SocketConnectionLimits } from '@/sockets/connection-limits.js';
@@ -79,7 +79,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     sender: options.push?.sender ?? null,
     repository: pushRepository,
     limiter: options.push?.limiter ?? new PushRateLimiter(clock),
-    hasVisibleClient: (userId) => hasVisibleUserSocket(io, userId),
+    hasVisibleClient: (userId) => hasAttentiveUserSocket(io, userId),
     now: clock,
   });
   const callService = new CallService(

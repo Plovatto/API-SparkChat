@@ -25,7 +25,7 @@ import { notifyRoomRotations, RoomActionRateLimiter, RoomKeyRepository, RoomRepo
 import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, SessionSignatureVerifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import { startSessionExpirySweep } from './sockets/session-expiry.js';
-import { hasVisibleUserSocket } from './sockets/user-sockets.js';
+import { hasAttentiveUserSocket } from './sockets/user-sockets.js';
 import { SOCKET_MAX_HTTP_BUFFER_SIZE, SOCKET_PER_MESSAGE_DEFLATE } from './sockets/socket-options.js';
 import { createR2ObjectStorage } from './storage/r2-object-storage.js';
 import { StorageQuota } from './storage/storage-quota.js';
@@ -178,7 +178,7 @@ const pushService = new PushService({
   sender: vapid ? createWebPushSender(vapid) : null,
   repository: new PushRepository(db),
   limiter: new PushRateLimiter(),
-  hasVisibleClient: (userId) => hasVisibleUserSocket(io, userId),
+  hasVisibleClient: (userId) => hasAttentiveUserSocket(io, userId),
   isSessionLive: (session, now) => isSessionLive(session, now),
 });
 pushService.startMaintenance();

@@ -257,13 +257,6 @@ export class CallService {
     this.limiter.recordRing(input.callId, actor.userId);
     this.bindings.set(input.callId, { caller: actor.socketId });
     this.rememberBoundDevice(input.callId, 'caller', actor.socketId);
-    try {
-      if (room) {
-        await this.revealRoom(room, newCall.createdAt);
-      }
-    } catch (err) {
-      logger.error({ err, callId: input.callId }, 'Failed to reveal the room for an incoming call');
-    }
     const incoming: IncomingCallPayload = {
       callId: input.callId,
       roomId: input.roomId,
@@ -273,7 +266,6 @@ export class CallService {
       ringExpiresAt: new Date(createdAtMs + RING_TIMEOUT_MS).toISOString(),
     };
     this.ringingInvites.set(input.callId, incoming);
-    this.io.to(userRoom(calleeId)).emit('call:incoming', incoming);
     this.push?.incomingCall({
       userId: calleeId,
       callId: input.callId,
@@ -282,6 +274,14 @@ export class CallService {
       ringExpiresAtMs: createdAtMs + RING_TIMEOUT_MS,
       declineToken: this.declineTokens.issue(calleeId, input.callId, createdAtMs + RING_TIMEOUT_MS),
     });
+    try {
+      if (room) {
+        await this.revealRoom(room, newCall.createdAt);
+      }
+    } catch (err) {
+      logger.error({ err, callId: input.callId }, 'Failed to reveal the room for an incoming call');
+    }
+    this.io.to(userRoom(calleeId)).emit('call:incoming', incoming);
   }
 
   async releaseSocket(socketId: string, userId: string): Promise<void> {

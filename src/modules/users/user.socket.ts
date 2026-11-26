@@ -83,6 +83,7 @@ const updateStatusTextPayloadSchema = z.object({
 
 const visibilityPayloadSchema = z.object({
   visible: z.boolean(),
+  attentive: z.boolean().optional(),
 });
 
 const changePasswordPayloadSchema = z.object({
@@ -571,8 +572,15 @@ async function handleVisibility(io: AppServer, socket: AppSocket, deps: UserSock
     return;
   }
 
-  const { visible } = parsed.data;
+  const { visible, attentive } = parsed.data;
+  const wasVisible = socket.data.hidden !== true;
+  const wasInattentive = socket.data.inattentive === true;
   socket.data.hidden = !visible;
+  socket.data.inattentive = visible && attentive === false;
+
+  if (visible && wasVisible && wasInattentive !== socket.data.inattentive) {
+    return;
+  }
 
   if (!visible && hasVisibleUserSocket(io, userId)) {
     return;

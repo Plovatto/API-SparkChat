@@ -409,9 +409,9 @@ describe('message pushes', () => {
     expect(sent).toHaveLength(1);
   });
 
-  async function setVisibility(client: TestClient, visible: boolean): Promise<void> {
+  async function setVisibility(client: TestClient, visible: boolean, attentive?: boolean): Promise<void> {
     await new Promise<void>((resolve) => {
-      client.emit('user:visibility', { visible }, () => resolve());
+      client.emit('user:visibility', attentive === undefined ? { visible } : { visible, attentive }, () => resolve());
     });
     await settle(20);
   }
@@ -438,6 +438,33 @@ describe('message pushes', () => {
     await send(aliceClient, room.id, 'de novo', 'm2');
     await h.pushService.idle();
     expect(sent).toHaveLength(1);
+  });
+
+  it('pushes when the only visible client is inattentive and stops once it is attentive again', async () => {
+    const { h, room, aliceClient, bobClient, bobSub, sent } = await messageSetup();
+    await setVisibility(bobClient, true, false);
+    await send(aliceClient, room.id, 'oi', 'm1');
+    await h.pushService.idle();
+    expect(sent.map((push) => push.endpoint)).toEqual([bobSub.endpoint]);
+
+    await setVisibility(bobClient, true, true);
+    clock.now += 11_000;
+    await send(aliceClient, room.id, 'de novo', 'm2');
+    await h.pushService.idle();
+    expect(sent).toHaveLength(1);
+  });
+
+  it('keeps presence untouched when only attentiveness changes', async () => {
+    const { h, aliceClient, bobClient } = await messageSetup();
+    await setVisibility(bobClient, true, true);
+    const presence: string[] = [];
+    aliceClient.on('user:online', () => presence.push('online'));
+    aliceClient.on('user:offline', () => presence.push('offline'));
+    const setStatus = vi.spyOn(h.userService, 'setStatus');
+    await setVisibility(bobClient, true, false);
+    await setVisibility(bobClient, true, true);
+    expect(presence).toEqual([]);
+    expect(setStatus).not.toHaveBeenCalled();
   });
 
   it('stops pushing once the hidden client becomes visible again', async () => {

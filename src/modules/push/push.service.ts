@@ -27,6 +27,8 @@ const CALL_END_TTL_SECONDS = 60 * 60;
 const MESSAGE_TTL_SECONDS = 24 * 60 * 60;
 const TOUCH_INTERVAL_MS = 60 * 60 * 1000;
 const PURGE_INTERVAL_MS = 60_000;
+const CALL_REPEAT_INTERVAL_MS = 10_000;
+const MIN_MESSAGE_RETRY_MS = 50;
 const GONE_STATUSES = new Set([404, 410]);
 
 export interface PushServiceOptions {
@@ -59,6 +61,14 @@ export interface NewMessagePush {
   senderId: string;
   recipientIds: readonly string[];
   message?: { id: string; type: string; content: string; fileMime?: string | null };
+}
+
+interface PendingMessage {
+  userId: string;
+  roomId: string;
+  topic: string;
+  payload: PushPayload;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 const PREVIEW_KINDS: ReadonlySet<string> = new Set<PushPreviewKind>(['text', 'image', 'audio', 'file']);
@@ -106,9 +116,12 @@ export class PushService {
   private readonly ringingCalls = new Map<string, number>();
   private readonly skippedCalls = new Map<string, number>();
   private readonly waiting: (() => void)[] = [];
+  private readonly priorityWaiting: (() => void)[] = [];
   private activeSends = 0;
   private readonly chains = new Map<string, Promise<void>>();
   private readonly inflight = new Set<Promise<void>>();
+  private readonly pendingMessages = new Map<string, PendingMessage>();
+  private readonly callRepeats = new Map<string, ReturnType<typeof setInterval>>();
 
   constructor(options: PushServiceOptions) {
     this.publicKey = options.publicKey;
@@ -169,14 +182,38 @@ export class PushService {
     }
     this.ringingCalls.set(`${input.userId}:${input.callId}`, input.ringExpiresAtMs + CALL_END_TTL_SECONDS * 1000);
     const topic = pushTopic('call', input.callId);
-    this.enqueue(topic, () =>
-      this.deliver(input.userId, { t: 'call', callId: input.callId, roomId: input.roomId, kind: input.kind, e: input.ringExpiresAtMs, ...(input.declineToken ? { d: input.declineToken } : {}) }, { TTL: ttl, urgency: 'high', topic }),
-    );
+    const payload: PushPayload = { t: 'call', callId: input.callId, roomId: input.roomId, kind: input.kind, e: input.ringExpiresAtMs, ...(input.declineToken ? { d: input.declineToken } : {}) };
+    this.enqueue(topic, () => this.deliver(input.userId, payload, { TTL: ttl, urgency: 'high', topic }));
+    this.scheduleCallRepeats(`${input.userId}:${input.callId}`, input, topic, payload);
+  }
+
+  private scheduleCallRepeats(key: string, input: IncomingCallPush, topic: string, payload: PushPayload): void {
+    this.stopCallRepeats(key);
+    const repeat: PushPayload = { ...payload, r: 1 } as PushPayload;
+    const timer = setInterval(() => {
+      const remainingTtl = Math.ceil((input.ringExpiresAtMs - this.now()) / 1000);
+      if (!this.ringingCalls.has(key) || remainingTtl <= 0) {
+        this.stopCallRepeats(key);
+        return;
+      }
+      this.enqueue(topic, () => this.deliver(input.userId, repeat, { TTL: remainingTtl, urgency: 'high', topic }));
+    }, CALL_REPEAT_INTERVAL_MS);
+    timer.unref();
+    this.callRepeats.set(key, timer);
+  }
+
+  private stopCallRepeats(key: string): void {
+    const timer = this.callRepeats.get(key);
+    if (timer) {
+      clearInterval(timer);
+      this.callRepeats.delete(key);
+    }
   }
 
   callEnded(input: CallEndedPush): void {
     const key = `${input.userId}:${input.callId}`;
     this.ringingCalls.delete(key);
+    this.stopCallRepeats(key);
     if (!this.enabled || this.skippedCalls.delete(key)) {
       return;
     }
@@ -193,13 +230,64 @@ export class PushService {
     const topic = pushTopic('room', input.roomId);
     const payload = buildMessagePushPayload(input);
     for (const userId of new Set(input.recipientIds)) {
-      if (userId === input.senderId || this.hasVisibleClient(userId) || !this.limiter.tryMessage(userId, input.roomId)) {
+      if (userId === input.senderId || this.hasVisibleClient(userId)) {
         continue;
       }
-      this.enqueue(`${userId}:${topic}`, () =>
-        this.deliver(userId, payload, { TTL: MESSAGE_TTL_SECONDS, urgency: 'high', topic }),
-      );
+      const key = `${userId}:${topic}`;
+      const pending = this.pendingMessages.get(key);
+      if (pending) {
+        pending.payload = payload;
+        continue;
+      }
+      const delay = this.limiter.messageDelayMs(userId, input.roomId);
+      if (delay > 0) {
+        this.scheduleMessage(key, { userId, roomId: input.roomId, topic, payload }, delay);
+        continue;
+      }
+      this.sendMessage(userId, input.roomId, topic, payload);
     }
+  }
+
+  private scheduleMessage(key: string, message: Omit<PendingMessage, 'timer'>, delay: number): void {
+    const existing = this.pendingMessages.get(key);
+    const timer = setTimeout(() => this.firePendingMessage(key), Math.max(delay, MIN_MESSAGE_RETRY_MS));
+    timer.unref();
+    this.pendingMessages.set(key, { ...message, payload: existing?.payload ?? message.payload, timer });
+  }
+
+  private firePendingMessage(key: string): void {
+    const pending = this.pendingMessages.get(key);
+    if (!pending) {
+      return;
+    }
+    this.pendingMessages.delete(key);
+    if (!this.enabled || this.hasVisibleClient(pending.userId)) {
+      return;
+    }
+    const delay = this.limiter.messageDelayMs(pending.userId, pending.roomId);
+    if (delay > 0) {
+      this.scheduleMessage(key, pending, delay);
+      return;
+    }
+    this.sendMessage(pending.userId, pending.roomId, pending.topic, pending.payload);
+  }
+
+  private sendMessage(userId: string, roomId: string, topic: string, payload: PushPayload): void {
+    if (!this.limiter.tryMessage(userId, roomId)) {
+      return;
+    }
+    this.enqueue(`${userId}:${topic}`, () => this.deliver(userId, payload, { TTL: MESSAGE_TTL_SECONDS, urgency: 'high', topic }));
+  }
+
+  private clearTimers(): void {
+    for (const pending of this.pendingMessages.values()) {
+      clearTimeout(pending.timer);
+    }
+    this.pendingMessages.clear();
+    for (const timer of this.callRepeats.values()) {
+      clearInterval(timer);
+    }
+    this.callRepeats.clear();
   }
 
   startMaintenance(): () => void {
@@ -208,7 +296,10 @@ export class PushService {
       this.purgeRingingCalls();
     }, PURGE_INTERVAL_MS);
     timer.unref();
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      this.clearTimers();
+    };
   }
 
   async idle(): Promise<void> {
@@ -231,9 +322,13 @@ export class PushService {
     }
   }
 
-  private async acquireSendSlot(): Promise<boolean> {
+  private async acquireSendSlot(priority: boolean): Promise<boolean> {
     if (this.activeSends < MAX_CONCURRENT_SENDS) {
       this.activeSends += 1;
+      return true;
+    }
+    if (priority) {
+      await new Promise<void>((resolve) => this.priorityWaiting.push(resolve));
       return true;
     }
     if (this.waiting.length >= MAX_QUEUED_SENDS) {
@@ -244,7 +339,7 @@ export class PushService {
   }
 
   private releaseSendSlot(): void {
-    const next = this.waiting.shift();
+    const next = this.priorityWaiting.shift() ?? this.waiting.shift();
     if (next) {
       next();
       return;
@@ -272,15 +367,15 @@ export class PushService {
     if (!sender) {
       return;
     }
-    await this.repository.deleteOrphans(userId);
     const current = this.now();
     const subscriptions = (await this.repository.listActiveForUser(userId)).filter((subscription) => this.isSessionLive(subscription.session, current));
     const body = JSON.stringify(payload);
-    await Promise.all(subscriptions.map((subscription) => this.sendLimited(sender, subscription, body, options)));
+    await Promise.all(subscriptions.map((subscription) => this.sendLimited(sender, subscription, body, options, payload.t !== 'msg')));
+    await this.repository.deleteOrphans(userId);
   }
 
-  private async sendLimited(sender: PushSender, subscription: PushSubscriptionRecord, body: string, options: PushSendOptions): Promise<void> {
-    if (!(await this.acquireSendSlot())) {
+  private async sendLimited(sender: PushSender, subscription: PushSubscriptionRecord, body: string, options: PushSendOptions, priority: boolean): Promise<void> {
+    if (!(await this.acquireSendSlot(priority))) {
       logger.warn({ host: hostOf(subscription.endpoint) }, 'Push send queue full, notification dropped');
       return;
     }

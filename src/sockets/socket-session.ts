@@ -33,6 +33,7 @@ function clearSocketIdentity(socket: AppSocket): void {
   delete socket.data.authMethod;
   delete socket.data.sessionId;
   delete socket.data.hidden;
+  delete socket.data.inattentive;
 }
 
 export async function bindSocketSession(socket: AppSocket, binding: SocketSessionBinding): Promise<boolean> {
@@ -53,6 +54,7 @@ export async function bindSocketSession(socket: AppSocket, binding: SocketSessio
   socket.data.authMethod = binding.authMethod;
   socket.data.sessionId = binding.sessionId;
   delete socket.data.hidden;
+  delete socket.data.inattentive;
   await socket.join(userRoom(binding.userId));
 
   if (socket.disconnected) {
