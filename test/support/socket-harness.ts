@@ -51,7 +51,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     services.messageService,
     new TypingService(),
     new RoomPresenceService(),
-    new AiRouter([{ generateReply: () => Promise.resolve('ok') }]),
+    new AiRouter([{ generate: () => Promise.resolve({ text: 'ok', calls: [] }) }]),
     new AiUsageLimiter(new AiUsageRepository(services.db)),
     services.objectStorage,
     services.userService,

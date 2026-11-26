@@ -7,17 +7,17 @@ import { sealAttachmentBytes } from './support/room-keys.js';
 type History = { role: string; text?: string; inlineData?: { mimeType: string; data: string }[] }[];
 
 async function setup() {
-  const generateReply = vi.fn(() => Promise.resolve('ok'));
-  const context = await setupAssistantRoom({ router: new AiRouter([{ generateReply }]) });
-  return { ...context, generateReply };
+  const generate = vi.fn(() => Promise.resolve({ text: 'ok', calls: [] }));
+  const context = await setupAssistantRoom({ router: new AiRouter([{ generate }]) });
+  return { ...context, generate };
 }
 
-async function lastTurn(generateReply: ReturnType<typeof vi.fn>): Promise<History[number] | undefined> {
+async function lastTurn(generate: ReturnType<typeof vi.fn>): Promise<History[number] | undefined> {
   await vi.advanceTimersByTimeAsync(3000);
   await vi.waitFor(() => {
-    expect(generateReply).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(1);
   });
-  const [history] = generateReply.mock.calls[0] as unknown as [History];
+  const [history] = generate.mock.calls[0] as unknown as [History];
   return history.at(-1);
 }
 
@@ -51,7 +51,7 @@ describe('AiService per-attachment keys', () => {
     const message = await sendTextFile(context, messageId, url, key);
     await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
 
-    expect((await lastTurn(context.generateReply))?.text).toContain('segredo do arquivo');
+    expect((await lastTurn(context.generate))?.text).toContain('segredo do arquivo');
   });
 
   it('decrypts an image with its own key and sends it inline', async () => {
@@ -79,7 +79,7 @@ describe('AiService per-attachment keys', () => {
     });
     await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
 
-    expect((await lastTurn(context.generateReply))?.inlineData).toHaveLength(1);
+    expect((await lastTurn(context.generate))?.inlineData).toHaveLength(1);
   });
 
   it('does not decrypt an attachment whose message carries no file key', async () => {
@@ -91,7 +91,7 @@ describe('AiService per-attachment keys', () => {
     const message = await sendTextFile(context, messageId, url, undefined);
     await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
 
-    const turn = await lastTurn(context.generateReply);
+    const turn = await lastTurn(context.generate);
     expect(turn?.text).not.toContain('segredo do arquivo');
     expect(turn?.text).toContain('não foi possível carregá-lo');
   });
@@ -106,7 +106,7 @@ describe('AiService per-attachment keys', () => {
     const message = await sendTextFile(context, messageId, url, keyForAnotherMessage);
     await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
 
-    expect((await lastTurn(context.generateReply))?.text).not.toContain('segredo do arquivo');
+    expect((await lastTurn(context.generate))?.text).not.toContain('segredo do arquivo');
   });
 
   it('refuses an object sealed for another message even with the right key', async () => {
@@ -119,6 +119,6 @@ describe('AiService per-attachment keys', () => {
     const message = await sendTextFile(context, messageId, url, await context.sealFromAlice(sealed.fileKey, messageId, 'file-key'));
     await context.aiService.handleIncomingMessage(createFakeServer(), context.room, message, 'pt');
 
-    expect((await lastTurn(context.generateReply))?.text).not.toContain('segredo do arquivo');
+    expect((await lastTurn(context.generate))?.text).not.toContain('segredo do arquivo');
   });
 });

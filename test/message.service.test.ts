@@ -196,6 +196,20 @@ describe('MessageService', () => {
     expect(deleted.content).toBe('');
   });
 
+  it('clears the assistant card and quick reply columns when deleting for everyone', async () => {
+    const { messageService, userService } = await buildRoomService();
+    const alice = await createUser(userService, 'Alice');
+    const quickReply = { cardId: '6f1c1d0e-8f55-4a53-9d1d-0c5b6b1f6a11', choice: 'yes' as const };
+    const message = await messageService.sendMessage({ roomId: 'room-1', senderId: alice.id, content: 'sim', assistantCard: 'card', quickReply });
+    expect((await messageService.getMessage(message.id))?.quickReply).toEqual(quickReply);
+
+    await messageService.deleteMessage(message.id, alice.id);
+
+    const stored = await messageService.getMessage(message.id);
+    expect(stored?.assistantCard).toBeUndefined();
+    expect(stored?.quickReply).toBeUndefined();
+  });
+
   it('rejects deleting a message that belongs to someone else', async () => {
     const { messageService, userService } = await buildRoomService();
     const alice = await createUser(userService, 'Alice');

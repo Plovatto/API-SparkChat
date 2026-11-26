@@ -1,9 +1,11 @@
 import { z } from 'zod';
+import { logger } from '../../config/logger.js';
 import { getClientIp } from '../../config/client-ip.js';
 import { errorPayloadSchema } from '../../docs/common-schemas.js';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import { AppError, errorPayload } from '../../lib/app-error.js';
 import { SUPPORTED_LOCALES } from '../../lib/locale.js';
+import { isValidTimeZone } from '../../lib/time-zone.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { exceedsLookupLimit, lookupTooLargePayload } from '../../sockets/id-lookup.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
@@ -104,6 +106,10 @@ const setLocalePayloadSchema = z.object({
   locale: z.enum(SUPPORTED_LOCALES),
 });
 
+const setTimeZonePayloadSchema = z.object({
+  timeZone: z.string().refine(isValidTimeZone),
+});
+
 const authFailedPayloadSchema = errorPayloadSchema.extend({
   mode: z.enum(['register', 'resume']),
   reason: z.enum(['invalid', 'temporary']),
@@ -123,6 +129,7 @@ registerClientEvents('users', {
   'user:update-chat-settings': userChatSettingsSchema,
   'user:visibility': visibilityPayloadSchema,
   'user:set-locale': setLocalePayloadSchema,
+  'user:set-timezone': setTimeZonePayloadSchema,
   'user:change-password': changePasswordPayloadSchema,
   'user:regenerate-recovery-file': regenerateRecoveryFilePayloadSchema,
   'user:logout': null,
@@ -185,6 +192,10 @@ export function registerUserSocketHandlers(io: AppServer, socket: AppSocket, dep
     runSocketHandler(socket, 'user:set-locale', () => {
       handleSetLocale(socket, payload);
     });
+  });
+
+  socket.on('user:set-timezone', (payload) => {
+    runSocketHandler(socket, 'user:set-timezone', () => handleSetTimeZone(socket, deps, payload));
   });
 
   socket.on('user:change-password', (payload) => {
@@ -326,6 +337,20 @@ async function handleJoin(io: AppServer, socket: AppSocket, deps: UserSocketDeps
   }
 }
 
+async function syncHandshakeTimeZone(socket: AppSocket, deps: UserSocketDeps, userId: string): Promise<void> {
+  const timeZone = socket.data.timeZone;
+  if (!timeZone) {
+    return;
+  }
+  try {
+    if ((await deps.userService.getTimeZone(userId)) !== timeZone) {
+      await deps.userService.setTimeZone(userId, timeZone);
+    }
+  } catch (error) {
+    logger.warn({ err: error, userId }, 'Failed to persist the handshake time zone');
+  }
+}
+
 async function bindActiveSocketSession(
   socket: AppSocket,
   deps: UserSocketDeps,
@@ -336,6 +361,7 @@ async function bindActiveSocketSession(
   }
 
   if (await deps.userService.isSessionActive(binding.userId, binding.sessionId)) {
+    await syncHandshakeTimeZone(socket, deps, binding.userId);
     return true;
   }
 
@@ -489,6 +515,19 @@ function handleSetLocale(socket: AppSocket, payload: unknown): void {
   }
 
   socket.data.locale = parsed.data.locale;
+}
+
+async function handleSetTimeZone(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {
+  const parsed = setTimeZonePayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    return;
+  }
+
+  socket.data.timeZone = parsed.data.timeZone;
+  const userId = socket.data.userId;
+  if (userId) {
+    await deps.userService.setTimeZone(userId, parsed.data.timeZone);
+  }
 }
 
 async function releaseSocketUser(io: AppServer, socket: AppSocket, deps: UserSocketDeps): Promise<void> {

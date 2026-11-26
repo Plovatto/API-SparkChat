@@ -31,6 +31,7 @@ export interface SocketData {
   authMethod?: AuthMethod;
   sessionId?: string;
   locale?: Locale;
+  timeZone?: string;
   hidden?: boolean;
   inattentive?: boolean;
   sessionRevoked?: boolean;

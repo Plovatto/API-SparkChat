@@ -6,6 +6,7 @@ import { resolveObjectKey } from '../../storage/object-storage-url.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import type { StorageQuota } from '../../storage/storage-quota.js';
 import type { UploadRegistry } from '../../storage/upload-registry.js';
+import type { QuickReply, QuickReplyChoice } from '../assistant/assistant.card.js';
 import type { UserService } from '../users/index.js';
 import { nextTimestamp } from './message.clock.js';
 import type { MessageRepository, RoomDigest, RoomDigestRequest, UnreadCounts } from './message.repository.js';
@@ -38,6 +39,8 @@ export interface SendMessageInput {
   caption?: string | null | undefined;
   linkPreview?: MessageLinkPreview | null | undefined;
   attachmentUrls?: string[] | undefined;
+  assistantCard?: string | undefined;
+  quickReply?: QuickReply | undefined;
 }
 
 export interface ReactToMessageResult {
@@ -46,6 +49,8 @@ export interface ReactToMessageResult {
 }
 
 const NO_REACTIONS: ReadonlyMap<string, MessageReaction[]> = new Map();
+
+const NO_RESOLUTIONS: ReadonlyMap<string, QuickReplyChoice> = new Map();
 
 const NON_REACTABLE_TYPES: ReadonlySet<MessageType> = new Set(['system', 'error']);
 
@@ -173,6 +178,8 @@ export class MessageService {
       caption: input.type && input.type !== 'text' ? (input.caption ?? null) : null,
       linkPreview: input.linkPreview ?? null,
       systemEvent: null,
+      ...(input.assistantCard ? { assistantCard: input.assistantCard } : {}),
+      ...(input.quickReply ? { quickReply: input.quickReply } : {}),
     };
 
     return this.repository.insert(message);
@@ -263,6 +270,8 @@ export class MessageService {
       caption: null,
       linkPreview: null,
       replyTo: null,
+      assistantCard: null,
+      quickReply: null,
     });
     if (!updated) {
       throw AppError.of('message.notFound');
@@ -439,11 +448,14 @@ export class MessageService {
     message: MessageRecord,
     deletedReplyIds?: ReadonlySet<string>,
     reactionsByMessage?: ReadonlyMap<string, MessageReaction[]>,
+    resolutionsByCard?: ReadonlyMap<string, QuickReplyChoice>,
   ): Promise<MessageView> {
-    const [resolvedDeletedReplyIds, resolvedReactions] = await Promise.all([
+    const [resolvedDeletedReplyIds, resolvedReactions, resolvedChoices] = await Promise.all([
       deletedReplyIds ?? this.findDeletedReplyIds([message]),
       reactionsByMessage ?? this.findReactions([message]),
+      resolutionsByCard ?? this.findCardResolutions([message]),
     ]);
+    const resolvedChoice = message.assistantCard && !message.deletedForEveryone ? resolvedChoices.get(message.id) : undefined;
 
     return {
       id: message.id,
@@ -464,21 +476,42 @@ export class MessageService {
       caption: message.deletedForEveryone ? null : message.caption,
       linkPreview: message.deletedForEveryone ? null : message.linkPreview,
       systemEvent: message.deletedForEveryone ? null : message.systemEvent,
+      ...(message.assistantCard && !message.deletedForEveryone ? { assistantCard: message.assistantCard } : {}),
+      ...(message.quickReply && !message.deletedForEveryone ? { quickReply: message.quickReply } : {}),
+      ...(resolvedChoice ? { resolvedChoice } : {}),
       reactions: isReactableMessage(message) ? (resolvedReactions.get(message.id) ?? []) : [],
     };
   }
 
   toNewView(message: MessageRecord): Promise<MessageView> {
-    return this.toView(message, undefined, NO_REACTIONS);
+    return this.toView(message, undefined, NO_REACTIONS, NO_RESOLUTIONS);
   }
 
   async toViews(messages: MessageRecord[]): Promise<MessageView[]> {
-    const [deletedReplyIds, reactions] = await Promise.all([
+    const [deletedReplyIds, reactions, resolutions] = await Promise.all([
       this.findDeletedReplyIds(messages),
       this.findReactions(messages),
+      this.findCardResolutions(messages),
       this.warmSenderProfiles(messages.map((message) => message.senderId)),
     ]);
-    return Promise.all(messages.map((message) => this.toView(message, deletedReplyIds, reactions)));
+    return Promise.all(messages.map((message) => this.toView(message, deletedReplyIds, reactions, resolutions)));
+  }
+
+  private findCardResolutions(messages: MessageRecord[]): Promise<Map<string, QuickReplyChoice>> {
+    const ids = messages.filter((message) => message.assistantCard && !message.deletedForEveryone).map((message) => message.id);
+    return ids.length > 0 ? this.repository.findCardResolutions(ids) : Promise.resolve(new Map<string, QuickReplyChoice>());
+  }
+
+  recordCardResolution(cardMessageId: string, userId: string, choice: QuickReplyChoice): Promise<boolean> {
+    return this.repository.insertCardResolution(cardMessageId, userId, choice);
+  }
+
+  releaseCardResolution(cardMessageId: string): Promise<void> {
+    return this.repository.deleteCardResolution(cardMessageId);
+  }
+
+  async isCardResolved(cardMessageId: string): Promise<boolean> {
+    return (await this.repository.findCardResolutions([cardMessageId])).has(cardMessageId);
   }
 
   private findReactions(messages: MessageRecord[]): Promise<Map<string, MessageReaction[]>> {

@@ -6,8 +6,8 @@ export const ASSISTANT_AVATAR = 1;
 export const ASSISTANT_STATUS_TEXT = '100% pilha, 0% sono 🔋';
 
 export const AI_WELCOME_MESSAGES: Record<Locale, string> = {
-  pt: 'Oi! Eu sou o SparkAI 🤖 — apareci aqui só pra gente trocar ideia. Manda o que quiser, é só um papo!',
-  en: "Hi! I'm SparkAI 🤖 — I'm here just to chat. Send me anything, no pressure!",
+  pt: 'Oi! Eu sou o SparkAI 🤖✨ Bato papo e também te dou uma mão de verdade: troco seu tema, anoto, te lembro das coisas e muito mais. Dá uma olhada no que eu sei fazer 👇',
+  en: "Hi! I'm SparkAI 🤖✨ I chat and I also lend a real hand: I change your theme, take notes, remind you of things and more. Take a look at what I can do 👇",
 };
 
 export const AI_DAILY_MESSAGE_LIMIT = 50;
@@ -31,18 +31,3 @@ export const AI_BATCH_DEBOUNCE_MS = 2500;
 
 export const AI_PRIMARY_MODEL = 'gemini-3.5-flash-lite';
 export const AI_FALLBACK_MODEL = 'gemini-3.1-flash-lite';
-
-const AI_LOCALE_NAMES: Record<Locale, string> = {
-  pt: 'português do Brasil',
-  en: 'inglês',
-};
-
-export function buildSystemInstruction(locale: Locale): string {
-  return [
-    'Você é o SparkAI, o assistente de IA integrado ao SparkChat.',
-    `O idioma configurado pela pessoa no SparkChat é ${AI_LOCALE_NAMES[locale]}.`,
-    `Responda em ${AI_LOCALE_NAMES[locale]} por padrão, mas, se a pessoa escrever em outro idioma, responda no idioma em que ela escreveu.`,
-    'Seja direto, natural e simpático, como numa conversa de chat comum. Evite respostas muito longas.',
-    'Você não tem acesso a outras conversas do usuário nem a informações fora desta conversa.',
-  ].join(' ');
-}

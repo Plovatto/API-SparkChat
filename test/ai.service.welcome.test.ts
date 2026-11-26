@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { openField } from '@/modules/ai/ai.crypto.js';
 import { AI_WELCOME_MESSAGES } from '@/modules/ai/ai.model.js';
 import { AI_PENDING_WELCOME_TTL_MS } from '@/modules/ai/ai.service.js';
 import { createFakeServer, setupAssistantRoom } from './support/ai-fixture.js';
@@ -96,6 +97,20 @@ describe('AiService welcome and the room key', () => {
     await aiService.sendWelcomeMessage(io, room, 'en');
     await aiService.handleRoomKeyPublished(io, room);
     expect(await welcomeTexts()).toEqual([AI_WELCOME_MESSAGES.en]);
+  });
+
+  it('attaches the capabilities card to the welcome', async () => {
+    const { aiService, room, assistant, identity, roomKey, messageService } = await setupAssistantRoom();
+    await aiService.sendWelcomeMessage(createFakeServer(), room, 'pt');
+    const { messages } = await messageService.getRoomMessagesPage(room.id, { limit: 10 });
+    const welcome = messages.find((message) => message.senderId === assistant.id);
+    const opened = await openField(welcome?.assistantCard ?? '', roomKey, identity.signingPublicKeyBytes, {
+      roomId: room.id,
+      senderId: assistant.id,
+      messageId: welcome?.id ?? '',
+      label: 'assistantCard',
+    });
+    expect(JSON.parse(opened ?? '')).toEqual({ v: 1, kind: 'capabilities' });
   });
 
   it('a failed delivery is logged and never rejects', async () => {

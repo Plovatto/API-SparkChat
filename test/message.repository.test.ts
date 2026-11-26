@@ -216,4 +216,19 @@ describe('MessageRepository hidden messages', () => {
     expect(found.map((message) => message.id).sort()).toEqual([a.id, b.id].sort());
     expect(await messageRepository.findByIds([])).toEqual([]);
   });
+
+  it('claims a card resolution exactly once under concurrent inserts', async () => {
+    const { messageRepository } = await buildRoomService();
+
+    const results = await Promise.all([
+      messageRepository.insertCardResolution('card-1', 'u1', 'yes'),
+      messageRepository.insertCardResolution('card-1', 'u1', 'no'),
+      messageRepository.insertCardResolution('card-1', 'u1', 'yes'),
+    ]);
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect((await messageRepository.findCardResolutions(['card-1'])).size).toBe(1);
+    await messageRepository.deleteCardResolution('card-1');
+    expect((await messageRepository.findCardResolutions(['card-1'])).size).toBe(0);
+  });
 });

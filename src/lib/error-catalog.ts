@@ -76,6 +76,7 @@ export const ERROR_CATALOG = {
   'message.unsupportedEncryption': () => 'Formato de criptografia não suportado. Atualize o aplicativo e tente novamente.',
   'message.attachmentKeyRequired': () => 'Anexo sem chave de criptografia. Atualize o aplicativo e tente novamente.',
   'message.staleRoomKey': () => 'A chave da sala mudou. Aguarde a nova chave e tente novamente.',
+  'message.quickReplyNotAllowed': () => 'Respostas rápidas só podem ser enviadas na conversa com o SparkAI.',
   'message.reactionUnavailable': () => 'Não é possível reagir a esta mensagem.',
   'e2e.lookupTooLarge': ({ maxItems }: { maxItems: number }) => `Consulta de chaves com itens demais. Envie no máximo ${maxItems} por vez.`,
   'e2e.keysLocked': () => 'As chaves de criptografia desta conta já estão configuradas e não podem ser substituídas.',

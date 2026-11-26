@@ -14,9 +14,9 @@ async function setup() {
   const histories: AiConversationMessage[][] = [];
   const router = new AiRouter([
     {
-      generateReply: (messages) => {
+      generate: (messages) => {
         histories.push(messages);
-        return Promise.resolve('resposta');
+        return Promise.resolve({ text: 'resposta', calls: [] });
       },
     },
   ]);

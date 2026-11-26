@@ -22,6 +22,7 @@ export interface UserRecord {
   authVersion?: AuthVersion;
   encryptedAvatar?: string | null;
   profileKeyVersion?: number;
+  timeZone?: string | null;
 }
 
 export interface SessionRecord {

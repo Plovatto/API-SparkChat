@@ -10,6 +10,7 @@ export interface EncryptedMessageFields {
   type: 'text' | 'image' | 'audio' | 'file';
   content: string;
   caption?: string | undefined;
+  assistantCard?: string | undefined;
   fileMeta?:
     | {
         name: string;
@@ -36,6 +37,7 @@ function encryptedValues(fields: EncryptedMessageFields): string[] {
   const values: (string | null | undefined)[] = [
     fields.type === 'text' ? fields.content : undefined,
     fields.caption,
+    fields.assistantCard,
     fields.fileMeta?.name,
     fields.fileMeta?.mimeType,
     fields.fileMeta?.key,
