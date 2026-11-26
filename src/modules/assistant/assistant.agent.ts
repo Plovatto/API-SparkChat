@@ -5,6 +5,7 @@ import { buildAssistantInstruction } from './assistant.prompt.js';
 import type { AssistantContext, AssistantToolbox } from './assistant.toolbox.js';
 
 export const ASSISTANT_MAX_TOOL_ROUNDS = 3;
+export const ASSISTANT_MAX_TOOL_CALLS = 5;
 
 const DONE_TEXT: Record<Locale, string> = {
   pt: 'Pronto! ✨',
@@ -67,6 +68,7 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
       weekday,
       timeZone: context.timeZone,
       catalogSummary: input.catalogSummary ?? '',
+      toolNames: toolbox.declarations().map((declaration) => declaration.name),
     }), input.extraInstruction].filter(Boolean).join(' '),
     tools: toolbox.declarations(),
   };
@@ -74,6 +76,7 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
   const messages = [...input.history];
   let card: AssistantCard | null = null;
   let turn: AiTurn = { text: '', calls: [] };
+  let executedCalls = 0;
 
   for (let round = 0; round < ASSISTANT_MAX_TOOL_ROUNDS; round += 1) {
     turn = await router.generate(messages, options);
@@ -83,6 +86,11 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
 
     const responses: NonNullable<AiConversationMessage['functionResponse']> = [];
     for (const call of turn.calls) {
+      if (executedCalls >= ASSISTANT_MAX_TOOL_CALLS) {
+        responses.push({ id: call.id, name: call.name, response: { error: 'too_many_calls' } });
+        continue;
+      }
+      executedCalls += 1;
       const result = await toolbox.run(call.name, call.args, context);
       if (result.card) {
         card = result.card;

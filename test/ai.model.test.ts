@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AI_WELCOME_MESSAGES } from '@/modules/ai/ai.model.js';
 import { buildAssistantInstruction } from '@/modules/assistant/assistant.prompt.js';
 
-const BASE = { nowLocal: '2026-11-27T09:00', weekday: 'sexta-feira', timeZone: 'America/Sao_Paulo', catalogSummary: '' };
+const BASE = { nowLocal: '2026-11-27T09:00', weekday: 'sexta-feira', timeZone: 'America/Sao_Paulo', catalogSummary: '', toolNames: ['show_capabilities', 'app_help'] };
 
 describe('buildAssistantInstruction', () => {
   it('keeps portuguese as the default reply language for pt', () => {
@@ -20,7 +20,27 @@ describe('buildAssistantInstruction', () => {
 
   it.each(['pt', 'en'] as const)('carries the key rules and context in %s', (locale) => {
     const instruction = buildAssistantInstruction({ ...BASE, locale, catalogSummary: 'CATALOG' });
-    for (const part of ['2026-11-27T09:00', 'sexta-feira', 'America/Sao_Paulo', 'suggest_look', 'apply_look', 'CATALOG']) {
+    for (const part of ['2026-11-27T09:00', 'sexta-feira', 'America/Sao_Paulo', 'show_capabilities', 'app_help', 'CATALOG']) {
+      expect(instruction).toContain(part);
+    }
+  });
+
+  it.each(['pt', 'en'] as const)('only mentions tools that are registered in %s', (locale) => {
+    const phaseOne = buildAssistantInstruction({ ...BASE, locale });
+    expect(phaseOne).not.toContain('suggest_look');
+    expect(phaseOne).not.toContain('apply_look');
+    const withLook = buildAssistantInstruction({ ...BASE, locale, toolNames: ['suggest_look', 'apply_look'] });
+    expect(withLook).toContain('suggest_look');
+    expect(withLook).toContain('apply_look');
+    expect(withLook).not.toContain('show_capabilities');
+  });
+
+  it.each([
+    ['pt', ['Se faltar o horário', 'Nunca invente ids', 'Nunca diga que fez algo sem ter usado a ferramenta', 'chega muito em breve']],
+    ['en', ['If the time is missing', 'Never make up ids', 'Never say you did something without having used the matching tool', 'coming very soon']],
+  ] as const)('keeps the behavioral rules in %s', (locale, parts) => {
+    const instruction = buildAssistantInstruction({ ...BASE, locale, toolNames: [] });
+    for (const part of parts) {
       expect(instruction).toContain(part);
     }
   });
@@ -30,8 +50,7 @@ describe('buildAssistantInstruction', () => {
     expect(instruction).toContain('2026-11-27T09:00');
     expect(instruction).toContain('sexta-feira');
     expect(instruction).toContain('America/Sao_Paulo');
-    expect(instruction).toContain('suggest_look');
-    expect(instruction).toContain('apply_look');
+    expect(instruction).toContain('show_capabilities');
     expect(instruction).toContain('Catálogo: aurora, mar');
   });
 });

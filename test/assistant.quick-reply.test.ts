@@ -125,6 +125,32 @@ describe('assistant quick replies', () => {
     const { messages } = await t.messageService.getRoomMessagesPage(t.room.id, { limit: 20 });
     expect(messages.some((message) => message.type === 'error' && message.systemEvent?.type === 'ai.dailyLimitReached')).toBe(true);
     expect(generate).not.toHaveBeenCalled();
+    const views = await t.messageService.toViews(messages);
+    expect(views.find((view) => view.id === card.id)?.resolvedChoice).toBeUndefined();
+    expect(t.emitted.some((event) => event.event === 'message:card-resolved')).toBe(false);
+  });
+
+  it('announces the resolution of another only after the suggestion succeeds', async () => {
+    const generate = vi.fn().mockResolvedValue({ text: 'que tal este?', calls: [] });
+    const t = await setup({ router: new AiRouter([{ generate }]), usageLimiter: { tryConsume: vi.fn().mockResolvedValue(true) } as never });
+    const card = await t.sendCardFromAssistant({ v: 1, kind: 'look-suggestion', look: {}, buttons: [{ choice: 'another', label: 'Outra' }] });
+
+    await t.aiService.handleIncomingMessage(t.io, t.room, await t.sendQuickReplyFromAlice({ cardId: card.id, choice: 'another' }), 'pt');
+
+    await vi.waitFor(() => expect(t.emitted.some((event) => event.event === 'message:card-resolved')).toBe(true), { timeout: 10000 });
+    expect((await t.messageService.toView(card)).resolvedChoice).toBe('another');
+  });
+
+  it('releases the card when generating another suggestion fails', async () => {
+    const generate = vi.fn().mockRejectedValue(new Error('boom'));
+    const t = await setup({ router: new AiRouter([{ generate }]), usageLimiter: { tryConsume: vi.fn().mockResolvedValue(true) } as never });
+    const card = await t.sendCardFromAssistant({ v: 1, kind: 'look-suggestion', look: {}, buttons: [{ choice: 'another', label: 'Outra' }] });
+
+    await t.aiService.handleIncomingMessage(t.io, t.room, await t.sendQuickReplyFromAlice({ cardId: card.id, choice: 'another' }), 'pt');
+
+    await vi.waitFor(() => expect(generate).toHaveBeenCalled(), { timeout: 10000 });
+    await vi.waitFor(async () => expect((await t.messageService.toView(card)).resolvedChoice).toBeUndefined(), { timeout: 10000 });
+    expect(t.emitted.some((event) => event.event === 'message:card-resolved')).toBe(false);
   });
 
   it('rejects a choice the card does not offer without writing a resolution', async () => {

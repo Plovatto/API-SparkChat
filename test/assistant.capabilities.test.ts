@@ -71,7 +71,7 @@ describe('capabilities and help tools', () => {
 
   it('mentions both tools in the pt and en prompts', () => {
     for (const locale of ['pt', 'en'] as const) {
-      const prompt = buildAssistantInstruction({ locale, nowLocal: '2026-11-26T10:00', weekday: 'x', timeZone: 'UTC', catalogSummary: '' });
+      const prompt = buildAssistantInstruction({ locale, nowLocal: '2026-11-26T10:00', weekday: 'x', timeZone: 'UTC', catalogSummary: '', toolNames: ['show_capabilities', 'app_help'] });
       expect(prompt).toContain('show_capabilities');
       expect(prompt).toContain('app_help');
     }

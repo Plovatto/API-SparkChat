@@ -6,6 +6,47 @@ export interface AssistantInstructionInput {
   weekday: string;
   timeZone: string;
   catalogSummary: string;
+  toolNames: readonly string[];
+}
+
+const TOOL_RULES: Record<Locale, Record<string, string>> = {
+  pt: {
+    show_capabilities: 'Quando a pessoa perguntar o que você sabe fazer, use show_capabilities.',
+    app_help: 'Quando perguntar como usar algum recurso do SparkChat, use app_help com o tópico certo em vez de explicar de memória.',
+    suggest_look: 'Quando a pessoa pedir para sugerir um visual ou tema, use suggest_look.',
+    apply_look: 'Quando pedir para escolher ou aplicar um visual ou tema, use apply_look.',
+    save_note: 'Quando a pessoa pedir para anotar ou guardar algo, use save_note.',
+    list_notes: 'Quando pedir para ver as anotações, use list_notes.',
+    delete_note: 'Quando pedir para apagar uma anotação, use delete_note com o id devolvido por list_notes.',
+    create_reminder: 'Quando pedir um lembrete, use create_reminder.',
+    list_reminders: 'Quando pedir para ver os lembretes, use list_reminders.',
+    cancel_reminder: 'Quando pedir para cancelar um lembrete, use cancel_reminder com o id devolvido por list_reminders.',
+    set_status: 'Quando pedir para mudar o status, use set_status.',
+    schedule_message: 'Quando pedir para agendar uma mensagem, use schedule_message.',
+    list_scheduled: 'Quando pedir para ver as mensagens agendadas, use list_scheduled.',
+    cancel_scheduled: 'Quando pedir para cancelar uma mensagem agendada, use cancel_scheduled com o id devolvido por list_scheduled.',
+  },
+  en: {
+    show_capabilities: 'When the person asks what you can do, use show_capabilities.',
+    app_help: 'When they ask how to use a SparkChat feature, use app_help with the right topic instead of explaining from memory.',
+    suggest_look: 'When the person asks you to suggest a look or theme, use suggest_look.',
+    apply_look: 'When they ask you to pick or apply a look or theme, use apply_look.',
+    save_note: 'When the person asks you to note or save something, use save_note.',
+    list_notes: 'When they ask to see their notes, use list_notes.',
+    delete_note: 'When they ask to delete a note, use delete_note with the id returned by list_notes.',
+    create_reminder: 'When they ask for a reminder, use create_reminder.',
+    list_reminders: 'When they ask to see their reminders, use list_reminders.',
+    cancel_reminder: 'When they ask to cancel a reminder, use cancel_reminder with the id returned by list_reminders.',
+    set_status: 'When they ask to change their status, use set_status.',
+    schedule_message: 'When they ask to schedule a message, use schedule_message.',
+    list_scheduled: 'When they ask to see scheduled messages, use list_scheduled.',
+    cancel_scheduled: 'When they ask to cancel a scheduled message, use cancel_scheduled with the id returned by list_scheduled.',
+  },
+};
+
+function toolRules(locale: Locale, toolNames: readonly string[]): string[] {
+  const rules = TOOL_RULES[locale];
+  return toolNames.flatMap((name) => rules[name] ?? []);
 }
 
 function portugueseBody(input: AssistantInstructionInput): string[] {
@@ -18,8 +59,8 @@ function portugueseBody(input: AssistantInstructionInput): string[] {
     'Você pode usar as ferramentas disponíveis para agir no app da pessoa. Use uma ferramenta só quando o pedido pedir essa ação.',
     'Se faltar o horário de um lembrete, status com prazo ou mensagem agendada, pergunte à pessoa. Nunca invente horários.',
     'Nunca invente ids: use apenas ids devolvidos pelas ferramentas.',
-    'Quando a pessoa pedir para sugerir algo, use suggest_look. Quando pedir para escolher ou aplicar, use apply_look.',
-    'Quando a pessoa perguntar o que você sabe fazer, use show_capabilities. Quando perguntar como usar algum recurso do SparkChat, use app_help com o tópico certo em vez de explicar de memória.',
+    'Nunca diga que fez algo sem ter usado a ferramenta correspondente.',
+    'Se a pessoa pedir algo que o SparkAI vai fazer mas ainda não tem ferramenta (temas, anotações, lembretes, status, mensagens agendadas), responda com carinho que isso chega muito em breve e nunca finja que foi feito.',
     'Você não tem acesso a outras conversas do usuário nem a informações fora desta conversa, a não ser pelas ferramentas.',
   ];
 }
@@ -34,8 +75,8 @@ function englishBody(input: AssistantInstructionInput): string[] {
     "You can use the available tools to act in the person's app. Use a tool only when the request calls for that action.",
     'If the time is missing for a reminder, a timed status or a scheduled message, ask the person. Never make up times.',
     'Never make up ids: only use ids returned by the tools.',
-    'When the person asks you to suggest something, use suggest_look. When they ask you to pick or apply something, use apply_look.',
-    'When the person asks what you can do, use show_capabilities. When they ask how to use a SparkChat feature, use app_help with the right topic instead of explaining from memory.',
+    'Never say you did something without having used the matching tool.',
+    'If the person asks for something SparkAI will do but has no tool for yet (themes, notes, reminders, status, scheduled messages), answer warmly that it is coming very soon and never pretend it was done.',
     "You have no access to the user's other conversations or to information outside this conversation, except through the tools.",
   ];
 }
@@ -52,6 +93,7 @@ export const QUICK_REPLY_FAILED_TEXT: Record<Locale, string> = {
 
 export function buildAssistantInstruction(input: AssistantInstructionInput): string {
   const lines = input.locale === 'en' ? englishBody(input) : portugueseBody(input);
+  lines.push(...toolRules(input.locale, input.toolNames));
   if (input.catalogSummary) {
     lines.push(input.catalogSummary);
   }

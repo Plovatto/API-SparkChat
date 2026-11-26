@@ -71,6 +71,28 @@ describe('runAssistantTurn', () => {
     expect(reply.text).toBe('ainda');
   });
 
+  it('executes at most 5 tool calls per turn across rounds and answers the rest with too_many_calls', async () => {
+    const { router, seen } = scripted([
+      { text: '', calls: [call('a'), call('b'), call('c'), call('d')] },
+      { text: '', calls: [call('e'), call('f'), call('g')] },
+      { text: 'fim', calls: [] },
+    ]);
+    const { toolbox, ran } = echoToolbox();
+
+    const reply = await runAssistantTurn({ history: [], locale: 'pt', context: CONTEXT, toolbox, router });
+
+    expect(ran).toHaveLength(5);
+    expect(reply.text).toBe('fim');
+    expect(seen[2]?.messages.at(-1)).toEqual({
+      role: 'user',
+      functionResponse: [
+        { id: 'e', name: 'echo', response: { echoed: 'hi' } },
+        { id: 'f', name: 'echo', response: { error: 'too_many_calls' } },
+        { id: 'g', name: 'echo', response: { error: 'too_many_calls' } },
+      ],
+    });
+  });
+
   it('answers invalid args with invalid_args without throwing', async () => {
     const { router, seen } = scripted([
       { text: '', calls: [call('c1', { value: 5 })] },

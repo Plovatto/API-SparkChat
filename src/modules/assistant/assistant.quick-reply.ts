@@ -36,6 +36,7 @@ export interface QuickReplyDeps {
   openCard(message: MessageRecord): Promise<AssistantCard | null>;
   recordResolution(cardMessageId: string, userId: string, choice: QuickReplyChoice): Promise<boolean>;
   releaseResolution(cardMessageId: string): Promise<void>;
+  beforeClaim?(choice: QuickReplyChoice): Promise<boolean>;
   onResolved?(cardId: string, choice: QuickReplyChoice): void;
 }
 
@@ -49,7 +50,7 @@ export interface QuickReplyInput {
 
 export type QuickReplyOutcome =
   | { kind: 'reply'; reply: AssistantReply }
-  | { kind: 'another' }
+  | { kind: 'another'; settle: (succeeded: boolean) => Promise<void> }
   | { kind: 'failed' }
   | { kind: 'ignored' };
 
@@ -77,6 +78,10 @@ export async function resolveQuickReply(deps: QuickReplyDeps, input: QuickReplyI
     return IGNORED;
   }
 
+  if (deps.beforeClaim && !(await deps.beforeClaim(quickReply.choice))) {
+    return IGNORED;
+  }
+
   const claimed = await deps.recordResolution(cardMessage.id, userId, quickReply.choice);
   if (!claimed) {
     return IGNORED;
@@ -84,8 +89,16 @@ export async function resolveQuickReply(deps: QuickReplyDeps, input: QuickReplyI
   const announce = (): void => deps.onResolved?.(cardMessage.id, quickReply.choice);
 
   if (quickReply.choice === 'another') {
-    announce();
-    return { kind: 'another' };
+    return {
+      kind: 'another',
+      settle: async (succeeded) => {
+        if (succeeded) {
+          announce();
+          return;
+        }
+        await deps.releaseResolution(cardMessage.id);
+      },
+    };
   }
 
   const handler = deps.registry.handlerFor(card.kind);

@@ -20,9 +20,9 @@ import { readEncryptedFieldKeyId, resolveMessageKeyId } from './message.encrypte
 import { parseMentionedUserIds } from './message.mentions.js';
 import type { MessageRateLimiter } from './message.rate-limiter.js';
 import {
+  cardResolvedPayloadSchema,
   messageHiddenPayloadSchema,
   messageReactionsUpdatedPayloadSchema,
-  cardResolvedPayloadSchema,
   messageViewSchema,
   messagesListPayloadSchema,
   newMessagePayloadSchema,

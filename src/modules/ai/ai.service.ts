@@ -17,7 +17,7 @@ import { loadDecryptedAttachment, resolveAudioMimeType } from './ai.attachments.
 import { getSodium, openField, openRoomKeyEnvelope, readFieldKeyId, sealField } from './ai.crypto.js';
 import { runAssistantTurn } from '../assistant/assistant.agent.js';
 import type { AssistantReply } from '../assistant/assistant.agent.js';
-import type { AssistantCard } from '../assistant/assistant.card.js';
+import type { AssistantCard, QuickReplyChoice } from '../assistant/assistant.card.js';
 import { HELP_SHORTCUTS, HELP_SHORTCUT_REPLY } from '../assistant/assistant.help-catalog.js';
 import { ANOTHER_SUGGESTION_INSTRUCTION, QUICK_REPLY_FAILED_TEXT } from '../assistant/assistant.prompt.js';
 import { QuickReplyRegistry, resolveQuickReply } from '../assistant/assistant.quick-reply.js';
@@ -277,6 +277,7 @@ export class AiService {
           openCard: (cardMessage) => this.openCard(room.id, cardMessage),
           recordResolution: (cardId, userId, choice) => this.messageService.recordCardResolution(cardId, userId, choice),
           releaseResolution: (cardId) => this.messageService.releaseCardResolution(cardId),
+          beforeClaim: (choice) => this.consumeForAnotherSuggestion(io, room.id, message.senderId, choice),
           onResolved: (cardId, choice) => io.to(room.id).emit('message:card-resolved', { roomId: room.id, cardId, choice }),
         },
         { userId: message.senderId, room, message, quickReply, locale },
@@ -291,7 +292,7 @@ export class AiService {
         const reply = outcome.kind === 'reply' ? outcome.reply : { text: QUICK_REPLY_FAILED_TEXT[locale], card: null };
         await this.sendReply(io, room, roomKey, reply);
       } else if (outcome.kind === 'another') {
-        await this.requestAnotherSuggestion(io, room, message, locale);
+        this.requestAnotherSuggestion(io, room, message, locale, outcome.settle);
       }
     } catch (error) {
       logger.error({ err: error, roomId: room.id }, 'Falha ao resolver o botão do SparkAI');
@@ -299,13 +300,25 @@ export class AiService {
     }
   }
 
-  private async requestAnotherSuggestion(io: AppServer, room: RoomRecord, message: MessageRecord, locale: Locale): Promise<void> {
-    if (!(await this.usageLimiter.tryConsume(message.senderId))) {
-      await this.sendErrorMessage(io, room.id, 'ai.dailyLimitReached');
-      return;
+  private async consumeForAnotherSuggestion(io: AppServer, roomId: string, userId: string, choice: QuickReplyChoice): Promise<boolean> {
+    if (choice !== 'another' || (await this.usageLimiter.tryConsume(userId))) {
+      return true;
     }
+    await this.sendErrorMessage(io, roomId, 'ai.dailyLimitReached');
+    return false;
+  }
+
+  private requestAnotherSuggestion(
+    io: AppServer,
+    room: RoomRecord,
+    message: MessageRecord,
+    locale: Locale,
+    settle: (succeeded: boolean) => Promise<void>,
+  ): void {
     this.broadcastTyping(io, room.id, true);
-    void this.respondToBatch(io, room, { messageIds: [message.id], locale }, ANOTHER_SUGGESTION_INSTRUCTION[locale]);
+    void this.respondToBatch(io, room, { messageIds: [message.id], locale }, ANOTHER_SUGGESTION_INSTRUCTION[locale])
+      .then(settle)
+      .catch((error: unknown) => logger.error({ err: error, roomId: room.id }, 'Falha ao concluir a outra sugestão do SparkAI'));
   }
 
   private async openCard(roomId: string, cardMessage: MessageRecord): Promise<AssistantCard | null> {
@@ -365,12 +378,12 @@ export class AiService {
     room: RoomRecord,
     batch: Pick<PendingBatch, 'messageIds' | 'locale'>,
     extraInstruction?: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const roomKey = await this.resolveRoomKey(room.id);
       if (!roomKey) {
         await this.sendErrorMessage(io, room.id, 'ai.encryptionUnavailable');
-        return;
+        return false;
       }
 
       const history = await this.buildConversation(room.id, new Set(batch.messageIds));
@@ -394,9 +407,11 @@ export class AiService {
       });
 
       await this.sendReply(io, room, roomKey, reply);
+      return true;
     } catch (error) {
       logger.error({ err: error, roomId: room.id }, 'Falha ao gerar resposta da IA');
       await this.sendErrorMessage(io, room.id, 'ai.replyFailed');
+      return false;
     } finally {
       this.broadcastTyping(io, room.id, false);
     }
