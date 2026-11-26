@@ -4,11 +4,11 @@ import { AiRouter, type AiGenerateOptions } from '@/modules/ai/ai.provider.js';
 import { createFakeServer, setupAssistantRoom } from './support/ai-fixture.js';
 
 async function setup() {
-  const receivedOptions: AiGenerateOptions[] = [];
+  const receivedOptions: Pick<AiGenerateOptions, 'locale'>[] = [];
   const router = new AiRouter([
     {
       generate: (_messages, options) => {
-        receivedOptions.push(options);
+        receivedOptions.push({ locale: options.locale });
         return Promise.resolve({ text: 'ok', calls: [] });
       },
     },
