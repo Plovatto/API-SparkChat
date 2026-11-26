@@ -1,5 +1,5 @@
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
-import type { QuickReply } from '../modules/assistant/assistant.card.js';
+import type { QuickReply, Recurrence } from '../modules/assistant/assistant.card.js';
 import type { LinkPreviewCacheRecord } from '../modules/link-preview/link-preview.types.js';
 import type { SystemEvent } from '../modules/messages/message.system-events.js';
 import type {
@@ -358,4 +358,34 @@ export const aiDailyUsage = sqliteTable(
     count: integer('count').notNull().default(0),
   },
   (table) => [primaryKey({ columns: [table.userId, table.usageDate] }), index('ai_daily_usage_date_idx').on(table.usageDate)],
+);
+
+export const assistantNotes = sqliteTable(
+  'assistant_notes',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    contentSealed: text('content_sealed').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [index('assistant_notes_user_idx').on(table.userId)],
+);
+
+export const reminders = sqliteTable(
+  'reminders',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    textSealed: text('text_sealed').notNull(),
+    nextFireAt: integer('next_fire_at').notNull(),
+    timeZone: text('time_zone').notNull(),
+    locale: text('locale').notNull().default('pt'),
+    recurrence: text('recurrence', { mode: 'json' }).$type<Recurrence | null>(),
+    anchor: text('anchor', { mode: 'json' }).$type<{ day: number; hour: number; minute: number } | null>(),
+    status: text('status').notNull().default('active'),
+    lastFiredAt: integer('last_fired_at'),
+    snoozeAt: integer('snooze_at'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [index('reminders_status_next_fire_idx').on(table.status, table.nextFireAt), index('reminders_user_idx').on(table.userId)],
 );

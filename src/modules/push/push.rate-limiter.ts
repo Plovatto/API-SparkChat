@@ -2,6 +2,7 @@ const WINDOW_MS = 60_000;
 const MAX_SUBSCRIPTION_CHANGES_PER_USER = 10;
 const MAX_CALL_PUSHES_PER_USER = 20;
 const MAX_MESSAGE_PUSHES_PER_USER = 30;
+const MAX_REMINDER_PUSHES_PER_USER = 20;
 const MESSAGE_ROOM_COOLDOWN_MS = 3_000;
 
 export class PushRateLimiter {
@@ -16,6 +17,10 @@ export class PushRateLimiter {
 
   tryCall(userId: string): boolean {
     return this.tryWindow(`call:${userId}`, MAX_CALL_PUSHES_PER_USER);
+  }
+
+  tryReminder(userId: string): boolean {
+    return this.tryWindow(`reminder:${userId}`, MAX_REMINDER_PUSHES_PER_USER);
   }
 
   messageDelayMs(userId: string, roomId: string): number {

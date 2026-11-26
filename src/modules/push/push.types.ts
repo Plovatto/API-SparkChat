@@ -5,7 +5,8 @@ export type PushCallEndReason = 'completed' | 'missed' | 'declined' | 'cancelled
 export type PushPayload =
   | { t: 'call'; callId: string; roomId: string; kind: 'voice' | 'video'; d?: string; e?: number; r?: 1 }
   | { t: 'call-end'; callId: string; reason: PushCallEndReason }
-  | { t: 'msg'; roomId: string; m?: PushMessagePreview };
+  | { t: 'msg'; roomId: string; m?: PushMessagePreview }
+  | { t: 'reminder'; id: string; roomId: string; x: string };
 
 export type PushPreviewKind = 'text' | 'image' | 'audio' | 'file';
 
