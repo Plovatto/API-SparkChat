@@ -229,6 +229,10 @@ export class MessageRepository {
     return inserted.length > 0;
   }
 
+  async deleteCardResolution(cardMessageId: string): Promise<void> {
+    await this.db.delete(assistantCardResolutions).where(eq(assistantCardResolutions.cardMessageId, cardMessageId));
+  }
+
   async upsertReaction(messageId: string, reaction: MessageReaction): Promise<void> {
     await this.db
       .insert(messageReactions)

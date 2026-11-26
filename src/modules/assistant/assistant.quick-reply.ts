@@ -35,6 +35,7 @@ export interface QuickReplyDeps {
   getMessage(messageId: string): Promise<MessageRecord | null>;
   openCard(message: MessageRecord): Promise<AssistantCard | null>;
   recordResolution(cardMessageId: string, userId: string, choice: QuickReplyChoice): Promise<boolean>;
+  releaseResolution(cardMessageId: string): Promise<void>;
   onResolved?(cardId: string, choice: QuickReplyChoice): void;
 }
 
@@ -46,7 +47,19 @@ export interface QuickReplyInput {
   locale?: Locale;
 }
 
-export async function resolveQuickReply(deps: QuickReplyDeps, input: QuickReplyInput): Promise<AssistantReply | null> {
+export type QuickReplyOutcome =
+  | { kind: 'reply'; reply: AssistantReply }
+  | { kind: 'another' }
+  | { kind: 'failed' }
+  | { kind: 'ignored' };
+
+const IGNORED: QuickReplyOutcome = { kind: 'ignored' };
+
+function offersChoice(card: AssistantCard, choice: QuickReplyChoice): boolean {
+  return 'buttons' in card && card.buttons.some((button) => button.choice === choice);
+}
+
+export async function resolveQuickReply(deps: QuickReplyDeps, input: QuickReplyInput): Promise<QuickReplyOutcome> {
   const { userId, room, quickReply } = input;
   const cardMessage = await deps.getMessage(quickReply.cardId);
   if (
@@ -56,33 +69,35 @@ export async function resolveQuickReply(deps: QuickReplyDeps, input: QuickReplyI
     cardMessage.deletedForEveryone ||
     !cardMessage.assistantCard
   ) {
-    return null;
+    return IGNORED;
   }
 
   const card = await deps.openCard(cardMessage);
-  if (!card) {
-    return null;
+  if (!card || !offersChoice(card, quickReply.choice)) {
+    return IGNORED;
   }
 
   const claimed = await deps.recordResolution(cardMessage.id, userId, quickReply.choice);
   if (!claimed) {
-    return null;
+    return IGNORED;
   }
   deps.onResolved?.(cardMessage.id, quickReply.choice);
 
   if (quickReply.choice === 'another') {
-    return null;
+    return { kind: 'another' };
   }
 
   const handler = deps.registry.handlerFor(card.kind);
   if (!handler) {
-    return null;
+    return IGNORED;
   }
 
   try {
-    return await handler({ userId, room, card, cardMessage, choice: quickReply.choice, locale: input.locale ?? 'pt' });
+    const reply = await handler({ userId, room, card, cardMessage, choice: quickReply.choice, locale: input.locale ?? 'pt' });
+    return reply ? { kind: 'reply', reply } : IGNORED;
   } catch (error) {
     logger.error({ err: error, roomId: room.id, kind: card.kind }, 'Falha ao tratar a resposta de botão do SparkAI');
-    return null;
+    await deps.releaseResolution(cardMessage.id);
+    return { kind: 'failed' };
   }
 }

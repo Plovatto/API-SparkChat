@@ -506,6 +506,10 @@ export class MessageService {
     return this.repository.insertCardResolution(cardMessageId, userId, choice);
   }
 
+  releaseCardResolution(cardMessageId: string): Promise<void> {
+    return this.repository.deleteCardResolution(cardMessageId);
+  }
+
   async isCardResolved(cardMessageId: string): Promise<boolean> {
     return (await this.repository.findCardResolutions([cardMessageId])).has(cardMessageId);
   }

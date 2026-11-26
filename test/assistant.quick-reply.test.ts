@@ -99,9 +99,9 @@ describe('assistant quick replies', () => {
     expect((await t.messageService.toView(card)).resolvedChoice).toBe('no');
   });
 
-  it('asks the model for a different suggestion on another, without using the daily limit', async () => {
+  it('asks the model for a different suggestion on another, consuming the daily limit', async () => {
     const generate = vi.fn().mockResolvedValue({ text: 'que tal este?', calls: [] });
-    const tryConsume = vi.fn().mockResolvedValue(false);
+    const tryConsume = vi.fn().mockResolvedValue(true);
     const t = await setup({ router: new AiRouter([{ generate }]), usageLimiter: { tryConsume } as never });
     const card = await t.sendCardFromAssistant({ v: 1, kind: 'look-suggestion', look: {}, buttons: [{ choice: 'another', label: 'Outra' }] });
 
@@ -110,8 +110,49 @@ describe('assistant quick replies', () => {
     await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(1), { timeout: 10000 });
     const options = generate.mock.calls[0]?.[1] as { systemInstruction: string };
     expect(options.systemInstruction).toContain('outra sugestão');
-    expect(tryConsume).not.toHaveBeenCalled();
+    expect(tryConsume).toHaveBeenCalledTimes(1);
     expect(t.handler).not.toHaveBeenCalled();
     await vi.waitFor(async () => expect(await t.assistantTexts()).toContain('que tal este?'), { timeout: 10000 });
+  });
+
+  it('replies with the limit message on another when the daily limit is reached', async () => {
+    const generate = vi.fn().mockResolvedValue({ text: 'x', calls: [] });
+    const t = await setup({ router: new AiRouter([{ generate }]), usageLimiter: { tryConsume: vi.fn().mockResolvedValue(false) } as never });
+    const card = await t.sendCardFromAssistant({ v: 1, kind: 'look-suggestion', look: {}, buttons: [{ choice: 'another', label: 'Outra' }] });
+
+    await t.aiService.handleIncomingMessage(t.io, t.room, await t.sendQuickReplyFromAlice({ cardId: card.id, choice: 'another' }), 'pt');
+
+    const { messages } = await t.messageService.getRoomMessagesPage(t.room.id, { limit: 20 });
+    expect(messages.some((message) => message.type === 'error')).toBe(true);
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a choice the card does not offer without writing a resolution', async () => {
+    const t = await setup();
+    const noOnly = await t.sendCardFromAssistant({ ...CARD, buttons: [{ choice: 'no', label: 'Não' }] });
+    const capabilities = await t.sendCardFromAssistant({ v: 1, kind: 'capabilities' });
+    const list = await t.sendCardFromAssistant({ v: 1, kind: 'list', title: 't', items: [] });
+
+    for (const cardId of [noOnly.id, capabilities.id, list.id]) {
+      await t.aiService.handleIncomingMessage(t.io, t.room, await t.sendQuickReplyFromAlice({ cardId, choice: 'yes' }), 'pt');
+      expect(await t.messageService.isCardResolved(cardId)).toBe(false);
+    }
+    expect(t.handler).not.toHaveBeenCalled();
+    expect(t.emitted.filter((entry) => entry.event === 'message:card-resolved')).toHaveLength(0);
+  });
+
+  it('sends a localized error and releases the button when the handler throws', async () => {
+    const t = await setup();
+    t.handler.mockRejectedValueOnce(new Error('boom'));
+    const card = await t.sendCardFromAssistant(CARD);
+
+    await t.aiService.handleIncomingMessage(t.io, t.room, await t.sendQuickReplyFromAlice({ cardId: card.id, choice: 'yes' }), 'pt');
+
+    expect(await t.assistantTexts()).toContain('Ops, não consegui fazer isso agora. Tenta de novo?');
+    expect(await t.messageService.isCardResolved(card.id)).toBe(false);
+
+    await t.aiService.handleIncomingMessage(t.io, t.room, await t.sendQuickReplyFromAlice({ cardId: card.id, choice: 'yes' }), 'pt');
+    expect(t.handler).toHaveBeenCalledTimes(2);
+    expect(await t.assistantTexts()).toContain('feito');
   });
 });

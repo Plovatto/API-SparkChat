@@ -18,7 +18,7 @@ import { getSodium, openField, openRoomKeyEnvelope, readFieldKeyId, sealField } 
 import { runAssistantTurn } from '../assistant/assistant.agent.js';
 import type { AssistantReply } from '../assistant/assistant.agent.js';
 import type { AssistantCard } from '../assistant/assistant.card.js';
-import { ANOTHER_SUGGESTION_INSTRUCTION } from '../assistant/assistant.prompt.js';
+import { ANOTHER_SUGGESTION_INSTRUCTION, QUICK_REPLY_FAILED_TEXT } from '../assistant/assistant.prompt.js';
 import { QuickReplyRegistry, resolveQuickReply } from '../assistant/assistant.quick-reply.js';
 import { ASSISTANT_CARD_LABEL, sealAssistantCard } from '../assistant/assistant.seal.js';
 import { AssistantToolbox } from '../assistant/assistant.toolbox.js';
@@ -228,38 +228,44 @@ export class AiService {
     quickReply: NonNullable<MessageRecord['quickReply']>,
     locale: Locale,
   ): Promise<void> {
-    let wantsAnother = false;
     try {
-      const reply = await resolveQuickReply(
+      const outcome = await resolveQuickReply(
         {
           assistantUserId: this.identity.userId,
           registry: this.quickReplies,
           getMessage: (id) => this.messageService.getMessage(id),
           openCard: (cardMessage) => this.openCard(room.id, cardMessage),
           recordResolution: (cardId, userId, choice) => this.messageService.recordCardResolution(cardId, userId, choice),
-          onResolved: (cardId, choice) => {
-            wantsAnother = choice === 'another';
-            io.to(room.id).emit('message:card-resolved', { roomId: room.id, cardId, choice });
-          },
+          releaseResolution: (cardId) => this.messageService.releaseCardResolution(cardId),
+          onResolved: (cardId, choice) => io.to(room.id).emit('message:card-resolved', { roomId: room.id, cardId, choice }),
         },
         { userId: message.senderId, room, message, quickReply, locale },
       );
 
-      if (reply) {
+      if (outcome.kind === 'reply' || outcome.kind === 'failed') {
         const roomKey = await this.resolveRoomKey(room.id);
         if (!roomKey) {
           await this.sendErrorMessage(io, room.id, 'ai.encryptionUnavailable');
           return;
         }
+        const reply = outcome.kind === 'reply' ? outcome.reply : { text: QUICK_REPLY_FAILED_TEXT[locale], card: null };
         await this.sendReply(io, room, roomKey, reply);
-      } else if (wantsAnother) {
-        this.broadcastTyping(io, room.id, true);
-        void this.respondToBatch(io, room, { messageIds: [message.id], locale }, ANOTHER_SUGGESTION_INSTRUCTION[locale]);
+      } else if (outcome.kind === 'another') {
+        await this.requestAnotherSuggestion(io, room, message, locale);
       }
     } catch (error) {
       logger.error({ err: error, roomId: room.id }, 'Falha ao resolver o botão do SparkAI');
       await this.sendErrorMessage(io, room.id, 'ai.replyFailed').catch(() => undefined);
     }
+  }
+
+  private async requestAnotherSuggestion(io: AppServer, room: RoomRecord, message: MessageRecord, locale: Locale): Promise<void> {
+    if (!(await this.usageLimiter.tryConsume(message.senderId))) {
+      await this.sendErrorMessage(io, room.id, 'ai.dailyLimitReached');
+      return;
+    }
+    this.broadcastTyping(io, room.id, true);
+    void this.respondToBatch(io, room, { messageIds: [message.id], locale }, ANOTHER_SUGGESTION_INSTRUCTION[locale]);
   }
 
   private async openCard(roomId: string, cardMessage: MessageRecord): Promise<AssistantCard | null> {

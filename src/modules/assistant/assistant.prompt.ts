@@ -43,6 +43,11 @@ export const ANOTHER_SUGGESTION_INSTRUCTION: Record<Locale, string> = {
   en: 'The person tapped "another suggestion": propose a look different from the previous card, without repeating it.',
 };
 
+export const QUICK_REPLY_FAILED_TEXT: Record<Locale, string> = {
+  pt: 'Ops, não consegui fazer isso agora. Tenta de novo?',
+  en: "Oops, I couldn't do that right now. Try again?",
+};
+
 export function buildAssistantInstruction(input: AssistantInstructionInput): string {
   const lines = input.locale === 'en' ? englishBody(input) : portugueseBody(input);
   if (input.catalogSummary) {
