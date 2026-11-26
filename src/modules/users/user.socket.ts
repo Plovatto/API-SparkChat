@@ -153,6 +153,7 @@ registerServerEvents('users', [
   'user:recovery-file-regenerated',
   'user:sessions',
   'user:session-revoked',
+  'user:theme-updated',
   'user:chat-settings-updated',
   'e2e:public-keys',
   'e2e:my-keys',

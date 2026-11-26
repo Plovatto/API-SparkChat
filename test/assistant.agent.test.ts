@@ -5,7 +5,7 @@ import { runAssistantTurn } from '@/modules/assistant/assistant.agent.js';
 import type { AssistantCard } from '@/modules/assistant/assistant.card.js';
 import { AssistantToolbox, defineTool, type AssistantContext } from '@/modules/assistant/assistant.toolbox.js';
 
-const CONTEXT: AssistantContext = { userId: 'u', roomId: 'r', locale: 'pt', timeZone: 'America/Sao_Paulo', now: Date.UTC(2026, 10, 27, 12, 0) };
+const CONTEXT: AssistantContext = { userId: 'u', roomId: 'r', locale: 'pt', io: {} as never, timeZone: 'America/Sao_Paulo', now: Date.UTC(2026, 10, 27, 12, 0) };
 const CARD: AssistantCard = { v: 1, kind: 'capabilities' };
 const CHOICES: AssistantCard = { v: 1, kind: 'choices', buttons: [{ choice: 'yes', label: 'Sim' }] };
 

@@ -1,4 +1,5 @@
 import type { Locale } from '../../lib/locale.js';
+import type { AssistantCard } from './assistant.card.js';
 
 export interface AssistantInstructionInput {
   locale: Locale;
@@ -90,6 +91,15 @@ export const QUICK_REPLY_FAILED_TEXT: Record<Locale, string> = {
   pt: 'Ops, não consegui fazer isso agora. Tenta de novo?',
   en: "Oops, I couldn't do that right now. Try again?",
 };
+
+export function anotherSuggestionInstruction(locale: Locale, card: AssistantCard): string {
+  const base = ANOTHER_SUGGESTION_INSTRUCTION[locale];
+  if (card.kind !== 'look-suggestion' && card.kind !== 'look-applied') {
+    return base;
+  }
+  const previous = JSON.stringify(card.look);
+  return locale === 'en' ? `${base} The previous look was ${previous}.` : `${base} O visual anterior era ${previous}.`;
+}
 
 export function buildAssistantInstruction(input: AssistantInstructionInput): string {
   const lines = input.locale === 'en' ? englishBody(input) : portugueseBody(input);

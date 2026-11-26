@@ -19,7 +19,7 @@ import { runAssistantTurn } from '../assistant/assistant.agent.js';
 import type { AssistantReply } from '../assistant/assistant.agent.js';
 import type { AssistantCard, QuickReplyChoice } from '../assistant/assistant.card.js';
 import { HELP_SHORTCUTS, HELP_SHORTCUT_REPLY } from '../assistant/assistant.help-catalog.js';
-import { ANOTHER_SUGGESTION_INSTRUCTION, QUICK_REPLY_FAILED_TEXT } from '../assistant/assistant.prompt.js';
+import { anotherSuggestionInstruction, QUICK_REPLY_FAILED_TEXT } from '../assistant/assistant.prompt.js';
 import { QuickReplyRegistry, resolveQuickReply } from '../assistant/assistant.quick-reply.js';
 import { ASSISTANT_CARD_LABEL, sealAssistantCard } from '../assistant/assistant.seal.js';
 import { AssistantToolbox } from '../assistant/assistant.toolbox.js';
@@ -280,7 +280,7 @@ export class AiService {
           beforeClaim: (choice) => this.consumeForAnotherSuggestion(io, room.id, message.senderId, choice),
           onResolved: (cardId, choice) => io.to(room.id).emit('message:card-resolved', { roomId: room.id, cardId, choice }),
         },
-        { userId: message.senderId, room, message, quickReply, locale },
+        { io, userId: message.senderId, room, message, quickReply, locale },
       );
 
       if (outcome.kind === 'reply' || outcome.kind === 'failed') {
@@ -292,7 +292,7 @@ export class AiService {
         const reply = outcome.kind === 'reply' ? outcome.reply : { text: QUICK_REPLY_FAILED_TEXT[locale], card: null };
         await this.sendReply(io, room, roomKey, reply);
       } else if (outcome.kind === 'another') {
-        this.requestAnotherSuggestion(io, room, message, locale, outcome.settle);
+        this.requestAnotherSuggestion(io, room, message, locale, anotherSuggestionInstruction(locale, outcome.card), outcome.settle);
       }
     } catch (error) {
       logger.error({ err: error, roomId: room.id }, 'Falha ao resolver o botão do SparkAI');
@@ -313,10 +313,11 @@ export class AiService {
     room: RoomRecord,
     message: MessageRecord,
     locale: Locale,
+    instruction: string,
     settle: (succeeded: boolean) => Promise<void>,
   ): void {
     this.broadcastTyping(io, room.id, true);
-    void this.respondToBatch(io, room, { messageIds: [message.id], locale }, ANOTHER_SUGGESTION_INSTRUCTION[locale])
+    void this.respondToBatch(io, room, { messageIds: [message.id], locale }, instruction)
       .then(settle)
       .catch((error: unknown) => logger.error({ err: error, roomId: room.id }, 'Falha ao concluir a outra sugestão do SparkAI'));
   }
@@ -395,6 +396,7 @@ export class AiService {
         history,
         locale: batch.locale,
         context: {
+          io,
           userId,
           roomId: room.id,
           locale: batch.locale,

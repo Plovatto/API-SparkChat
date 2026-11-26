@@ -1,10 +1,12 @@
 import type { z } from 'zod';
 import { logger } from '../../config/logger.js';
 import type { Locale } from '../../lib/locale.js';
+import type { AppServer } from '../../sockets/events.js';
 import type { AiToolDeclaration } from '../ai/ai.provider.js';
 import type { AssistantCard } from './assistant.card.js';
 
 export interface AssistantContext {
+  io: AppServer;
   userId: string;
   roomId: string;
   locale: Locale;
@@ -33,6 +35,10 @@ export class AssistantToolbox {
   register(tool: AssistantTool): this {
     this.tools.set(tool.declaration.name, tool);
     return this;
+  }
+
+  has(name: string): boolean {
+    return this.tools.has(name);
   }
 
   declarations(): AiToolDeclaration[] {
