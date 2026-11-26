@@ -15,6 +15,9 @@ import type { UserService } from '../users/index.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import { loadDecryptedAttachment, resolveAudioMimeType } from './ai.attachments.js';
 import { getSodium, openField, openRoomKeyEnvelope, readFieldKeyId, sealField } from './ai.crypto.js';
+import { runAssistantTurn } from '../assistant/assistant.agent.js';
+import type { AssistantCard } from '../assistant/assistant.card.js';
+import { AssistantToolbox } from '../assistant/assistant.toolbox.js';
 import type { AssistantIdentity } from './ai.identity.js';
 import {
   AI_BATCH_DEBOUNCE_MS,
@@ -41,6 +44,7 @@ const FIELD_LABELS = {
   fileName: 'file-name',
   fileMime: 'file-mime',
   fileKey: 'file-key',
+  assistantCard: 'assistantCard',
 } as const;
 
 type FieldLabel = (typeof FIELD_LABELS)[keyof typeof FIELD_LABELS];
@@ -80,7 +84,8 @@ export class AiService {
     private readonly router: AiRouter,
     private readonly usageLimiter: AiUsageLimiter,
     private readonly objectStorage: ObjectStorage,
-    private readonly userService: Pick<UserService, 'getUsersByIds'>,
+    private readonly userService: Pick<UserService, 'getUsersByIds' | 'getTimeZone'>,
+    private readonly toolbox: AssistantToolbox = new AssistantToolbox(),
   ) {}
 
   isAssistantRoom(room: RoomRecord): boolean {
@@ -234,20 +239,40 @@ export class AiService {
       }
 
       const history = await this.buildConversation(room.id, new Set(batch.messageIds));
-      const replyText = await this.router.generateReply(history, { locale: batch.locale });
+      const userId = room.participants.find((id) => id !== this.identity.userId);
+      if (!userId) {
+        throw new Error('Sala do SparkAI sem a outra pessoa.');
+      }
+      const reply = await runAssistantTurn({
+        history,
+        locale: batch.locale,
+        context: {
+          userId,
+          roomId: room.id,
+          locale: batch.locale,
+          timeZone: await this.userService.getTimeZone(userId),
+          now: Date.now(),
+        },
+        toolbox: this.toolbox,
+        router: this.router,
+      });
+      if (!reply.text && !reply.card) {
+        throw new Error('Resposta vazia do SparkAI.');
+      }
       const messageId = randomUUID();
 
-      const reply = await this.messageService.sendMessage({
+      const sent = await this.messageService.sendMessage({
         roomId: room.id,
         senderId: this.identity.userId,
         messageId,
-        content: await this.sealText(replyText, roomKey, room.id, messageId),
+        content: await this.sealText(reply.text, roomKey, room.id, messageId),
         type: 'text',
         participantIds: room.participants,
         viewingUserIds: this.presenceService.getViewers(room.id),
+        ...(reply.card ? { assistantCard: await this.sealAssistantCard(reply.card, roomKey, room.id, messageId) } : {}),
       });
 
-      io.to(room.id).emit('message:new', await this.messageService.toNewView(reply));
+      io.to(room.id).emit('message:new', await this.messageService.toNewView(sent));
     } catch (error) {
       logger.error({ err: error, roomId: room.id }, 'Falha ao gerar resposta da IA');
       await this.sendErrorMessage(io, room.id, 'ai.replyFailed');
@@ -278,6 +303,15 @@ export class AiService {
       senderId: this.identity.userId,
       messageId,
       label: FIELD_LABELS.content,
+    });
+  }
+
+  private sealAssistantCard(card: AssistantCard, roomKey: CurrentRoomKey, roomId: string, messageId: string): Promise<string> {
+    return sealField(JSON.stringify(card), roomKey.roomKey, roomKey.keyId, this.identity.signingPrivateKey, {
+      roomId,
+      senderId: this.identity.userId,
+      messageId,
+      label: FIELD_LABELS.assistantCard,
     });
   }
 

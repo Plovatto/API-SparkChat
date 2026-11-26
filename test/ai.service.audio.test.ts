@@ -4,22 +4,22 @@ import { AiRouter } from '@/modules/ai/ai.provider.js';
 import { createFakeServer, setupAssistantRoom } from './support/ai-fixture.js';
 
 async function setup() {
-  const generateReply = vi.fn(() => Promise.resolve('ok'));
-  const context = await setupAssistantRoom({ router: new AiRouter([{ generateReply }]) });
+  const generate = vi.fn(() => Promise.resolve({ text: 'ok', calls: [] }));
+  const context = await setupAssistantRoom({ router: new AiRouter([{ generate }]) });
 
   function storeEncryptedAudio(objectKey: string, messageId: string) {
     return context.storeSealedAttachment(objectKey, Buffer.from('voice bytes'), messageId);
   }
 
-  return { ...context, generateReply, storeEncryptedAudio };
+  return { ...context, generate, storeEncryptedAudio };
 }
 
-async function lastInlineMimeType(generateReply: ReturnType<typeof vi.fn>): Promise<string | undefined> {
+async function lastInlineMimeType(generate: ReturnType<typeof vi.fn>): Promise<string | undefined> {
   await vi.advanceTimersByTimeAsync(3000);
   await vi.waitFor(() => {
-    expect(generateReply).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(1);
   });
-  const [history] = generateReply.mock.calls[0] as unknown as [{ inlineData?: { mimeType: string }[] }[]];
+  const [history] = generate.mock.calls[0] as unknown as [{ inlineData?: { mimeType: string }[] }[]];
   return history.at(-1)?.inlineData?.[0]?.mimeType;
 }
 
@@ -29,7 +29,7 @@ afterEach(() => {
 
 describe('AiService audio attachments', () => {
   it('takes the audio type from the encrypted file metadata when the url has no extension', async () => {
-    const { aiService, messageService, room, alice, generateReply, storeEncryptedAudio, sealFromAlice } = await setup();
+    const { aiService, messageService, room, alice, generate, storeEncryptedAudio, sealFromAlice } = await setup();
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     const messageId = randomUUID();
     const { url: content, key } = await storeEncryptedAudio('uploads/audio/voice.bin', messageId);
@@ -50,11 +50,11 @@ describe('AiService audio attachments', () => {
     });
     await aiService.handleIncomingMessage(createFakeServer(), room, message, 'pt');
 
-    expect(await lastInlineMimeType(generateReply)).toBe('audio/ogg');
+    expect(await lastInlineMimeType(generate)).toBe('audio/ogg');
   });
 
   it('falls back to the url extension when the declared audio type is not usable', async () => {
-    const { aiService, messageService, room, alice, generateReply, storeEncryptedAudio, sealFromAlice } = await setup();
+    const { aiService, messageService, room, alice, generate, storeEncryptedAudio, sealFromAlice } = await setup();
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     const messageId = randomUUID();
     const { url: content, key } = await storeEncryptedAudio('uploads/audio/voice.webm', messageId);
@@ -75,6 +75,6 @@ describe('AiService audio attachments', () => {
     });
     await aiService.handleIncomingMessage(createFakeServer(), room, message, 'pt');
 
-    expect(await lastInlineMimeType(generateReply)).toBe('audio/webm');
+    expect(await lastInlineMimeType(generate)).toBe('audio/webm');
   });
 });

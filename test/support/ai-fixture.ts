@@ -1,3 +1,4 @@
+import type { AssistantToolbox } from '@/modules/assistant/assistant.toolbox.js';
 import { randomUUID } from 'node:crypto';
 import { deriveKeyId, getSodium, openField, sealField } from '@/modules/ai/ai.crypto.js';
 import { AiRouter } from '@/modules/ai/ai.provider.js';
@@ -19,6 +20,7 @@ export interface AssistantRoomOptions {
   router?: AiRouter;
   usageLimiter?: AiUsageLimiter;
   publishKey?: boolean;
+  toolbox?: AssistantToolbox;
 }
 
 export async function setupAssistantRoom(options: AssistantRoomOptions = {}) {
@@ -100,10 +102,11 @@ export async function setupAssistantRoom(options: AssistantRoomOptions = {}) {
     messageService,
     new TypingService(),
     new RoomPresenceService(),
-    options.router ?? new AiRouter([{ generateReply: () => Promise.resolve('ok') }]),
+    options.router ?? new AiRouter([{ generate: () => Promise.resolve({ text: 'ok', calls: [] }) }]),
     options.usageLimiter ?? new AiUsageLimiter(new AiUsageRepository(services.db)),
     objectStorage,
     userService,
+    options.toolbox,
   );
 
   return {

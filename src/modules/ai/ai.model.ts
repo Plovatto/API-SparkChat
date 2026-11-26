@@ -31,18 +31,3 @@ export const AI_BATCH_DEBOUNCE_MS = 2500;
 
 export const AI_PRIMARY_MODEL = 'gemini-3.5-flash-lite';
 export const AI_FALLBACK_MODEL = 'gemini-3.1-flash-lite';
-
-const AI_LOCALE_NAMES: Record<Locale, string> = {
-  pt: 'português do Brasil',
-  en: 'inglês',
-};
-
-export function buildSystemInstruction(locale: Locale): string {
-  return [
-    'Você é o SparkAI, o assistente de IA integrado ao SparkChat.',
-    `O idioma configurado pela pessoa no SparkChat é ${AI_LOCALE_NAMES[locale]}.`,
-    `Responda em ${AI_LOCALE_NAMES[locale]} por padrão, mas, se a pessoa escrever em outro idioma, responda no idioma em que ela escreveu.`,
-    'Seja direto, natural e simpático, como numa conversa de chat comum. Evite respostas muito longas.',
-    'Você não tem acesso a outras conversas do usuário nem a informações fora desta conversa.',
-  ].join(' ');
-}

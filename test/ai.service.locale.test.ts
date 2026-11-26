@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AI_WELCOME_MESSAGES } from '@/modules/ai/ai.model.js';
-import { AiRouter, type AiReplyOptions } from '@/modules/ai/ai.provider.js';
+import { AiRouter, type AiGenerateOptions } from '@/modules/ai/ai.provider.js';
 import { createFakeServer, setupAssistantRoom } from './support/ai-fixture.js';
 
 async function setup() {
-  const receivedOptions: AiReplyOptions[] = [];
+  const receivedOptions: AiGenerateOptions[] = [];
   const router = new AiRouter([
     {
-      generateReply: (_messages, options) => {
+      generate: (_messages, options) => {
         receivedOptions.push(options);
-        return Promise.resolve('ok');
+        return Promise.resolve({ text: 'ok', calls: [] });
       },
     },
   ]);

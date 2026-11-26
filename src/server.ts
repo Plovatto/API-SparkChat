@@ -10,6 +10,7 @@ import { CallBudget, CallRateLimiter, CallRepository, CallService, createCloudfl
 import { AvatarRepository, AvatarService } from './modules/avatars/index.js';
 import { createGifProvider } from './modules/gifs/index.js';
 import { AiService, AiUsageLimiter, AiUsageRepository, createGeminiRouter, currentUsageDate, ensureAssistantUser, loadAssistantIdentity } from './modules/ai/index.js';
+import { AssistantToolbox } from './modules/assistant/assistant.toolbox.js';
 import { httpLinkPreviewFetcher, LinkPreviewRepository, LinkPreviewService } from './modules/link-preview/index.js';
 import {
   MessageRateLimiter,
@@ -112,6 +113,7 @@ const aiService = new AiService(
   aiUsageLimiter,
   objectStorage,
   userService,
+  new AssistantToolbox(),
 );
 
 const gifProvider = createGifProvider({ nodeEnv: env.NODE_ENV, provider: env.GIF_PROVIDER, klipyApiKey: env.KLIPY_API_KEY });
