@@ -123,6 +123,26 @@ describe('status expiry', () => {
     expect((await row(t))?.statusText).toBe('livre');
   });
 
+  it('a manual change racing with expiry wins in either order', async () => {
+    const t = await setupTasks();
+    await t.userService.updateStatusText(t.alice.id, 'no trampo');
+    await applyStatus(t, 'Em reunião', TODAY_15H);
+    t.clock.now = TODAY_15H_UTC + 1000;
+    await Promise.all([t.userService.expireStatuses(t.clock.now), t.userService.updateStatusText(t.alice.id, 'livre')]);
+    expect(await row(t)).toMatchObject({ statusText: 'livre', statusTextExpiresAt: null, statusTextPrevious: null });
+    expect(await t.userService.expireStatuses(t.clock.now)).toEqual([]);
+  });
+
+  it('concurrent temporary statuses keep the original previous', async () => {
+    const t = await setupTasks();
+    await t.userService.updateStatusText(t.alice.id, 'no trampo');
+    await Promise.all([
+      t.userService.setTemporaryStatus(t.alice.id, 'A', TODAY_15H_UTC),
+      t.userService.setTemporaryStatus(t.alice.id, 'B', TODAY_15H_UTC),
+    ]);
+    expect(await row(t)).toMatchObject({ statusTextPrevious: 'no trampo' });
+  });
+
   it('a second temporary status keeps the original previous', async () => {
     const t = await setupTasks();
     await t.userService.updateStatusText(t.alice.id, 'no trampo');

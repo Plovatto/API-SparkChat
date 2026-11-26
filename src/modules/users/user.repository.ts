@@ -165,18 +165,20 @@ export class UserRepository {
   }
 
   async setTemporaryStatus(id: string, statusText: string, expiresAt: number): Promise<UserRecord | null> {
-    const current = await this.findById(id);
-    if (!current) {
-      return null;
-    }
-    const [row] = await this.db.select({ expiresAt: users.statusTextExpiresAt, previous: users.statusTextPrevious }).from(users).where(eq(users.id, id));
-    const previous = row?.expiresAt != null ? (row.previous ?? null) : current.statusText;
-    await this.db.update(users).set({ statusText, statusTextExpiresAt: expiresAt, statusTextPrevious: previous }).where(eq(users.id, id));
-    return { ...current, statusText };
+    const result = await this.db
+      .update(users)
+      .set({
+        statusTextPrevious: sql`case when ${users.statusTextExpiresAt} is not null then ${users.statusTextPrevious} else ${users.statusText} end`,
+        statusText,
+        statusTextExpiresAt: expiresAt,
+      })
+      .where(eq(users.id, id));
+    return result.rowsAffected > 0 ? this.findById(id) : null;
   }
 
-  async clearStatusExpiry(id: string): Promise<void> {
-    await this.db.update(users).set({ statusTextExpiresAt: null, statusTextPrevious: null }).where(eq(users.id, id));
+  async setManualStatus(id: string, statusText: string | null): Promise<UserRecord | null> {
+    const result = await this.db.update(users).set({ statusText, statusTextExpiresAt: null, statusTextPrevious: null }).where(eq(users.id, id));
+    return result.rowsAffected > 0 ? this.findById(id) : null;
   }
 
   async expireStatuses(now: number): Promise<string[]> {
