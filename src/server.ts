@@ -21,6 +21,8 @@ import { ConfirmDispatcher } from './modules/assistant/assistant.confirm.js';
 import type { AssistantHost } from './modules/assistant/assistant.host.js';
 import { NotesRepository } from './modules/assistant/notes.repository.js';
 import { NotesService } from './modules/assistant/notes.service.js';
+import { registerStatusConfirm } from './modules/assistant/status.quick-reply.js';
+import { createSetStatusTool } from './modules/assistant/tools/status.tool.js';
 import { registerNoteConfirms, registerReminderConfirms, registerReminderFiredReplies } from './modules/assistant/reminder.quick-reply.js';
 import { RemindersRepository } from './modules/assistant/reminders.repository.js';
 import { RemindersService } from './modules/assistant/reminders.service.js';
@@ -40,7 +42,7 @@ import {
 import { setupTransparency } from './modules/transparency/index.js';
 import { createWebPushSender, PushRateLimiter, PushRepository, PushService } from './modules/push/index.js';
 import { notifyRoomRotations, RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
-import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, SessionSignatureVerifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
+import { broadcastProfileUpdate, isSessionLive, LoginRateLimiter, SessionRevocationNotifier, SessionSignatureVerifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import { startSessionExpirySweep } from './sockets/session-expiry.js';
 import { hasAttentiveUserSocket } from './sockets/user-sockets.js';
@@ -53,6 +55,7 @@ import { OrphanUploadSweeper } from './storage/orphan-upload-sweeper.js';
 import { UploadRegistry } from './storage/upload-registry.js';
 import type {
   ClientToServerEvents,
+  AppServer,
   InterServerEvents,
   ServerToClientEvents,
   SocketData,
@@ -134,6 +137,12 @@ const remindersService = new RemindersService(new RemindersRepository(db), assis
 const confirmDispatcher = new ConfirmDispatcher().attachTo(quickReplyRegistry);
 registerNoteConfirms(confirmDispatcher, notesService);
 registerReminderConfirms(confirmDispatcher, remindersService);
+const statusBroadcast = {
+  setTemporaryStatus: (userId: string, text: string, expiresAt: number) => userService.setTemporaryStatus(userId, text, expiresAt),
+  expireStatuses: (now: number) => userService.expireStatuses(now),
+  broadcastProfile: (ioServer: AppServer, userId: string) => broadcastProfileUpdate(ioServer, { userService, roomService }, userId),
+};
+registerStatusConfirm(confirmDispatcher, statusBroadcast);
 registerReminderFiredReplies(quickReplyRegistry, remindersService, (userId) => userService.getTimeZone(userId));
 const aiService = new AiService(
   assistantIdentity,
@@ -155,7 +164,8 @@ const aiService = new AiService(
     .register(createDeleteNoteTool(notesService))
     .register(createCreateReminderTool())
     .register(createListRemindersTool(remindersService))
-    .register(createCancelReminderTool(remindersService)),
+    .register(createCancelReminderTool(remindersService))
+    .register(createSetStatusTool()),
   quickReplyRegistry,
   roomService,
 );
@@ -228,7 +238,7 @@ const pushService = new PushService({
   isSessionLive: (session, now) => isSessionLive(session, now),
 });
 pushService.startMaintenance();
-new AssistantScheduler({ io, host: assistantHost, reminders: remindersService, push: pushService }).start();
+new AssistantScheduler({ io, host: assistantHost, reminders: remindersService, push: pushService, statuses: statusBroadcast }).start();
 logger.info(`Web Push: ${pushService.enabled ? 'enabled' : 'disabled (WEB_PUSH_* not set)'}`);
 
 const callService = new CallService(io, callRepository, roomService, messageService, new CallBudget(callRepository), new CallRateLimiter(), turnProvider, {

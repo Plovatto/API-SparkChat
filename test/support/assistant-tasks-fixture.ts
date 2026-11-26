@@ -9,7 +9,11 @@ import { registerNoteConfirms, registerReminderConfirms, registerReminderFiredRe
 import { RemindersRepository } from '@/modules/assistant/reminders.repository.js';
 import { RemindersService } from '@/modules/assistant/reminders.service.js';
 import { createDeleteNoteTool, createListNotesTool, createSaveNoteTool } from '@/modules/assistant/tools/note.tools.js';
+import { registerStatusConfirm } from '@/modules/assistant/status.quick-reply.js';
+import { createSetStatusTool } from '@/modules/assistant/tools/status.tool.js';
+import { broadcastProfileUpdate } from '@/modules/users/user.socket.js';
 import { createCancelReminderTool, createCreateReminderTool, createListRemindersTool } from '@/modules/assistant/tools/reminder.tools.js';
+import type { AppServer } from '@/sockets/events.js';
 import { createFakeServer, setupAssistantRoom, type EmittedEvent } from './ai-fixture.js';
 
 export const TIME_ZONE = 'America/Sao_Paulo';
@@ -28,6 +32,12 @@ export async function setupTasks() {
   const dispatcher = new ConfirmDispatcher().attachTo(registry);
   registerNoteConfirms(dispatcher, notes);
   registerReminderConfirms(dispatcher, reminders, now);
+  const statuses = {
+    setTemporaryStatus: (userId: string, text: string, expiresAt: number) => context.userService.setTemporaryStatus(userId, text, expiresAt),
+    expireStatuses: (at: number) => context.userService.expireStatuses(at),
+    broadcastProfile: (ioServer: AppServer, userId: string) => broadcastProfileUpdate(ioServer, { userService: context.userService, roomService: context.roomService }, userId),
+  };
+  registerStatusConfirm(dispatcher, { ...statuses, now });
   registerReminderFiredReplies(registry, reminders, (userId) => context.userService.getTimeZone(userId));
 
   const toolbox = new AssistantToolbox()
@@ -36,7 +46,8 @@ export async function setupTasks() {
     .register(createDeleteNoteTool(notes))
     .register(createCreateReminderTool())
     .register(createListRemindersTool(reminders))
-    .register(createCancelReminderTool(reminders));
+    .register(createCancelReminderTool(reminders))
+    .register(createSetStatusTool());
 
   const emitted: EmittedEvent[] = [];
   const io = createFakeServer(emitted);
@@ -58,5 +69,5 @@ export async function setupTasks() {
     return context.sendCardFromAssistant(card);
   }
 
-  return { ...context, clock, now, host, notes, reminders, remindersRepository, toolbox, toolContext, io, emitted, tap, postCard };
+  return { ...context, clock, now, host, notes, reminders, remindersRepository, toolbox, toolContext, statuses, io, emitted, tap, postCard };
 }

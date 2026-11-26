@@ -567,9 +567,21 @@ export class UserService {
     return user?.timeZone ?? DEFAULT_TIME_ZONE;
   }
 
-  updateStatusText(userId: string, statusText: string): Promise<UserRecord | null> {
+  async updateStatusText(userId: string, statusText: string): Promise<UserRecord | null> {
     const trimmed = statusText.trim();
-    return this.repository.update(userId, { statusText: trimmed.length > 0 ? trimmed : null });
+    const updated = await this.repository.update(userId, { statusText: trimmed.length > 0 ? trimmed : null });
+    if (updated) {
+      await this.repository.clearStatusExpiry(userId);
+    }
+    return updated;
+  }
+
+  setTemporaryStatus(userId: string, statusText: string, expiresAt: number): Promise<UserRecord | null> {
+    return this.repository.setTemporaryStatus(userId, statusText.trim(), expiresAt);
+  }
+
+  expireStatuses(now: number): Promise<string[]> {
+    return this.repository.expireStatuses(now);
   }
 
   async listSessions(userId: string): Promise<SessionRecord[]> {

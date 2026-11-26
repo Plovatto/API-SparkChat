@@ -12,6 +12,7 @@ export interface AssistantSchedulerDeps {
   host: AssistantHost;
   reminders: RemindersService;
   push: Pick<PushService, 'reminder'>;
+  statuses?: { expireStatuses(now: number): Promise<string[]>; broadcastProfile(io: AppServer, userId: string): Promise<void> };
 }
 
 export class AssistantScheduler {
@@ -44,6 +45,17 @@ export class AssistantScheduler {
     const fired = await this.deps.reminders.claimDue(this.now());
     for (const reminder of fired) {
       await this.deliver(reminder).catch((error: unknown) => logger.error({ err: error, reminderId: reminder.id }, 'Falha ao entregar lembrete do SparkAI'));
+    }
+    await this.expireStatuses().catch((error: unknown) => logger.error({ err: error }, 'Falha ao expirar status do SparkAI'));
+  }
+
+  private async expireStatuses(): Promise<void> {
+    const { statuses } = this.deps;
+    if (!statuses) {
+      return;
+    }
+    for (const userId of await statuses.expireStatuses(this.now())) {
+      await statuses.broadcastProfile(this.deps.io, userId).catch((error: unknown) => logger.error({ err: error, userId }, 'Falha ao transmitir status restaurado'));
     }
   }
 
