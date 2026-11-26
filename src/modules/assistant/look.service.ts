@@ -100,7 +100,7 @@ export class LookService {
       for (const key of Object.keys(look.appearance) as (keyof FullAppearance)[]) {
         picked[key] = currentAppearance[key];
       }
-      part.appearance = picked as NonNullable<AssistantLook['appearance']>;
+      part.appearance = picked;
     }
     return part;
   }

@@ -27,9 +27,8 @@ function recordingServer(emitted: Emitted[]): AppServer {
 
 async function setup(options: { router?: AiRouter } = {}) {
   const registry = new QuickReplyRegistry();
-  let looks: LookService | null = null;
   const context = await setupAssistantRoom({ ...options, quickReplies: registry });
-  looks = new LookService(context.userService);
+  const looks = new LookService(context.userService);
   registerLookQuickReplies(registry, looks);
   const emitted: Emitted[] = [];
   const io = recordingServer(emitted);
@@ -55,7 +54,7 @@ async function setup(options: { router?: AiRouter } = {}) {
 
   async function lastAssistantCard(): Promise<AssistantCard | null> {
     const last = await lastCardMessage();
-    return last ? ((await context.aiService['openCard'](context.room.id, last)) as AssistantCard | null) : null;
+    return last ? ((await context.aiService['openCard'](context.room.id, last))) : null;
   }
 
   return { ...context, looks, emitted, io, toolbox, toolContext, tap, lastAssistantCard, lastCardMessage };

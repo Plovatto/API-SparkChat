@@ -152,7 +152,7 @@ function sanitizeAppearance(source: NonNullable<AssistantLook['appearance']>, re
       rejected.push(`appearance.${key}`);
     }
   }
-  return Object.keys(result).length > 0 ? (result as AssistantLook['appearance']) : undefined;
+  return Object.keys(result).length > 0 ? (result) : undefined;
 }
 
 export function sanitizeLook(look: AssistantLook): { look: AssistantLook; rejected: string[] } {
