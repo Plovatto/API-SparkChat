@@ -37,9 +37,10 @@ describe('buildAssistantInstruction', () => {
 });
 
 describe('AI_WELCOME_MESSAGES', () => {
-  it('keeps the current portuguese welcome text', () => {
+  it('says the assistant chats and helps and points to the capabilities list', () => {
     expect(AI_WELCOME_MESSAGES.pt).toBe(
-      'Oi! Eu sou o SparkAI 🤖 — apareci aqui só pra gente trocar ideia. Manda o que quiser, é só um papo!',
+      'Oi! Eu sou o SparkAI 🤖✨ Bato papo e também te dou uma mão de verdade: troco seu tema, anoto, te lembro das coisas e muito mais. Dá uma olhada no que eu sei fazer 👇',
     );
+    expect(AI_WELCOME_MESSAGES.en).toContain('👇');
   });
 });
