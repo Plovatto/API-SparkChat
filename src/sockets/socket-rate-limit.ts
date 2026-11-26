@@ -82,6 +82,7 @@ export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
     'user:update-chat-settings': { capacity: 30, refillPerSecond: 3 },
     'user:visibility': frequent,
     'user:set-locale': roomAction,
+    'user:set-timezone': roomAction,
     'user:change-password': accountAction,
     'user:regenerate-recovery-file': accountAction,
     'user:logout': accountAction,

@@ -11,6 +11,7 @@ import { runSocketHandler } from '../../sockets/socket-handler.js';
 import { socketLocale } from '../../sockets/socket-locale.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
 import { emitToUser, isUserRoom, joinUserSocketsToRoom, listUserSockets } from '../../sockets/user-sockets.js';
+import { quickReplySchema } from '../assistant/assistant.card.js';
 import { LINK_PREVIEW_ENCRYPTED_LIMITS } from '../link-preview/index.js';
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
@@ -48,6 +49,7 @@ export interface MessageSocketDeps {
   recordingService: RecordingService;
   presenceService: RoomPresenceService;
   messageRateLimiter: MessageRateLimiter;
+  isAssistantRoom: (room: RoomRecord) => boolean;
   onMessageSent?: OnMessageSentHook;
 }
 
@@ -116,6 +118,7 @@ const sendMessagePayloadSchema = z
     caption: z.string().trim().max(3340).optional(),
     linkPreview: linkPreviewSchema.optional(),
     attachmentUrls: z.array(z.string().trim().min(1).max(4000)).max(4).optional(),
+    quickReply: quickReplySchema.optional(),
   })
   .refine((data) => data.type !== 'audio' || typeof data.duration === 'number', {
     message: 'duration é obrigatório para mensagens de áudio.',
@@ -392,6 +395,7 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       caption,
       linkPreview,
       attachmentUrls,
+      quickReply,
       mentionedUserIds: clientMentionedUserIds,
     } = parsed;
 
@@ -429,6 +433,11 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       return;
     }
 
+    if (quickReply && !deps.isAssistantRoom(room)) {
+      socket.emit('error', { ...errorPayload('message.quickReplyNotAllowed'), clientTempId });
+      return;
+    }
+
     if (room.rotationRequired !== undefined || room.currentKeyId !== keyId) {
       socket.emit('error', { ...errorPayload('message.staleRoomKey'), clientTempId });
       return;
@@ -461,6 +470,7 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       caption,
       linkPreview,
       attachmentUrls,
+      quickReply,
     });
     const reactivatedBefore = new Date(new Date(message.timestamp).getTime() - 1000).toISOString();
     const updatedRoom = (await roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;

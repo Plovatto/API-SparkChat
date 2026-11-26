@@ -1,4 +1,5 @@
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import type { QuickReply } from '../modules/assistant/assistant.card.js';
 import type { LinkPreviewCacheRecord } from '../modules/link-preview/link-preview.types.js';
 import type { SystemEvent } from '../modules/messages/message.system-events.js';
 import type {
@@ -35,6 +36,9 @@ export const users = sqliteTable('users', {
   encryptedAvatar: text('encrypted_avatar'),
   avatarUploadKey: text('avatar_upload_key'),
   profileKeyVersion: integer('profile_key_version').notNull().default(1),
+  timeZone: text('time_zone'),
+  statusTextExpiresAt: integer('status_text_expires_at'),
+  statusTextPrevious: text('status_text_previous'),
 });
 
 export const sessions = sqliteTable(
@@ -189,9 +193,18 @@ export const messages = sqliteTable(
     caption: text('caption'),
     linkPreview: text('link_preview', { mode: 'json' }).$type<MessageLinkPreview>(),
     systemEvent: text('system_event', { mode: 'json' }).$type<SystemEvent>(),
+    assistantCard: text('assistant_card'),
+    quickReply: text('quick_reply', { mode: 'json' }).$type<QuickReply>(),
   },
   (table) => [index('messages_room_id_timestamp_idx').on(table.roomId, table.timestamp)],
 );
+
+export const assistantCardResolutions = sqliteTable('assistant_card_resolutions', {
+  cardMessageId: text('card_message_id').primaryKey(),
+  userId: text('user_id').notNull(),
+  choice: text('choice').notNull(),
+  resolvedAt: text('resolved_at').notNull(),
+});
 
 export const messageHidden = sqliteTable(
   'message_hidden',

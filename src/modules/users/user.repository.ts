@@ -54,6 +54,7 @@ function toRecord(row: typeof users.$inferSelect): UserRecord {
     chatSettings: row.chatSettings ?? null,
     encryptedAvatar: row.encryptedAvatar ?? null,
     profileKeyVersion: row.profileKeyVersion,
+    timeZone: row.timeZone ?? null,
     ...(theme ? { theme } : {}),
   };
 

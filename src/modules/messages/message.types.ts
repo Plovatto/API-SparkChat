@@ -1,3 +1,4 @@
+import type { QuickReply } from '../assistant/assistant.card.js';
 import type { SystemEvent } from './message.system-events.js';
 
 export type MessageStatus = 'sent' | 'delivered' | 'read';
@@ -65,6 +66,8 @@ export interface MessageRecord {
   caption: string | null;
   linkPreview: MessageLinkPreview | null;
   systemEvent: SystemEvent | null;
+  assistantCard?: string;
+  quickReply?: QuickReply;
 }
 
 export interface MessageView {
@@ -86,5 +89,7 @@ export interface MessageView {
   caption: string | null;
   linkPreview: MessageLinkPreview | null;
   systemEvent: SystemEvent | null;
+  assistantCard?: string;
+  quickReply?: QuickReply;
   reactions: MessageReaction[];
 }

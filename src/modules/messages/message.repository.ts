@@ -58,6 +58,8 @@ function toRecord(row: MessageRow): MessageRecord {
     caption: row.caption ?? null,
     linkPreview: row.linkPreview ?? null,
     systemEvent: row.systemEvent ?? null,
+    ...(row.assistantCard ? { assistantCard: row.assistantCard } : {}),
+    ...(row.quickReply ? { quickReply: row.quickReply } : {}),
   };
 }
 
@@ -114,6 +116,8 @@ export class MessageRepository {
       caption: message.caption,
       linkPreview: message.linkPreview,
       systemEvent: message.systemEvent,
+      assistantCard: message.assistantCard ?? null,
+      quickReply: message.quickReply ?? null,
     });
 
     return message;

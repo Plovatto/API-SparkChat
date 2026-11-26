@@ -7,6 +7,7 @@ import type { ObjectStorage } from '../../storage/object-storage.js';
 import type { StorageQuota } from '../../storage/storage-quota.js';
 import type { UploadRegistry } from '../../storage/upload-registry.js';
 import type { UserService } from '../users/index.js';
+import type { QuickReply } from '../assistant/assistant.card.js';
 import { nextTimestamp } from './message.clock.js';
 import type { MessageRepository, RoomDigest, RoomDigestRequest, UnreadCounts } from './message.repository.js';
 
@@ -38,6 +39,8 @@ export interface SendMessageInput {
   caption?: string | null | undefined;
   linkPreview?: MessageLinkPreview | null | undefined;
   attachmentUrls?: string[] | undefined;
+  assistantCard?: string | undefined;
+  quickReply?: QuickReply | undefined;
 }
 
 export interface ReactToMessageResult {
@@ -173,6 +176,8 @@ export class MessageService {
       caption: input.type && input.type !== 'text' ? (input.caption ?? null) : null,
       linkPreview: input.linkPreview ?? null,
       systemEvent: null,
+      ...(input.assistantCard ? { assistantCard: input.assistantCard } : {}),
+      ...(input.quickReply ? { quickReply: input.quickReply } : {}),
     };
 
     return this.repository.insert(message);
@@ -464,6 +469,8 @@ export class MessageService {
       caption: message.deletedForEveryone ? null : message.caption,
       linkPreview: message.deletedForEveryone ? null : message.linkPreview,
       systemEvent: message.deletedForEveryone ? null : message.systemEvent,
+      ...(message.assistantCard && !message.deletedForEveryone ? { assistantCard: message.assistantCard } : {}),
+      ...(message.quickReply && !message.deletedForEveryone ? { quickReply: message.quickReply } : {}),
       reactions: isReactableMessage(message) ? (resolvedReactions.get(message.id) ?? []) : [],
     };
   }

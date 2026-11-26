@@ -32,7 +32,7 @@ import type { AppServer, AppSocket } from './events.js';
 import { guardSessionRecovery, rejectRevokedRecovery } from './session-recovery.js';
 import { admitSocketConnection, DEFAULT_SOCKET_CONNECTION_LIMITS, enforceUserSocketCap, SocketConnectionTracker, type SocketConnectionLimits } from './connection-limits.js';
 import { applySocketRateLimit, DEFAULT_SOCKET_EVENT_BUDGETS, UserEventLimiters, type SocketEventBudgets } from './socket-rate-limit.js';
-import { handshakeAuthSchema, resolveHandshakeLocale } from './socket-locale.js';
+import { handshakeAuthSchema, resolveHandshakeLocale, resolveHandshakeTimeZone } from './socket-locale.js';
 
 registerClientEvents('connection', {
   'handshake.auth': handshakeAuthSchema,
@@ -89,6 +89,10 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
     }
 
     socket.data.locale = resolveHandshakeLocale(socket.handshake.auth);
+    const handshakeTimeZone = resolveHandshakeTimeZone(socket.handshake.auth);
+    if (handshakeTimeZone) {
+      socket.data.timeZone = handshakeTimeZone;
+    }
     logger.info({ socketId: socket.id, recovered: socket.recovered }, 'Client connected');
 
     if (rejectRevokedRecovery(socket)) {
@@ -153,6 +157,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       userService: deps.userService,
       ...activityServices,
       messageRateLimiter: deps.messageRateLimiter,
+      isAssistantRoom: (room) => aiService.isAssistantRoom(room),
       onMessageSent: ({ io: server, room, message, locale }) => {
         if (message.type !== 'system' && aiService.isAssistantRoom(room)) {
           void aiService.handleIncomingMessage(server, room, message, locale);

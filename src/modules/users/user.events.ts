@@ -87,4 +87,5 @@ export interface UserClientToServerEvents {
   'e2e:get-public-keys': (payload: { userIds: string[] }) => void;
   'e2e:get-my-keys': () => void;
   'user:set-locale': (payload: { locale: Locale }) => void;
+  'user:set-timezone': (payload: { timeZone: string }) => void;
 }

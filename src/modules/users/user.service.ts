@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '../../config/logger.js';
 import { AppError } from '../../lib/app-error.js';
+import { DEFAULT_TIME_ZONE } from '../../lib/time-zone.js';
 import {
   ASSISTANT_USER_ID,
   isValidNicknameFormat,
@@ -555,6 +556,15 @@ export class UserService {
 
   updateChatSettings(userId: string, chatSettings: UserChatSettings): Promise<UserRecord | null> {
     return this.repository.update(userId, { chatSettings });
+  }
+
+  async setTimeZone(userId: string, timeZone: string): Promise<void> {
+    await this.repository.update(userId, { timeZone });
+  }
+
+  async getTimeZone(userId: string): Promise<string> {
+    const user = await this.repository.findById(userId);
+    return user?.timeZone ?? DEFAULT_TIME_ZONE;
   }
 
   updateStatusText(userId: string, statusText: string): Promise<UserRecord | null> {
