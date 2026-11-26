@@ -6,8 +6,8 @@ export const ASSISTANT_AVATAR = 1;
 export const ASSISTANT_STATUS_TEXT = '100% pilha, 0% sono 🔋';
 
 export const AI_WELCOME_MESSAGES: Record<Locale, string> = {
-  pt: 'Oi! Eu sou o SparkAI 🤖 — apareci aqui só pra gente trocar ideia. Manda o que quiser, é só um papo!',
-  en: "Hi! I'm SparkAI 🤖 — I'm here just to chat. Send me anything, no pressure!",
+  pt: 'Oi! Eu sou o SparkAI 🤖✨ Bato papo e também te dou uma mão de verdade: troco seu tema, anoto, te lembro das coisas e muito mais. Dá uma olhada no que eu sei fazer 👇',
+  en: "Hi! I'm SparkAI 🤖✨ I chat and I also lend a real hand: I change your theme, take notes, remind you of things and more. Take a look at what I can do 👇",
 };
 
 export const AI_DAILY_MESSAGE_LIMIT = 50;

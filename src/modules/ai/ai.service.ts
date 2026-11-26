@@ -244,17 +244,21 @@ export class AiService {
       if (text === null || !HELP_SHORTCUTS.has(text.trim().toLowerCase())) {
         return false;
       }
+    } catch (error) {
+      logger.error({ err: error, roomId: room.id }, 'Falha ao ler o atalho de ajuda do SparkAI');
+      return false;
+    }
+    try {
       const roomKey = await this.resolveRoomKey(room.id);
       if (!roomKey) {
         await this.sendErrorMessage(io, room.id, 'ai.encryptionUnavailable');
         return true;
       }
       await this.sendReply(io, room, roomKey, { text: HELP_SHORTCUT_REPLY[locale], card: { v: 1, kind: 'capabilities' } });
-      return true;
     } catch (error) {
       logger.error({ err: error, roomId: room.id }, 'Falha ao responder o atalho de ajuda do SparkAI');
-      return false;
     }
+    return true;
   }
 
   private async handleQuickReply(

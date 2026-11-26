@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiRouter } from '@/modules/ai/ai.provider.js';
 import { AiUsageLimiter, AiUsageRepository } from '@/modules/ai/ai.usage-limiter.js';
 import { HELP_TOPICS } from '@/modules/assistant/assistant.card.js';
-import { HELP_CATALOG } from '@/modules/assistant/assistant.help-catalog.js';
+import { HELP_CATALOG, HELP_SHORTCUT_REPLY } from '@/modules/assistant/assistant.help-catalog.js';
 import { buildAssistantInstruction } from '@/modules/assistant/assistant.prompt.js';
 import { AssistantToolbox, type AssistantContext } from '@/modules/assistant/assistant.toolbox.js';
 import { appHelpTool } from '@/modules/assistant/tools/app-help.tool.js';
@@ -64,7 +64,7 @@ describe('capabilities and help tools', () => {
     expect(HELP_CATALOG.bubbles.target).toBe('appearance');
     expect(HELP_CATALOG['profile-photo'].target).toBe('profile');
     expect(HELP_CATALOG.groups.target).toBe('new-group');
-    expect(HELP_CATALOG['invite-link'].target).toBe('new-group');
+    expect(HELP_CATALOG['invite-link'].target).toBe('none');
     expect(HELP_CATALOG.notifications.target).toBe('notifications-settings');
     expect(HELP_CATALOG.calls.target).toBe('none');
   });
@@ -105,6 +105,27 @@ describe('help shortcut', () => {
     await vi.advanceTimersByTimeAsync(3000);
     expect(generate).not.toHaveBeenCalled();
     expect(await usageLimiter.isBlocked(alice.id)).toBe(false);
+    for (let index = 0; index < 3; index += 1) {
+      expect(await usageLimiter.tryConsume(alice.id)).toBe(true);
+    }
+  });
+
+  it('answers in English with the English line', async () => {
+    const { aiService, room, assistantTexts, sendFromAlice } = await setup();
+    await aiService.handleIncomingMessage(createFakeServer(), room, await sendFromAlice('/help'), 'en');
+    expect(await assistantTexts()).toEqual([HELP_SHORTCUT_REPLY.en]);
+  });
+
+  it('never falls through to the provider or the limiter when the reply fails to send', async () => {
+    const { aiService, messageService, room, alice, generate, usageLimiter, sendFromAlice } = await setup();
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const message = await sendFromAlice('/ajuda');
+    vi.spyOn(messageService, 'sendMessage').mockRejectedValue(new Error('db down'));
+
+    await expect(aiService.handleIncomingMessage(createFakeServer(), room, message, 'pt')).resolves.toBeUndefined();
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(generate).not.toHaveBeenCalled();
     for (let index = 0; index < 3; index += 1) {
       expect(await usageLimiter.tryConsume(alice.id)).toBe(true);
     }
