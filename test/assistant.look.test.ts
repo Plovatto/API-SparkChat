@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { catalogSummary, loadLookCatalog, sanitizeLook } from '@/modules/assistant/look.catalog.js';
 import { describeLook, LookService } from '@/modules/assistant/look.service.js';
 import type { AppServer } from '@/sockets/events.js';
@@ -46,11 +46,11 @@ describe('sanitizeLook', () => {
 });
 
 describe('catalogSummary', () => {
-  it('lists compact id|name|accent|tint lines in the user locale', () => {
+  it('lists compact id name accent entries in the user locale', () => {
     const catalog = loadLookCatalog();
     const color = catalog.colors[0];
-    expect(catalogSummary('pt')).toContain(`${color?.id}|${color?.namePt}|${color?.accent}|${color?.tint}`);
-    expect(catalogSummary('en')).toContain(`${color?.id}|${color?.nameEn}|${color?.accent}|${color?.tint}`);
+    expect(catalogSummary('pt')).toContain(`${color?.id} ${color?.namePt} ${color?.accent}`);
+    expect(catalogSummary('en')).toContain(`${color?.id} ${color?.nameEn} ${color?.accent}`);
   });
 });
 
@@ -89,6 +89,16 @@ describe('LookService', () => {
     const { previous } = await t.looks.applyLook(t.io, t.user.id, { colorTheme: 'forest', wallpaper: 'gradient1', appearance: { overlayBlur: 15 } });
     await t.looks.applyLook(t.io, t.user.id, previous);
     expect(await t.looks.currentLook(t.user.id)).toEqual(before);
+  });
+
+  it('restores the original theme and emits nothing when the chat settings write fails', async () => {
+    const t = await setup();
+    await t.looks.applyLook(t.io, t.user.id, { baseTheme: 'light', colorTheme: 'sunset' });
+    t.emitted.length = 0;
+    vi.spyOn(t.userService, 'updateChatSettings').mockRejectedValueOnce(new Error('db down'));
+    await expect(t.looks.applyLook(t.io, t.user.id, { colorTheme: 'forest', wallpaper: 'gradient1' })).rejects.toThrow('db down');
+    expect((await t.userService.getUser(t.user.id))?.theme).toEqual({ baseTheme: 'light', colorTheme: 'sunset' });
+    expect(t.emitted).toEqual([]);
   });
 
   it('clears the global wallpaper when restoring the default one', async () => {

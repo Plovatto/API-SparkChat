@@ -79,4 +79,4 @@ export type AssistantCard =
   | { v: 1; kind: 'list'; title: string; items: { id: string; text: string; detail?: string }[] }
   | { v: 1; kind: 'help'; topic: HelpTopic; target: HelpTarget }
   | { v: 1; kind: 'capabilities' }
-  | { v: 1; kind: 'choices'; buttons: AssistantButton[] };
+  | { v: 1; kind: 'choices'; buttons: AssistantButton[]; look?: AssistantLook };

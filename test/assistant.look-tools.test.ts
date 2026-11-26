@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AiRouter, type AiGenerateOptions } from '@/modules/ai/ai.provider.js';
 import type { AssistantCard } from '@/modules/assistant/assistant.card.js';
-import { anotherSuggestionInstruction } from '@/modules/assistant/assistant.prompt.js';
+import { catalogSummary } from '@/modules/assistant/look.catalog.js';
+import { anotherSuggestionInstruction, buildAssistantInstruction } from '@/modules/assistant/assistant.prompt.js';
 import { QuickReplyRegistry } from '@/modules/assistant/assistant.quick-reply.js';
 import { AssistantToolbox, type AssistantContext } from '@/modules/assistant/assistant.toolbox.js';
 import { runAssistantTurn } from '@/modules/assistant/assistant.agent.js';
@@ -150,6 +151,7 @@ describe('look quick replies', () => {
         { choice: 'another', label: 'Outra sugestão' },
         { choice: 'keep', label: 'Deixa assim' },
       ],
+      look: { colorTheme: 'forest', wallpaper: 'gradient1' },
     });
     expect(t.emitted).toEqual(expect.not.arrayContaining([expect.objectContaining({ event: 'user:theme-updated' })]));
 
@@ -172,13 +174,82 @@ describe('look quick replies', () => {
     const t = await setup({ router });
     const card = await t.sendCardFromAssistant(SUGGESTION);
     await t.tap(card.id, 'another');
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]?.systemInstruction).toContain('diferente do cartão anterior');
     expect(seen[0]?.systemInstruction).toContain('"colorTheme":"forest"');
+  });
+
+  it('another after no still tells the model the look of the original suggestion', async () => {
+    const seen: AiGenerateOptions[] = [];
+    const router = new AiRouter([
+      {
+        generate: (_messages, options) => {
+          seen.push(options);
+          return Promise.resolve({ text: 'que tal este?', calls: [] });
+        },
+      },
+    ]);
+    const t = await setup({ router });
+    const card = await t.sendCardFromAssistant(SUGGESTION);
+    await t.tap(card.id, 'no');
+    const choicesMessage = await t.lastCardMessage();
+    await t.tap(choicesMessage?.id as string, 'another');
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0]?.systemInstruction).toContain('"colorTheme":"forest"');
+    expect(seen[0]?.systemInstruction).toContain('"wallpaper":"gradient1"');
+  });
+});
+
+describe('apply_look twice in one turn', () => {
+  it('keeps the first previous and merges the applied looks into one card', async () => {
+    const router = new AiRouter([
+      {
+        generate: (messages) =>
+          Promise.resolve(
+            messages.length === 0 || !messages.some((message) => message.functionResponse)
+              ? {
+                  text: '',
+                  calls: [
+                    { id: 'a', name: 'apply_look', args: { colorTheme: 'forest', reason: 'x' } },
+                    { id: 'b', name: 'apply_look', args: { colorTheme: 'sunset', wallpaper: 'gradient1', reason: 'x' } },
+                  ],
+                }
+              : { text: 'feito', calls: [] },
+          ),
+      },
+    ]);
+    const t = await setup();
+    const before = await t.looks.currentLook(t.alice.id);
+    const reply = await runAssistantTurn({ history: [], locale: 'pt', context: t.toolContext(), toolbox: t.toolbox, router });
+    expect(reply.card).toMatchObject({
+      kind: 'look-applied',
+      look: { colorTheme: 'sunset', wallpaper: 'gradient1' },
+      previous: { colorTheme: before.colorTheme, wallpaper: 'default' },
+    });
+    const after = await t.looks.applyLook(t.io, t.alice.id, reply.card?.kind === 'look-applied' ? reply.card.previous : {});
+    expect(after.previous).toBeDefined();
+    expect(await t.looks.currentLook(t.alice.id)).toEqual(before);
   });
 });
 
 describe('prompt', () => {
+  it('keeps the static catalog before the time line and within the size budget', () => {
+    const summary = catalogSummary('pt');
+    expect(summary.length).toBeLessThan(4500);
+    expect(catalogSummary('en').length).toBeLessThan(4500);
+    const instruction = buildAssistantInstruction({
+      locale: 'pt',
+      nowLocal: '2026-11-27T09:00',
+      weekday: 'sexta',
+      timeZone: 'America/Sao_Paulo',
+      catalogSummary: summary,
+      toolNames: ['suggest_look', 'apply_look'],
+    });
+    expect(instruction.indexOf('2026-11-27T09:00')).toBeGreaterThan(instruction.indexOf(summary));
+    expect(instruction.indexOf('Agora são')).toBeGreaterThan(instruction.indexOf('apply_look'));
+    expect(instruction).toContain('no máximo uma vez por resposta');
+  });
+
   it('includes the catalog summary only when look tools are registered', async () => {
     const seen: string[] = [];
     const router = new AiRouter([
@@ -195,7 +266,7 @@ describe('prompt', () => {
     await runAssistantTurn({ history: [], locale: 'pt', context, toolbox: withLooks, router });
     await runAssistantTurn({ history: [], locale: 'pt', context, toolbox: new AssistantToolbox(), router });
     expect(seen[0]).toContain('Catálogo de visuais');
-    expect(seen[0]).toContain('forest|Floresta');
+    expect(seen[0]).toContain('forest Floresta #3fb567');
     expect(seen[1]).not.toContain('Catálogo de visuais');
   });
 

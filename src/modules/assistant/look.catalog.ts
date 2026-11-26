@@ -64,17 +64,40 @@ export function wallpaperName(wallpaper: CatalogWallpaper, locale: Locale): stri
   return locale === 'en' ? wallpaper.nameEn : wallpaper.namePt;
 }
 
+function compressIds(ids: string[]): string {
+  const groups = new Map<string, number[]>();
+  const plain: string[] = [];
+  for (const id of ids) {
+    const match = /^(.*?)(\d+)$/.exec(id);
+    if (match) {
+      const prefix = match[1] as string;
+      groups.set(prefix, [...(groups.get(prefix) ?? []), Number(match[2])]);
+    } else {
+      plain.push(id);
+    }
+  }
+  const ranges = [...groups].map(([prefix, numbers]) => `${prefix}${Math.min(...numbers)}-${Math.max(...numbers)}`);
+  return [...plain, ...ranges].join(', ');
+}
+
+function wallpaperSummary(wallpapers: CatalogWallpaper[], locale: Locale): string {
+  const named = wallpapers.filter((item) => item.kind === 'gradient');
+  const rest = wallpapers.filter((item) => item.kind !== 'gradient');
+  const namedText = named.map((item) => `${item.id} ${wallpaperName(item, locale)}`).join(', ');
+  return `${namedText}, ${compressIds(rest.map((item) => item.id))}`;
+}
+
 export function catalogSummary(locale: Locale): string {
   const catalog = loadLookCatalog();
-  const bases = catalog.bases.map((base) => `${base.id}|${base.name}`).join('; ');
-  const colors = catalog.colors.map((color) => `${color.id}|${colorName(color, locale)}|${color.accent}|${color.tint}`).join('; ');
-  const wallpapers = catalog.wallpapers.map((wallpaper) => `${wallpaper.id}|${wallpaperName(wallpaper, locale)}|${wallpaper.kind}`).join('; ');
+  const bases = catalog.bases.map((base) => `${base.id} ${base.name}`).join(', ');
+  const colors = catalog.colors.map((color) => `${color.id} ${colorName(color, locale)} ${color.accent}`).join('; ');
+  const wallpapers = wallpaperSummary(catalog.wallpapers, locale);
   const ranges = Object.entries(catalog.appearanceRanges)
     .map(([key, [min, max]]) => `${key} ${min}-${max}`)
     .join(', ');
   return locale === 'en'
-    ? `Look catalog (use only these ids). Base themes (id|name): ${bases}. Theme colors (id|name|accent color|background color): ${colors}. Wallpapers (id|name|kind): ${wallpapers}. Bubble and background adjustments, with ranges: ${ranges}; ownBubbleColor and otherBubbleColor accept hex #rrggbb or null.`
-    : `Catálogo de visuais (use só estes ids). Temas base (id|nome): ${bases}. Cores do tema (id|nome|cor de destaque|cor de fundo): ${colors}. Papéis de parede (id|nome|tipo): ${wallpapers}. Ajustes de bolha e fundo, com faixas: ${ranges}; ownBubbleColor e otherBubbleColor aceitam hex #rrggbb ou null.`;
+    ? `Look catalog (use only these ids; numbered ranges like unsplash1-121 mean every number in the range). Base themes (id name): ${bases}. Theme colors (id name accent): ${colors}. Wallpapers: ${wallpapers}. Bubble and background adjustments, with ranges: ${ranges}; ownBubbleColor and otherBubbleColor accept hex #rrggbb or null.`
+    : `Catálogo de visuais (use só estes ids; faixas numeradas como unsplash1-121 valem para todo número da faixa). Temas base (id nome): ${bases}. Cores do tema (id nome destaque): ${colors}. Papéis de parede: ${wallpapers}. Ajustes de bolha e fundo, com faixas: ${ranges}; ownBubbleColor e otherBubbleColor aceitam hex #rrggbb ou null.`;
 }
 
 function normalizeHex(value: string): string | null {

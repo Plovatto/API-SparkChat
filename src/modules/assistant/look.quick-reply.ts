@@ -16,7 +16,7 @@ function handleSuggestion(looks: LookService) {
       };
     }
     if (choice === 'no') {
-      return { text: LOOK_TEXTS.declined[locale], card: { v: 1, kind: 'choices', buttons: LOOK_DECLINED_BUTTONS[locale] } };
+      return { text: LOOK_TEXTS.declined[locale], card: { v: 1, kind: 'choices', buttons: LOOK_DECLINED_BUTTONS[locale], look: card.look } };
     }
     return null;
   };

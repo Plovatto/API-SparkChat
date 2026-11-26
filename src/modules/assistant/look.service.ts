@@ -24,29 +24,53 @@ export class LookService {
     const user = await this.userService.getUser(userId);
     const previous = this.touchedPart(this.lookOf(user?.theme, user?.chatSettings), look);
 
-    if (look.baseTheme !== undefined || look.colorTheme !== undefined) {
-      const current = user?.theme ?? DEFAULT_THEME;
-      const theme: UserTheme = {
-        baseTheme: look.baseTheme ?? current.baseTheme,
-        colorTheme: look.colorTheme ?? current.colorTheme,
-      };
+    const theme = this.nextTheme(user?.theme, look);
+    const settings = this.nextSettings(user?.chatSettings, look);
+
+    if (theme) {
       await this.userService.updateTheme(userId, theme);
-      io.to(userRoom(userId)).emit('user:theme-updated', theme);
+    }
+    if (settings) {
+      try {
+        await this.userService.updateChatSettings(userId, settings);
+      } catch (error) {
+        if (theme && user?.theme) {
+          await this.userService.updateTheme(userId, user.theme);
+        }
+        throw error;
+      }
     }
 
-    if (look.wallpaper !== undefined || look.appearance) {
-      const settings: UserChatSettings = { ...emptyChatSettings(), ...(user?.chatSettings ?? {}) };
-      if (look.wallpaper !== undefined) {
-        settings.globalWallpaper = look.wallpaper === DEFAULT_WALLPAPER_ID ? null : look.wallpaper;
-      }
-      if (look.appearance) {
-        settings.globalAppearance = { ...DEFAULT_CHAT_APPEARANCE, ...(settings.globalAppearance ?? {}), ...look.appearance };
-      }
-      await this.userService.updateChatSettings(userId, settings);
+    if (theme) {
+      io.to(userRoom(userId)).emit('user:theme-updated', theme);
+    }
+    if (settings) {
       io.to(userRoom(userId)).emit('user:chat-settings-updated', { chatSettings: settings });
     }
 
     return { previous };
+  }
+
+  private nextTheme(current: UserTheme | undefined, look: AssistantLook): UserTheme | null {
+    if (look.baseTheme === undefined && look.colorTheme === undefined) {
+      return null;
+    }
+    const base = current ?? DEFAULT_THEME;
+    return { baseTheme: look.baseTheme ?? base.baseTheme, colorTheme: look.colorTheme ?? base.colorTheme };
+  }
+
+  private nextSettings(current: UserChatSettings | null | undefined, look: AssistantLook): UserChatSettings | null {
+    if (look.wallpaper === undefined && !look.appearance) {
+      return null;
+    }
+    const settings: UserChatSettings = { ...emptyChatSettings(), ...(current ?? {}) };
+    if (look.wallpaper !== undefined) {
+      settings.globalWallpaper = look.wallpaper === DEFAULT_WALLPAPER_ID ? null : look.wallpaper;
+    }
+    if (look.appearance) {
+      settings.globalAppearance = { ...DEFAULT_CHAT_APPEARANCE, ...(settings.globalAppearance ?? {}), ...look.appearance };
+    }
+    return settings;
   }
 
   private lookOf(theme: UserTheme | undefined, chatSettings: UserChatSettings | null | undefined): AssistantLook {

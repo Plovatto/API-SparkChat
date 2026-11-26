@@ -15,7 +15,7 @@ const TOOL_RULES: Record<Locale, Record<string, string>> = {
     show_capabilities: 'Quando a pessoa perguntar o que você sabe fazer, use show_capabilities.',
     app_help: 'Quando perguntar como usar algum recurso do SparkChat, use app_help com o tópico certo em vez de explicar de memória.',
     suggest_look: 'Quando a pessoa pedir para sugerir um visual ou tema, use suggest_look.',
-    apply_look: 'Quando pedir para escolher ou aplicar um visual ou tema, use apply_look.',
+    apply_look: 'Quando pedir para escolher ou aplicar um visual ou tema, use apply_look, no máximo uma vez por resposta.',
     save_note: 'Quando a pessoa pedir para anotar ou guardar algo, use save_note.',
     list_notes: 'Quando pedir para ver as anotações, use list_notes.',
     delete_note: 'Quando pedir para apagar uma anotação, use delete_note com o id devolvido por list_notes.',
@@ -31,7 +31,7 @@ const TOOL_RULES: Record<Locale, Record<string, string>> = {
     show_capabilities: 'When the person asks what you can do, use show_capabilities.',
     app_help: 'When they ask how to use a SparkChat feature, use app_help with the right topic instead of explaining from memory.',
     suggest_look: 'When the person asks you to suggest a look or theme, use suggest_look.',
-    apply_look: 'When they ask you to pick or apply a look or theme, use apply_look.',
+    apply_look: 'When they ask you to pick or apply a look or theme, use apply_look, at most once per reply.',
     save_note: 'When the person asks you to note or save something, use save_note.',
     list_notes: 'When they ask to see their notes, use list_notes.',
     delete_note: 'When they ask to delete a note, use delete_note with the id returned by list_notes.',
@@ -50,13 +50,12 @@ function toolRules(locale: Locale, toolNames: readonly string[]): string[] {
   return toolNames.flatMap((name) => rules[name] ?? []);
 }
 
-function portugueseBody(input: AssistantInstructionInput): string[] {
+function portugueseBody(): string[] {
   return [
     'Você é o SparkAI, o assistente de IA integrado ao SparkChat.',
     'O idioma configurado pela pessoa no SparkChat é português do Brasil.',
     'Responda em português do Brasil por padrão, mas, se a pessoa escrever em outro idioma, responda no idioma em que ela escreveu.',
     'Responda curto, animado e natural, como numa conversa de chat comum.',
-    `Agora são ${input.nowLocal} (${input.weekday}), no fuso ${input.timeZone}. Datas e horas nas ferramentas são sempre horário local, sem offset, no formato 2026-11-27T09:00.`,
     'Você pode usar as ferramentas disponíveis para agir no app da pessoa. Use uma ferramenta só quando o pedido pedir essa ação.',
     'Se faltar o horário de um lembrete, status com prazo ou mensagem agendada, pergunte à pessoa. Nunca invente horários.',
     'Nunca invente ids: use apenas ids devolvidos pelas ferramentas.',
@@ -66,13 +65,12 @@ function portugueseBody(input: AssistantInstructionInput): string[] {
   ];
 }
 
-function englishBody(input: AssistantInstructionInput): string[] {
+function englishBody(): string[] {
   return [
     'You are SparkAI, the AI assistant built into SparkChat.',
     'The language the person configured in SparkChat is English.',
     'Reply in English by default, but if the person writes in another language, reply in the language they wrote in.',
     'Keep replies short, upbeat and natural, like in a regular chat.',
-    `It is now ${input.nowLocal} (${input.weekday}) in the ${input.timeZone} time zone. Dates and times in tools are always local time, without an offset, in the format 2026-11-27T09:00.`,
     "You can use the available tools to act in the person's app. Use a tool only when the request calls for that action.",
     'If the time is missing for a reminder, a timed status or a scheduled message, ask the person. Never make up times.',
     'Never make up ids: only use ids returned by the tools.',
@@ -94,18 +92,26 @@ export const QUICK_REPLY_FAILED_TEXT: Record<Locale, string> = {
 
 export function anotherSuggestionInstruction(locale: Locale, card: AssistantCard): string {
   const base = ANOTHER_SUGGESTION_INSTRUCTION[locale];
-  if (card.kind !== 'look-suggestion' && card.kind !== 'look-applied') {
+  const look = card.kind === 'look-suggestion' || card.kind === 'look-applied' || card.kind === 'choices' ? card.look : undefined;
+  if (!look) {
     return base;
   }
-  const previous = JSON.stringify(card.look);
+  const previous = JSON.stringify(look);
   return locale === 'en' ? `${base} The previous look was ${previous}.` : `${base} O visual anterior era ${previous}.`;
 }
 
+function timeLine(input: AssistantInstructionInput): string {
+  return input.locale === 'en'
+    ? `It is now ${input.nowLocal} (${input.weekday}) in the ${input.timeZone} time zone. Dates and times in tools are always local time, without an offset, in the format 2026-11-27T09:00.`
+    : `Agora são ${input.nowLocal} (${input.weekday}), no fuso ${input.timeZone}. Datas e horas nas ferramentas são sempre horário local, sem offset, no formato 2026-11-27T09:00.`;
+}
+
 export function buildAssistantInstruction(input: AssistantInstructionInput): string {
-  const lines = input.locale === 'en' ? englishBody(input) : portugueseBody(input);
+  const lines = input.locale === 'en' ? englishBody() : portugueseBody();
   lines.push(...toolRules(input.locale, input.toolNames));
   if (input.catalogSummary) {
     lines.push(input.catalogSummary);
   }
+  lines.push(timeLine(input));
   return lines.join(' ');
 }
