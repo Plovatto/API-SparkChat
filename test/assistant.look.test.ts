@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { catalogSummary, loadLookCatalog, sanitizeLook } from '@/modules/assistant/look.catalog.js';
+import { catalogSummary, DEFAULT_CHAT_APPEARANCE, loadLookCatalog, sanitizeLook } from '@/modules/assistant/look.catalog.js';
 import { describeLook, LookService } from '@/modules/assistant/look.service.js';
 import type { AppServer } from '@/sockets/events.js';
 import { buildRoomService } from './support/build-room-service.js';
@@ -80,6 +80,20 @@ describe('LookService', () => {
     ]);
     expect(t.emitted[0]?.payload).toEqual({ baseTheme: 'midnight', colorTheme: 'forest' });
     expect(previous).toMatchObject({ wallpaper: 'default', appearance: { overlayOpacity: 32, ownBubbleColor: null } });
+  });
+
+  it('applies to chats that had their own wallpaper and appearance', async () => {
+    const t = await setup();
+    await t.userService.updateChatSettings(t.user.id, {
+      roomWallpapers: { 'room-a': 'gradient3' },
+      globalWallpaper: null,
+      roomAppearance: { 'room-a': { ...DEFAULT_CHAT_APPEARANCE, overlayOpacity: 70, bubbleBlur: 4 } },
+      globalAppearance: null,
+    });
+    await t.looks.applyLook(t.io, t.user.id, { wallpaper: 'gradient1', appearance: { overlayOpacity: 10 } });
+    const stored = await t.userService.getUser(t.user.id);
+    expect(stored?.chatSettings?.roomWallpapers).toEqual({});
+    expect(stored?.chatSettings?.roomAppearance?.['room-a']).toMatchObject({ overlayOpacity: 10, bubbleBlur: 4 });
   });
 
   it('restores exactly the previous values when applying previous', async () => {
