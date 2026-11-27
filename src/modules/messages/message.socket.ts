@@ -3,22 +3,23 @@ import { uploadedMediaKeyPrefix } from '../../config/paths.js';
 import { registerClientEvents, registerServerEvents } from '../../docs/socket-registry.js';
 import { AppError, errorPayload } from '../../lib/app-error.js';
 import type { ErrorCode } from '../../lib/error-catalog.js';
-import type { Locale } from '../../lib/locale.js';
 import type { AppServer, AppSocket } from '../../sockets/events.js';
 import { idSchema, roomIdPayloadSchema } from '../../sockets/payloads.js';
 import { extractErrorPayload } from '../../sockets/socket-errors.js';
 import { runSocketHandler } from '../../sockets/socket-handler.js';
 import { socketLocale } from '../../sockets/socket-locale.js';
 import { requireSocketUserId } from '../../sockets/socket-session.js';
-import { emitToUser, isUserRoom, joinUserSocketsToRoom, listUserSockets } from '../../sockets/user-sockets.js';
+import { emitToUser, isUserRoom } from '../../sockets/user-sockets.js';
 import { quickReplySchema } from '../assistant/assistant.card.js';
 import { LINK_PREVIEW_ENCRYPTED_LIMITS } from '../link-preview/index.js';
 import type { RoomRecord, RoomService } from '../rooms/index.js';
 import type { UserService } from '../users/index.js';
 import { emitMessageUpdate, emitReactionsUpdate } from './message.broadcast.js';
-import { readEncryptedFieldKeyId, resolveMessageKeyId } from './message.encrypted-fields.js';
+import { broadcastSentMessage, clientTempIdSchema, guardEncryptedSend, INITIAL_MESSAGES_LIMIT, readClientTempId, type OnMessageSentHook } from './message.dispatch.js';
+import { readEncryptedFieldKeyId } from './message.encrypted-fields.js';
 import { parseMentionedUserIds } from './message.mentions.js';
 import type { MessageRateLimiter } from './message.rate-limiter.js';
+import { registerScheduleSocketHandlers, type ScheduleSocketDeps } from './message.schedule.socket.js';
 import {
   cardResolvedPayloadSchema,
   messageHiddenPayloadSchema,
@@ -28,7 +29,6 @@ import {
   newMessagePayloadSchema,
 } from './message.schemas.js';
 import { isReactableMessage, type MessageService } from './message.service.js';
-import type { MessageRecord } from './message.types.js';
 import type { RecordingService } from './recording.service.js';
 import type { RoomPresenceService } from './room-presence.service.js';
 import {
@@ -40,7 +40,8 @@ import {
 } from './socket-activity.js';
 import type { TypingService } from './typing.service.js';
 
-export type OnMessageSentHook = (context: { io: AppServer; room: RoomRecord; message: MessageRecord; locale: Locale }) => void;
+export { INITIAL_MESSAGES_LIMIT, readClientTempId };
+export type { OnMessageSentHook };
 
 export interface MessageSocketDeps {
   messageService: MessageService;
@@ -51,10 +52,9 @@ export interface MessageSocketDeps {
   presenceService: RoomPresenceService;
   messageRateLimiter: MessageRateLimiter;
   isAssistantRoom: (room: RoomRecord) => boolean;
+  scheduledMessages?: ScheduleSocketDeps['scheduledMessages'];
   onMessageSent?: OnMessageSentHook;
 }
-
-export const INITIAL_MESSAGES_LIMIT = 20;
 
 export type MessageActivityServices = Pick<MessageSocketDeps, 'typingService' | 'recordingService' | 'presenceService'>;
 
@@ -102,8 +102,6 @@ function attachmentKeyViolation({ type, fileMeta, linkPreview }: Pick<SendMessag
   }
   return null;
 }
-
-const clientTempIdSchema = z.string().trim().min(1).max(200);
 
 const sendMessagePayloadSchema = z
   .object({
@@ -237,6 +235,8 @@ export function registerMessageSocketHandlers(io: AppServer, socket: AppSocket, 
     runSocketHandler(socket, 'message:send', () => handleSendMessage(io, socket, deps, payload));
   });
 
+  registerScheduleSocketHandlers(io, socket, deps);
+
   socket.on('message:mark-read', (payload) => {
     runSocketHandler(socket, 'message:mark-read', () => handleMarkRead(socket, deps, payload));
   });
@@ -360,15 +360,6 @@ async function handleRoomView(
   }
 }
 
-export function readClientTempId(payload: unknown): string | undefined {
-  if (typeof payload !== 'object' || payload === null) {
-    return undefined;
-  }
-
-  const parsed = clientTempIdSchema.safeParse((payload as { clientTempId?: unknown }).clientTempId);
-  return parsed.success ? parsed.data : undefined;
-}
-
 async function handleSendMessage(io: AppServer, socket: AppSocket, deps: MessageSocketDeps, payload: unknown): Promise<void> {
   const clientTempId = readClientTempId(payload);
   const userId = socket.data.userId;
@@ -418,33 +409,14 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       return;
     }
 
-    const keyId = resolveMessageKeyId({ type, content, caption, fileMeta, linkPreview });
-    if (!keyId) {
-      socket.emit('error', { ...errorPayload('message.unsupportedEncryption'), clientTempId });
+    const guard = await guardEncryptedSend(roomService, userId, roomId, { type, content, caption, fileMeta, linkPreview }, (guarded) =>
+      quickReply && !deps.isAssistantRoom(guarded) ? 'message.quickReplyNotAllowed' : null,
+    );
+    if (!guard.ok) {
+      socket.emit('error', { ...errorPayload(guard.code), clientTempId });
       return;
     }
-
-    const room = await roomService.getRoomById(roomId);
-
-    if (!room || !roomService.isParticipant(room, userId)) {
-      socket.emit('error', { ...errorPayload('room.notFound'), clientTempId });
-      return;
-    }
-
-    if (roomService.isBlocked(room, userId)) {
-      socket.emit('error', { ...errorPayload('message.blocked'), clientTempId });
-      return;
-    }
-
-    if (quickReply && !deps.isAssistantRoom(room)) {
-      socket.emit('error', { ...errorPayload('message.quickReplyNotAllowed'), clientTempId });
-      return;
-    }
-
-    if (room.rotationRequired !== undefined || room.currentKeyId !== keyId) {
-      socket.emit('error', { ...errorPayload('message.staleRoomKey'), clientTempId });
-      return;
-    }
+    const { room } = guard;
 
     const newlyVisibleUserIds = roomService.getNewlyVisibleParticipants(room, userId);
 
@@ -475,27 +447,7 @@ async function handleSendMessage(io: AppServer, socket: AppSocket, deps: Message
       attachmentUrls,
       quickReply,
     });
-    const reactivatedBefore = new Date(new Date(message.timestamp).getTime() - 1000).toISOString();
-    const updatedRoom = (await roomService.makeVisibleForAll(room, reactivatedBefore)) ?? room;
-
-    const view = await messageService.toNewView(message);
-    io.to(roomId).emit('message:new', clientTempId ? { ...view, clientTempId } : view);
-    deps.onMessageSent?.({ io, room, message, locale: socketLocale(socket) });
-
-    for (const newlyVisibleUserId of newlyVisibleUserIds) {
-      if (listUserSockets(io, newlyVisibleUserId).length === 0) {
-        continue;
-      }
-
-      const after = roomService.getVisibilityCutoff(updatedRoom, newlyVisibleUserId);
-      const [summary, { messages: page }] = await Promise.all([
-        roomService.buildSummary(updatedRoom, newlyVisibleUserId),
-        messageService.getRoomMessagesPage(roomId, { after, limit: INITIAL_MESSAGES_LIMIT, viewerId: newlyVisibleUserId }),
-      ]);
-      const messages = await messageService.toViews(page);
-      await joinUserSocketsToRoom(io, newlyVisibleUserId, roomId);
-      emitToUser(io, newlyVisibleUserId).emit('room:new', { room: summary, messages });
-    }
+    await broadcastSentMessage(io, deps, room, message, newlyVisibleUserIds, socketLocale(socket), clientTempId);
   } catch (error) {
     socket.emit('error', { ...extractErrorPayload(error), clientTempId });
   }

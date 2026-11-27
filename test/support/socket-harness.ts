@@ -39,6 +39,7 @@ export interface SocketHarnessOptions {
   calls?: { turnProvider?: TurnProvider; now?: () => number; enabled?: boolean; tierBytes?: number };
   push?: { sender?: PushSender; publicKey?: string; limiter?: PushRateLimiter };
   transparency?: boolean;
+  scheduledMessages?: NonNullable<Parameters<typeof registerSocketHandlers>[1]['scheduledMessages']>;
 }
 
 export async function startSocketHarness(options: SocketHarnessOptions = {}) {
@@ -106,6 +107,7 @@ export async function startSocketHarness(options: SocketHarnessOptions = {}) {
     roomRateLimiter: options.roomRateLimiter ?? new RoomActionRateLimiter(),
     roomKeyRepository: services.roomKeyRepository,
     aiService,
+    ...(options.scheduledMessages ? { scheduledMessages: options.scheduledMessages } : {}),
     callService,
     pushService,
     avatarService: services.avatarService,

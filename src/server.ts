@@ -28,6 +28,13 @@ import { RemindersRepository } from './modules/assistant/reminders.repository.js
 import { RemindersService } from './modules/assistant/reminders.service.js';
 import { createDeleteNoteTool, createListNotesTool, createSaveNoteTool } from './modules/assistant/tools/note.tools.js';
 import { createCancelReminderTool, createCreateReminderTool, createListRemindersTool } from './modules/assistant/tools/reminder.tools.js';
+import { ScheduledDelivery } from './modules/assistant/scheduled.delivery.js';
+import { createScheduleTargetDirectory } from './modules/assistant/scheduled.directory.js';
+import { registerScheduledConfirms, registerScheduledFailedReplies } from './modules/assistant/scheduled.quick-reply.js';
+import { ScheduledRepository } from './modules/assistant/scheduled.repository.js';
+import { ScheduledMessagesService, type ScheduleCardsPort } from './modules/assistant/scheduled.service.js';
+import { createCancelScheduledTool, createListScheduledTool, createScheduleMessageTool } from './modules/assistant/tools/scheduled.tools.js';
+import { createMessageSentHook } from './sockets/message-sent-hook.js';
 import { LookService } from './modules/assistant/look.service.js';
 import { registerLookQuickReplies } from './modules/assistant/look.quick-reply.js';
 import { httpLinkPreviewFetcher, LinkPreviewRepository, LinkPreviewService } from './modules/link-preview/index.js';
@@ -134,7 +141,21 @@ const assistantHost: AssistantHost = {
 };
 const notesService = new NotesService(new NotesRepository(db), assistantHost);
 const remindersService = new RemindersService(new RemindersRepository(db), assistantHost);
+const scheduleCards: ScheduleCardsPort = {
+  openPendingConfirm: (userId, cardId) => aiService.openPendingConfirm(userId, cardId),
+  claim: (cardId, userId) => aiService.claimCard(cardId, userId, 'yes'),
+  announce: (ioServer, roomId, cardId, choice) => aiService.announceCardResolved(ioServer, roomId, cardId, choice),
+};
+const scheduledService = new ScheduledMessagesService(
+  new ScheduledRepository(db),
+  assistantHost,
+  scheduleCards,
+  async (messageId) => (await messageService.getMessage(messageId)) !== null,
+);
+const scheduleTargets = createScheduleTargetDirectory(roomService, userService, assistantIdentity.userId);
 const confirmDispatcher = new ConfirmDispatcher().attachTo(quickReplyRegistry);
+registerScheduledConfirms(confirmDispatcher, scheduledService);
+registerScheduledFailedReplies(quickReplyRegistry);
 registerNoteConfirms(confirmDispatcher, notesService);
 registerReminderConfirms(confirmDispatcher, remindersService);
 const statusBroadcast = {
@@ -165,7 +186,10 @@ const aiService = new AiService(
     .register(createCreateReminderTool())
     .register(createListRemindersTool(remindersService))
     .register(createCancelReminderTool(remindersService))
-    .register(createSetStatusTool()),
+    .register(createSetStatusTool())
+    .register(createScheduleMessageTool(scheduledService, scheduleTargets))
+    .register(createListScheduledTool(scheduledService))
+    .register(createCancelScheduledTool(scheduledService)),
   quickReplyRegistry,
   roomService,
 );
@@ -238,7 +262,21 @@ const pushService = new PushService({
   isSessionLive: (session, now) => isSessionLive(session, now),
 });
 pushService.startMaintenance();
-new AssistantScheduler({ io, host: assistantHost, reminders: remindersService, push: pushService, statuses: statusBroadcast }).start();
+const scheduledDelivery = new ScheduledDelivery({
+  messageService,
+  roomService,
+  presenceService,
+  onMessageSent: createMessageSentHook({ aiService, pushService }),
+});
+new AssistantScheduler({
+  io,
+  host: assistantHost,
+  reminders: remindersService,
+  push: pushService,
+  statuses: statusBroadcast,
+  scheduled: scheduledService,
+  delivery: scheduledDelivery,
+}).start();
 logger.info(`Web Push: ${pushService.enabled ? 'enabled' : 'disabled (WEB_PUSH_* not set)'}`);
 
 const callService = new CallService(io, callRepository, roomService, messageService, new CallBudget(callRepository), new CallRateLimiter(), turnProvider, {
@@ -259,6 +297,7 @@ registerSocketHandlers(io, {
   roomRateLimiter,
   roomKeyRepository,
   aiService,
+  scheduledMessages: scheduledService,
   callService,
   pushService,
   avatarService,

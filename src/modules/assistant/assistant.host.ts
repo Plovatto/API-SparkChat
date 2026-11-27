@@ -1,7 +1,7 @@
 import type { AppServer } from '../../sockets/events.js';
 import type { AssistantReply } from './assistant.agent.js';
 
-export type VaultLabel = 'assistantNote' | 'reminder';
+export type VaultLabel = 'assistantNote' | 'reminder' | 'scheduledMessage';
 
 export interface AssistantHost {
   seal(userId: string, label: VaultLabel, itemId: string, plaintext: string): Promise<string | null>;

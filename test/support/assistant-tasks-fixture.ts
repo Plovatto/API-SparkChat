@@ -1,3 +1,11 @@
+import { vi } from 'vitest';
+import { RoomPresenceService } from '@/modules/messages/index.js';
+import { ScheduledDelivery } from '@/modules/assistant/scheduled.delivery.js';
+import { createScheduleTargetDirectory } from '@/modules/assistant/scheduled.directory.js';
+import { registerScheduledConfirms, registerScheduledFailedReplies } from '@/modules/assistant/scheduled.quick-reply.js';
+import { ScheduledRepository } from '@/modules/assistant/scheduled.repository.js';
+import { ScheduledMessagesService, type ScheduleCardsPort } from '@/modules/assistant/scheduled.service.js';
+import { createCancelScheduledTool, createListScheduledTool, createScheduleMessageTool } from '@/modules/assistant/tools/scheduled.tools.js';
 import { ConfirmDispatcher } from '@/modules/assistant/assistant.confirm.js';
 import type { AssistantHost } from '@/modules/assistant/assistant.host.js';
 import { QuickReplyRegistry } from '@/modules/assistant/assistant.quick-reply.js';
@@ -14,6 +22,9 @@ import { createSetStatusTool } from '@/modules/assistant/tools/status.tool.js';
 import { broadcastProfileUpdate } from '@/modules/users/user.socket.js';
 import { createCancelReminderTool, createCreateReminderTool, createListRemindersTool } from '@/modules/assistant/tools/reminder.tools.js';
 import type { AppServer } from '@/sockets/events.js';
+import { establishFakeGeneration } from './room-keys.js';
+import { TEST_V2_SIGNUP } from './test-constants.js';
+import { TEST_PASSWORD } from './socket-harness.js';
 import { createFakeServer, setupAssistantRoom, type EmittedEvent } from './ai-fixture.js';
 
 export const TIME_ZONE = 'America/Sao_Paulo';
@@ -69,5 +80,32 @@ export async function setupTasks() {
     return context.sendCardFromAssistant(card);
   }
 
-  return { ...context, clock, now, host, notes, reminders, remindersRepository, toolbox, toolContext, statuses, io, emitted, tap, postCard };
+  return { ...context, registry, dispatcher, clock, now, host, notes, reminders, remindersRepository, toolbox, toolContext, statuses, io, emitted, tap, postCard };
+}
+
+export async function setupScheduling() {
+  const tasks = await setupTasks();
+  const { userService, roomService, roomKeyRepository, messageService, db, host, now, toolContext } = tasks;
+  const bob = (await userService.registerAccount({ nickname: 'Bob', avatar: 0, password: TEST_PASSWORD, ...TEST_V2_SIGNUP })).user;
+  const bobRoom = await roomService.createPrivateRoom(tasks.alice.id, bob.id);
+  const bobKeyId = await establishFakeGeneration(roomKeyRepository, bobRoom.id, tasks.alice.id, bobRoom.participants);
+
+  const scheduledRepository = new ScheduledRepository(db);
+  const cards: ScheduleCardsPort = {
+    openPendingConfirm: (userId, cardId) => tasks.aiService.openPendingConfirm(userId, cardId),
+    claim: (cardId, userId) => tasks.aiService.claimCard(cardId, userId, 'yes'),
+    announce: (ioServer, roomId, cardId, choice) => tasks.aiService.announceCardResolved(ioServer, roomId, cardId, choice),
+  };
+  const scheduled = new ScheduledMessagesService(scheduledRepository, host, cards, async (id) => (await messageService.getMessage(id)) !== null, now);
+  registerScheduledConfirms(tasks.dispatcher, scheduled);
+  registerScheduledFailedReplies(tasks.registry);
+  const directory = createScheduleTargetDirectory(roomService, userService, tasks.assistant.id);
+  tasks.toolbox
+    .register(createScheduleMessageTool(scheduled, directory))
+    .register(createListScheduledTool(scheduled))
+    .register(createCancelScheduledTool(scheduled));
+  const onMessageSent = vi.fn();
+  const delivery = new ScheduledDelivery({ messageService, roomService, presenceService: new RoomPresenceService(), onMessageSent });
+
+  return { ...tasks, bob, bobRoom, bobKeyId, scheduled, scheduledRepository, directory, delivery, onMessageSent, toolContext };
 }

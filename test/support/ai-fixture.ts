@@ -21,7 +21,10 @@ export interface EmittedEvent {
 }
 
 export function createFakeServer(emitted: EmittedEvent[] = []): AppServer {
-  return { to: () => ({ emit: (event: string, payload: unknown) => emitted.push({ event, payload }) > 0 }) } as unknown as AppServer;
+  return {
+    to: () => ({ emit: (event: string, payload: unknown) => emitted.push({ event, payload }) > 0 }),
+    sockets: { adapter: { rooms: new Map() }, sockets: new Map() },
+  } as unknown as AppServer;
 }
 
 export interface AssistantRoomOptions {

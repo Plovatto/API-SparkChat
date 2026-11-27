@@ -36,8 +36,8 @@ describe('buildAssistantInstruction', () => {
   });
 
   it.each([
-    ['pt', ['Se faltar o horário', 'Nunca invente ids', 'Nunca diga que fez algo sem ter usado a ferramenta', 'chega muito em breve']],
-    ['en', ['If the time is missing', 'Never make up ids', 'Never say you did something without having used the matching tool', 'coming very soon']],
+    ['pt', ['Se faltar o horário', 'Nunca invente ids', 'Nunca diga que fez algo sem ter usado a ferramenta']],
+    ['en', ['If the time is missing', 'Never make up ids', 'Never say you did something without having used the matching tool']],
   ] as const)('keeps the behavioral rules in %s', (locale, parts) => {
     const instruction = buildAssistantInstruction({ ...BASE, locale, toolNames: [] });
     for (const part of parts) {

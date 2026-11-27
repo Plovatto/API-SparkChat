@@ -33,6 +33,16 @@ export interface MessageClientToServerEvents {
     mentionedUserIds?: string[];
     caption?: string;
   }) => void;
+  'message:schedule': (payload: {
+    cardId: string;
+    roomId: string;
+    sendAt: number;
+    messageId: string;
+    content: string;
+    type: 'text';
+    clientTempId?: string | undefined;
+  }) => void;
+  'message:unschedule': (payload: { id: string; clientTempId?: string | undefined }) => void;
   'message:mark-read': (payload: { roomId: string; messageIds?: string[] }) => void;
   'messages:get': (payload: { roomId: string; before?: string; limit?: number }) => void;
   'message:delete': (payload: { messageId: string } | { messageIds: string[] }) => void;
