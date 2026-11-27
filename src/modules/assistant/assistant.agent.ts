@@ -113,8 +113,9 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
       logger.warn({ roomId: context.roomId, reason }, 'SparkAI respondeu sem chamar ferramenta; repetindo com chamada forçada');
       guarded = true;
       forceNext = true;
-      messages.push({ role: 'model', text: turn.text });
-      messages.push({ role: 'user', text: NUDGE[input.locale] });
+      if (turn.text) {
+        messages.push({ role: 'model', text: turn.text });
+      }
       continue;
     }
 

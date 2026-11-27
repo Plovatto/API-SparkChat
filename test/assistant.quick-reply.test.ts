@@ -154,7 +154,7 @@ describe('assistant quick replies', () => {
 
   it('announces the resolution of another only after the suggestion succeeds', async () => {
     const generate = suggestingGenerate();
-    const t = await setup({ toolbox: lookToolbox(), router: new AiRouter([{ generate }]), usageLimiter: { tryConsume: vi.fn().mockResolvedValue(true) } as never });
+    const t = await setup({ toolbox: lookToolbox(), router: new AiRouter([{ generate }]), usageLimiter: { tryConsume: vi.fn().mockResolvedValue(true), refund: vi.fn().mockResolvedValue(undefined) } as never });
     const card = await t.sendCardFromAssistant({ v: 1, kind: 'look-suggestion', look: {}, buttons: [{ choice: 'another', label: 'Outra' }] });
 
     await t.aiService.handleIncomingMessage(t.io, t.room, await t.sendQuickReplyFromAlice({ cardId: card.id, choice: 'another' }), 'pt');
@@ -165,7 +165,7 @@ describe('assistant quick replies', () => {
 
   it('releases the card when another produces no new suggestion card', async () => {
     const generate = vi.fn().mockResolvedValue({ text: 'Aqui está outra opção!', calls: [] });
-    const t = await setup({ toolbox: lookToolbox(), router: new AiRouter([{ generate }]), usageLimiter: { tryConsume: vi.fn().mockResolvedValue(true) } as never });
+    const t = await setup({ toolbox: lookToolbox(), router: new AiRouter([{ generate }]), usageLimiter: { tryConsume: vi.fn().mockResolvedValue(true), refund: vi.fn().mockResolvedValue(undefined) } as never });
     const card = await t.sendCardFromAssistant({ v: 1, kind: 'look-suggestion', look: {}, buttons: [{ choice: 'another', label: 'Outra' }] });
 
     await t.aiService.handleIncomingMessage(t.io, t.room, await t.sendQuickReplyFromAlice({ cardId: card.id, choice: 'another' }), 'pt');
@@ -178,7 +178,8 @@ describe('assistant quick replies', () => {
 
   it('releases the card when generating another suggestion fails', async () => {
     const generate = vi.fn().mockRejectedValue(new Error('boom'));
-    const t = await setup({ router: new AiRouter([{ generate }]), usageLimiter: { tryConsume: vi.fn().mockResolvedValue(true) } as never });
+    const refund = vi.fn().mockResolvedValue(undefined);
+    const t = await setup({ router: new AiRouter([{ generate }]), usageLimiter: { tryConsume: vi.fn().mockResolvedValue(true), refund } as never });
     const card = await t.sendCardFromAssistant({ v: 1, kind: 'look-suggestion', look: {}, buttons: [{ choice: 'another', label: 'Outra' }] });
 
     await t.aiService.handleIncomingMessage(t.io, t.room, await t.sendQuickReplyFromAlice({ cardId: card.id, choice: 'another' }), 'pt');
@@ -186,6 +187,7 @@ describe('assistant quick replies', () => {
     await vi.waitFor(() => expect(generate).toHaveBeenCalled(), { timeout: 10000 });
     await vi.waitFor(async () => expect((await t.messageService.toView(card)).resolvedChoice).toBeUndefined(), { timeout: 10000 });
     expect(t.emitted.some((event) => event.event === 'message:card-resolved')).toBe(false);
+    await vi.waitFor(() => expect(refund).toHaveBeenCalledWith(t.alice.id), { timeout: 10000 });
   });
 
   it('rejects a choice the card does not offer without writing a resolution', async () => {

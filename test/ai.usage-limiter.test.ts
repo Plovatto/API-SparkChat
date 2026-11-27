@@ -25,6 +25,17 @@ describe('AiUsageLimiter', () => {
     expect(await limiter.tryConsume(userId)).toBe(false);
   });
 
+  it('refunds one credit and never goes below zero', async () => {
+    const { limiter, repository } = await createLimiter();
+    await limiter.tryConsume('user-1');
+    await limiter.tryConsume('user-1');
+    await limiter.refund('user-1');
+    expect(await repository.count('user-1', new Date().toISOString().slice(0, 10))).toBe(1);
+    await limiter.refund('user-1');
+    await limiter.refund('user-1');
+    expect(await repository.count('user-1', new Date().toISOString().slice(0, 10))).toBe(0);
+  });
+
   it('tracks usage independently per user', async () => {
     const { limiter } = await createLimiter();
     await limiter.tryConsume('user-1');

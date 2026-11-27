@@ -426,7 +426,12 @@ export class AiService implements AssistantHost {
   ): void {
     this.broadcastTyping(io, room.id, true);
     void this.respondToBatch(io, room, { messageIds: [message.id], locale }, instruction, 'suggest_look')
-      .then(settle)
+      .then(async (succeeded) => {
+        await settle(succeeded);
+        if (!succeeded) {
+          await this.usageLimiter.refund(message.senderId);
+        }
+      })
       .catch((error: unknown) => logger.error({ err: error, roomId: room.id }, 'Falha ao concluir a outra sugestão do SparkAI'));
   }
 

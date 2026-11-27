@@ -208,42 +208,66 @@ describe('runAssistantTurn', () => {
     });
 
     it('triggers on a claim in the reply even when the request looks like small talk', async () => {
+      const toolbox = new AssistantToolbox();
+      const ran: string[] = [];
+      toolbox.register(
+        defineTool({
+          declaration: { name: 'suggest_look', description: 's', parameters: { type: 'object' } },
+          schema: z.object({}),
+          run: () => {
+            ran.push('suggest_look');
+            return Promise.resolve({ response: {} });
+          },
+        }),
+      );
       const { router } = scripted([
         { text: 'Apliquei o tema!', calls: [] },
+        { text: '', calls: [{ id: 's1', name: 'suggest_look', args: {} }] },
+        { text: 'ok', calls: [] },
+      ]);
+      await runAssistantTurn({ history: [{ role: 'user', text: 'oi, tudo bem?' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(ran).toEqual(['suggest_look']);
+    });
+
+    it.each([
+      'você lembra o nome daquele filme?',
+      'qual o tema da festa?',
+      'that reminds me of a song',
+      "let's set a time to talk",
+      'mudamos de assunto',
+      'como está seu status hoje?',
+    ])('does not trigger for small talk: %s', async (text) => {
+      const { router, seen } = scripted([{ text: 'Claro, conversa vai.', calls: [] }]);
+      const { toolbox } = noteToolbox();
+      await runAssistantTurn({ history: [{ role: 'user', text }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen).toHaveLength(1);
+    });
+
+    it('does not push an empty model turn before the forced retry', async () => {
+      const { router, seen } = scripted([
+        { text: '', calls: [] },
         { text: '', calls: [{ id: 's1', name: 'save_note', args: { text: 'x' } }] },
         { text: 'ok', calls: [] },
       ]);
-      const { toolbox, saved } = noteToolbox();
-      await runAssistantTurn({ history: [{ role: 'user', text: 'oi, tudo bem?' }], locale: 'pt', context: CONTEXT, toolbox, router });
-      expect(saved).toHaveLength(1);
-    });
-
-    it('does not trigger for small talk and never retries more than once', async () => {
-      const small = scripted([{ text: 'Tudo ótimo por aqui!', calls: [] }]);
       const { toolbox } = noteToolbox();
-      const reply = await runAssistantTurn({ history: [{ role: 'user', text: 'oi, tudo bem?' }], locale: 'pt', context: CONTEXT, toolbox, router: small.router });
-      expect(reply.text).toBe('Tudo ótimo por aqui!');
-      expect(small.seen).toHaveLength(1);
-
-      const stubborn = scripted([{ text: 'Anotado!', calls: [] }]);
-      const second = await runAssistantTurn({ history: [{ role: 'user', text: 'anota isso' }], locale: 'pt', context: CONTEXT, toolbox, router: stubborn.router });
-      expect(stubborn.seen).toHaveLength(2);
-      expect(second.text).toBe('Anotado!');
+      await runAssistantTurn({ history: [{ role: 'user', text: 'anota x' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen[1]?.messages.some((message) => message.role === 'model' && !message.text && !message.functionCall)).toBe(false);
+      expect(seen[1]?.messages).toHaveLength(1);
     });
 
-    it('forces the first call to the required tool and uses normal options afterwards', async () => {
-      const toolbox = new AssistantToolbox();
-      for (const name of ['suggest_look', 'apply_look']) {
-        toolbox.register(defineTool({ declaration: { name, description: name, parameters: { type: 'object' } }, schema: z.object({}), run: () => Promise.resolve({ response: {}, card: CARD }) }));
-      }
-      const { router, seen } = scripted([
-        { text: '', calls: [{ id: 's1', name: 'suggest_look', args: {} }] },
-        { text: 'Que tal este?', calls: [] },
-      ]);
-      const reply = await runAssistantTurn({ history: [{ role: 'user', text: 'Outra sugestão' }], locale: 'pt', context: CONTEXT, toolbox, router, forceTool: 'suggest_look' });
-      expect(seen[0]?.options.toolConfig).toEqual({ mode: 'ANY', allowedFunctionNames: ['suggest_look'] });
-      expect(seen[1]?.options.toolConfig).toBeUndefined();
-      expect(reply.card).toEqual(CARD);
+    it('keeps save_note out of the forced retry without note intent', async () => {
+      const { router, seen } = scripted([{ text: 'Anotei!', calls: [] }, { text: 'ok', calls: [] }]);
+      const { toolbox } = noteToolbox();
+      await runAssistantTurn({ history: [{ role: 'user', text: 'oi' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen).toHaveLength(1);
+    });
+
+    it('sends the nudge only in the system instruction', async () => {
+      const { router, seen } = scripted([{ text: 'Anotado!', calls: [] }, { text: 'ok', calls: [] }]);
+      const { toolbox } = noteToolbox();
+      await runAssistantTurn({ history: [{ role: 'user', text: 'anota x' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen[1]?.options.systemInstruction).toContain('Atenção');
+      expect(seen[1]?.messages.filter((message) => message.text?.includes('Atenção'))).toHaveLength(0);
     });
 
     it('does not trigger for a generic status question', async () => {

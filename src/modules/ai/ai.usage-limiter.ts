@@ -1,4 +1,4 @@
-import { and, eq, lt, sql } from 'drizzle-orm';
+import { and, eq, gt, lt, sql } from 'drizzle-orm';
 import { aiDailyUsage } from '../../database/schema.js';
 import type { Database } from '../../database/turso-client.js';
 import { AI_DAILY_MESSAGE_LIMIT } from './ai.model.js';
@@ -31,6 +31,13 @@ export class AiUsageRepository {
     return rows.length > 0;
   }
 
+  async refund(userId: string, usageDate: string): Promise<void> {
+    await this.db
+      .update(aiDailyUsage)
+      .set({ count: sql`${aiDailyUsage.count} - 1` })
+      .where(and(eq(aiDailyUsage.userId, userId), eq(aiDailyUsage.usageDate, usageDate), gt(aiDailyUsage.count, 0)));
+  }
+
   async purgeBefore(usageDate: string): Promise<void> {
     await this.db.delete(aiDailyUsage).where(lt(aiDailyUsage.usageDate, usageDate));
   }
@@ -48,5 +55,9 @@ export class AiUsageLimiter {
 
   tryConsume(userId: string): Promise<boolean> {
     return this.repository.consume(userId, currentUsageDate(), this.limit);
+  }
+
+  refund(userId: string): Promise<void> {
+    return this.repository.refund(userId, currentUsageDate());
   }
 }
