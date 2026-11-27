@@ -4,7 +4,8 @@ import { defineTool } from '../assistant.toolbox.js';
 import { formatWhen, truncate } from '../reminder.texts.js';
 import type { ScheduledMessagesService } from '../scheduled.service.js';
 import { SCHEDULED_MAX_LEAD_MS, SCHEDULED_MAX_PENDING, SCHEDULED_MIN_LEAD_MS, SCHEDULED_TEXTS, SCHEDULED_TEXT_MAX_LENGTH } from '../scheduled.texts.js';
-import { localToUtc, parseLocalDateTime } from '../zoned-time.js';
+import { relativeMinutesParameter, relativeMinutesSchema, resolveLocalTime } from '../relative-time.js';
+import { localToUtc } from '../zoned-time.js';
 
 const PREVIEW_LENGTH = 80;
 
@@ -26,19 +27,20 @@ export function createScheduleMessageTool(scheduled: Pick<ScheduledMessagesServi
     declaration: {
       name: 'schedule_message',
       description:
-        'Asks the person to confirm sending a message to one of their contacts later. recipient is the contact nickname, text is the exact message and sendAtLocal is local time without offset, like 2026-11-27T09:00. If the person did not say when, call without sendAtLocal (it returns need_time) and then ask them. Never make up a time. If it returns ambiguous, ask which of the options they mean.',
+        'Asks the person to confirm sending a message to one of their contacts later. recipient is the contact nickname, text is the exact message and sendAtLocal is local time without offset, like 2026-11-27T09:00. For relative times (in X minutes or hours) pass inMinutes instead and never sendAtLocal; the server computes the time. If the person did not say when, call without sendAtLocal (it returns need_time) and then ask them. Never make up a time. If it returns ambiguous, ask which of the options they mean.',
       parameters: {
         type: 'object',
         properties: {
           recipient: { type: 'string', description: 'Nickname of the contact.' },
           text: { type: 'string', description: 'The exact message to send.' },
           sendAtLocal: { type: 'string', description: 'Local date and time, like 2026-11-27T09:00.' },
+          inMinutes: relativeMinutesParameter('Minutes from now, for relative requests like in 2 hours (120). Use instead of sendAtLocal.'),
         },
         required: ['recipient', 'text'],
       },
     },
-    schema: z.object({ recipient: z.string(), text: z.string(), sendAtLocal: z.string().optional() }),
-    run: async ({ recipient, text, sendAtLocal }, ctx) => {
+    schema: z.object({ recipient: z.string(), text: z.string(), sendAtLocal: z.string().optional(), inMinutes: relativeMinutesSchema }),
+    run: async ({ recipient, text, sendAtLocal: rawSendAtLocal, inMinutes }, ctx) => {
       const clean = text.trim();
       if (clean.length === 0) {
         return { response: { error: 'empty' } };
@@ -55,12 +57,11 @@ export function createScheduleMessageTool(scheduled: Pick<ScheduledMessagesServi
       if (matches.length > 1) {
         return { response: { error: 'ambiguous', options: matches.map((match) => match.nickname) } };
       }
-      if (!sendAtLocal) {
-        return { response: { error: 'need_time' } };
+      const resolved = resolveLocalTime(rawSendAtLocal, inMinutes, ctx);
+      if ('error' in resolved) {
+        return { response: { error: resolved.error } };
       }
-      if (!parseLocalDateTime(sendAtLocal)) {
-        return { response: { error: 'invalid_time' } };
-      }
+      const sendAtLocal = resolved.local;
       const sendAt = localToUtc(sendAtLocal, ctx.timeZone);
       if (sendAt < ctx.now + SCHEDULED_MIN_LEAD_MS) {
         return { response: { error: 'too_soon' } };

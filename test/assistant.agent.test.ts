@@ -174,6 +174,74 @@ describe('runAssistantTurn', () => {
     await expect(runAssistantTurn({ history: [], locale, context: CONTEXT, toolbox, router: exhausted.router })).resolves.toEqual({ text: gaveUp, card: null });
   });
 
+  describe('claim guard', () => {
+    function noteToolbox() {
+      const toolbox = new AssistantToolbox();
+      const saved: unknown[] = [];
+      toolbox.register(
+        defineTool({
+          declaration: { name: 'save_note', description: 'n', parameters: { type: 'object' } },
+          schema: z.object({ text: z.string() }),
+          run: (args) => {
+            saved.push(args);
+            return Promise.resolve({ response: { saved: true } });
+          },
+        }),
+      );
+      return { toolbox, saved };
+    }
+
+    it('retries once with forced function calling when the model claims an action without calling a tool', async () => {
+      const { router, seen } = scripted([
+        { text: 'Anotado!', calls: [] },
+        { text: '', calls: [{ id: 's1', name: 'save_note', args: { text: 'leite' } }] },
+        { text: 'Guardei sua nota.', calls: [] },
+      ]);
+      const { toolbox, saved } = noteToolbox();
+      const reply = await runAssistantTurn({ history: [{ role: 'user', text: 'anota comprar leite' }], locale: 'pt', context: CONTEXT, toolbox, router });
+
+      expect(saved).toEqual([{ text: 'leite' }]);
+      expect(reply.text).toBe('Guardei sua nota.');
+      expect(seen[0]?.options.toolConfig).toBeUndefined();
+      expect(seen[1]?.options.toolConfig).toEqual({ mode: 'ANY', allowedFunctionNames: ['save_note'] });
+      expect(seen[2]?.options.toolConfig).toBeUndefined();
+    });
+
+    it('triggers on a claim in the reply even when the request looks like small talk', async () => {
+      const { router } = scripted([
+        { text: 'Apliquei o tema!', calls: [] },
+        { text: '', calls: [{ id: 's1', name: 'save_note', args: { text: 'x' } }] },
+        { text: 'ok', calls: [] },
+      ]);
+      const { toolbox, saved } = noteToolbox();
+      await runAssistantTurn({ history: [{ role: 'user', text: 'oi, tudo bem?' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(saved).toHaveLength(1);
+    });
+
+    it('does not trigger for small talk and never retries more than once', async () => {
+      const small = scripted([{ text: 'Tudo ótimo por aqui!', calls: [] }]);
+      const { toolbox } = noteToolbox();
+      const reply = await runAssistantTurn({ history: [{ role: 'user', text: 'oi, tudo bem?' }], locale: 'pt', context: CONTEXT, toolbox, router: small.router });
+      expect(reply.text).toBe('Tudo ótimo por aqui!');
+      expect(small.seen).toHaveLength(1);
+
+      const stubborn = scripted([{ text: 'Anotado!', calls: [] }]);
+      const second = await runAssistantTurn({ history: [{ role: 'user', text: 'anota isso' }], locale: 'pt', context: CONTEXT, toolbox, router: stubborn.router });
+      expect(stubborn.seen).toHaveLength(2);
+      expect(second.text).toBe('Anotado!');
+    });
+
+    it('does not trigger when a tool was already called in the turn', async () => {
+      const { router, seen } = scripted([
+        { text: '', calls: [{ id: 's1', name: 'save_note', args: { text: 'x' } }] },
+        { text: 'Anotado!', calls: [] },
+      ]);
+      const { toolbox } = noteToolbox();
+      await runAssistantTurn({ history: [{ role: 'user', text: 'anota x' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen).toHaveLength(2);
+    });
+  });
+
   it('reports an unknown tool to the model', async () => {
     const toolbox = new AssistantToolbox();
     await expect(toolbox.run('nope', {}, CONTEXT)).resolves.toEqual({ response: { error: 'unknown_tool' } });

@@ -6,6 +6,8 @@ import { catalogSummary } from './look.catalog.js';
 import { mergeAppliedCards } from './look.merge.js';
 import type { AssistantContext, AssistantToolbox } from './assistant.toolbox.js';
 import { nowLocalString } from './zoned-time.js';
+import { logger } from '../../config/logger.js';
+import { actionIntentReason } from './assistant.claim-guard.js';
 
 export const ASSISTANT_MAX_TOOL_ROUNDS = 3;
 export const ASSISTANT_MAX_TOOL_CALLS = 5;
@@ -19,6 +21,21 @@ const GAVE_UP_TEXT: Record<Locale, string> = {
   pt: 'Não consegui concluir agora, tenta de novo?',
   en: "I couldn't finish that right now, try again?",
 };
+
+const NUDGE: Record<Locale, string> = {
+  pt: 'Atenção: para agir ou confirmar algo você precisa chamar a ferramenta correspondente agora. Chame a ferramenta adequada ao pedido.',
+  en: 'Attention: to act or ask for confirmation you must call the matching tool now. Call the tool that fits the request.',
+};
+
+function latestUserText(history: AiConversationMessage[]): string {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const message = history[index];
+    if (message?.role === 'user' && message.text) {
+      return message.text;
+    }
+  }
+  return '';
+}
 
 function withFallbackText(text: string, card: AssistantCard | null, locale: Locale): AssistantReply {
   if (text) {
@@ -65,15 +82,35 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
     tools: toolbox.declarations(),
   };
 
+  const toolNames = options.tools.map((tool) => tool.name);
+  const forcedOptions = {
+    ...options,
+    systemInstruction: `${options.systemInstruction} ${NUDGE[input.locale]}`,
+    toolConfig: { mode: 'ANY' as const, allowedFunctionNames: toolNames },
+  };
+
   const messages = [...input.history];
   let card: AssistantCard | null = null;
   let turn: AiTurn = { text: '', calls: [] };
   let executedCalls = 0;
 
+  let guarded = false;
+  let forceNext = false;
+
   for (let round = 0; round < ASSISTANT_MAX_TOOL_ROUNDS; round += 1) {
-    turn = await router.generate(messages, options);
+    turn = await router.generate(messages, forceNext ? forcedOptions : options);
+    forceNext = false;
     if (turn.calls.length === 0) {
-      return withFallbackText(turn.text, card, input.locale);
+      const reason = guarded || executedCalls > 0 || toolNames.length === 0 ? null : actionIntentReason(latestUserText(input.history), turn.text);
+      if (!reason) {
+        return withFallbackText(turn.text, card, input.locale);
+      }
+      logger.warn({ roomId: context.roomId, reason }, 'SparkAI respondeu sem chamar ferramenta; repetindo com chamada forçada');
+      guarded = true;
+      forceNext = true;
+      messages.push({ role: 'model', text: turn.text });
+      messages.push({ role: 'user', text: NUDGE[input.locale] });
+      continue;
     }
 
     const responses: NonNullable<AiConversationMessage['functionResponse']> = [];

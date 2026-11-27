@@ -103,6 +103,19 @@ describe('GeminiModelProvider tools-less safety net', () => {
     expect(JSON.stringify(calls[1]?.contents)).not.toContain('functionResponse');
   });
 
+  it('passes the tool config as function calling config and drops it on the tools-less retry', async () => {
+    const { client, calls } = fakeClient(() => Promise.resolve(textResponse('ok')));
+    await new GeminiModelProvider(client, 'm').generate(HISTORY, { ...TOOLS, toolConfig: { mode: 'ANY', allowedFunctionNames: ['echo'] } });
+
+    expect(calls[0]?.config?.toolConfig).toEqual({ functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['echo'] } });
+
+    const failing = fakeClient((params) =>
+      params.config?.tools ? Promise.reject(new ApiError({ message: 'bad', status: 400 })) : Promise.resolve(textResponse('plain')),
+    );
+    await new GeminiModelProvider(failing.client, 'm').generate(HISTORY, { ...TOOLS, toolConfig: { mode: 'ANY' } });
+    expect(failing.calls[1]?.config?.toolConfig).toBeUndefined();
+  });
+
   it('retries without tools when the finish reason is MALFORMED_FUNCTION_CALL', async () => {
     const { client, calls } = fakeClient((params) =>
       params.config?.tools
