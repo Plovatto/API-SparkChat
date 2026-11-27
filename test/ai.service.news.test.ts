@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { AI_NEWS_MESSAGES, AI_WELCOME_MESSAGES, ASSISTANT_NEWS_VERSION } from '@/modules/ai/ai.model.js';
 import { TEST_V2_SIGNUP } from './support/test-constants.js';
 import { createFakeServer, setupAssistantRoom, type EmittedEvent } from './support/ai-fixture.js';
@@ -46,6 +46,17 @@ describe('AiService what is new message', () => {
     await userRepository.claimAssistantNews(alice.id, ASSISTANT_NEWS_VERSION);
     await aiService.deliverNewsIfDue(createFakeServer(), alice.id, 'pt');
     expect(await assistantTexts()).toEqual([]);
+  });
+
+  it('releases the claim when sending fails so a later connection delivers', async () => {
+    const { aiService, alice, assistantTexts, messageService, userRepository } = await setupAssistantRoom();
+    const failing = vi.spyOn(messageService, 'sendMessage').mockRejectedValueOnce(new Error('db down'));
+    await expect(aiService.deliverNewsIfDue(createFakeServer(), alice.id, 'pt')).resolves.toBeUndefined();
+    expect(await userRepository.getAssistantNewsVersion(alice.id)).toBeNull();
+
+    failing.mockRestore();
+    await aiService.deliverNewsIfDue(createFakeServer(), alice.id, 'pt');
+    expect(await assistantTexts()).toEqual([AI_NEWS_MESSAGES.pt]);
   });
 
   it('sends nothing to a user without a SparkAI room', async () => {

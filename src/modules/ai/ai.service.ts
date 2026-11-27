@@ -92,7 +92,7 @@ export class AiService implements AssistantHost {
     private readonly router: AiRouter,
     private readonly usageLimiter: AiUsageLimiter,
     private readonly objectStorage: ObjectStorage,
-    private readonly userService: Pick<UserService, 'getUsersByIds' | 'getTimeZone' | 'getAssistantNewsVersion' | 'claimAssistantNews'>,
+    private readonly userService: Pick<UserService, 'getUsersByIds' | 'getTimeZone' | 'getAssistantNewsVersion' | 'claimAssistantNews' | 'releaseAssistantNews'>,
     private readonly toolbox: AssistantToolbox = new AssistantToolbox(),
     private readonly quickReplies: QuickReplyRegistry = new QuickReplyRegistry(),
     private readonly roomLookup: Pick<RoomService, 'findPrivateRoomBetween'> | null = null,
@@ -276,7 +276,12 @@ export class AiService implements AssistantHost {
       if (!(await this.userService.claimAssistantNews(userId, ASSISTANT_NEWS_VERSION))) {
         return;
       }
-      await this.sendReply(io, room, roomKey, { text: AI_NEWS_MESSAGES[locale], card: { v: 1, kind: 'capabilities' } });
+      try {
+        await this.sendReply(io, room, roomKey, { text: AI_NEWS_MESSAGES[locale], card: { v: 1, kind: 'capabilities' } });
+      } catch (error) {
+        await this.userService.releaseAssistantNews(userId, ASSISTANT_NEWS_VERSION, seen).catch(() => undefined);
+        throw error;
+      }
     } catch (error) {
       logger.error({ err: error, userId }, 'Falha ao enviar as novidades do SparkAI');
     }

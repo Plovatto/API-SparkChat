@@ -190,6 +190,13 @@ export class UserRepository {
     return claimed.length > 0;
   }
 
+  async releaseAssistantNews(id: string, version: number, previous: number | null): Promise<void> {
+    await this.db
+      .update(users)
+      .set({ assistantNewsVersion: previous })
+      .where(and(eq(users.id, id), eq(users.assistantNewsVersion, version)));
+  }
+
   async setManualStatus(id: string, statusText: string | null): Promise<UserRecord | null> {
     const result = await this.db.update(users).set({ statusText, statusTextExpiresAt: null, statusTextPrevious: null }).where(eq(users.id, id));
     return result.rowsAffected > 0 ? this.findById(id) : null;
