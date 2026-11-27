@@ -200,6 +200,22 @@ describe('multi-device delivery', () => {
     expect(echoed).toHaveLength(0);
   });
 
+  it('syncs the theme to the other devices of the same user only', async () => {
+    const h = await start();
+    const alice = await h.createAccount('Alice');
+    const aliceA = await h.connectAs(alice);
+    const aliceB = await h.connectAs(alice);
+    const echoed = collectEvents(aliceA, 'user:theme-updated');
+
+    const synced = waitForEvent<{ baseTheme: string; colorTheme: string }>(aliceB, 'user:theme-updated');
+    aliceA.emit('user:update-theme', { baseTheme: 'light', colorTheme: 'ocean' });
+    const result = await synced;
+    await settle(50);
+
+    expect(result).toEqual({ baseTheme: 'light', colorTheme: 'ocean' });
+    expect(echoed).toHaveLength(0);
+  });
+
   it('announces a reactivated private chat to every device of the recipient and subscribes them to it', async () => {
     const h = await start();
     const alice = await h.createAccount('Alice');

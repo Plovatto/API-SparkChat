@@ -515,6 +515,7 @@ async function handleUpdateTheme(socket: AppSocket, deps: UserSocketDeps, payloa
   }
 
   await deps.userService.updateTheme(userId, parsed.data);
+  socket.to(userRoom(userId)).emit('user:theme-updated', parsed.data);
 }
 
 function handleSetLocale(socket: AppSocket, payload: unknown): void {
