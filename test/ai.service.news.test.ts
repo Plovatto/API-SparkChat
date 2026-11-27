@@ -3,9 +3,15 @@ import { AI_NEWS_MESSAGES, AI_WELCOME_MESSAGES, ASSISTANT_NEWS_VERSION } from '@
 import { TEST_V2_SIGNUP } from './support/test-constants.js';
 import { createFakeServer, setupAssistantRoom, type EmittedEvent } from './support/ai-fixture.js';
 
+async function setupExisting(options: Parameters<typeof setupAssistantRoom>[0] = {}) {
+  const setup = await setupAssistantRoom(options);
+  await setup.userRepository.releaseAssistantNews(setup.alice.id, ASSISTANT_NEWS_VERSION, null);
+  return setup;
+}
+
 describe('AiService what is new message', () => {
   it('sends the news once to an existing user, even with concurrent connections', async () => {
-    const { aiService, alice, assistantTexts, userRepository } = await setupAssistantRoom();
+    const { aiService, alice, assistantTexts, userRepository } = await setupExisting();
     const emitted: EmittedEvent[] = [];
     const io = createFakeServer(emitted);
 
@@ -18,7 +24,7 @@ describe('AiService what is new message', () => {
   });
 
   it('uses the connection locale', async () => {
-    const { aiService, alice, assistantTexts } = await setupAssistantRoom();
+    const { aiService, alice, assistantTexts } = await setupExisting();
     await aiService.deliverNewsIfDue(createFakeServer(), alice.id, 'en');
     expect(await assistantTexts()).toEqual([AI_NEWS_MESSAGES.en]);
   });
@@ -31,7 +37,7 @@ describe('AiService what is new message', () => {
   });
 
   it('does not claim without a room key and delivers on a later connection', async () => {
-    const { aiService, alice, publishKey, assistantTexts, userRepository } = await setupAssistantRoom({ publishKey: false });
+    const { aiService, alice, publishKey, assistantTexts, userRepository } = await setupExisting({ publishKey: false });
     await aiService.deliverNewsIfDue(createFakeServer(), alice.id, 'pt');
     expect(await assistantTexts()).toEqual([]);
     expect(await userRepository.getAssistantNewsVersion(alice.id)).toBeNull();
@@ -42,14 +48,14 @@ describe('AiService what is new message', () => {
   });
 
   it('sends nothing when the version is already current', async () => {
-    const { aiService, alice, assistantTexts, userRepository } = await setupAssistantRoom();
+    const { aiService, alice, assistantTexts, userRepository } = await setupExisting();
     await userRepository.claimAssistantNews(alice.id, ASSISTANT_NEWS_VERSION);
     await aiService.deliverNewsIfDue(createFakeServer(), alice.id, 'pt');
     expect(await assistantTexts()).toEqual([]);
   });
 
   it('releases the claim when sending fails so a later connection delivers', async () => {
-    const { aiService, alice, assistantTexts, messageService, userRepository } = await setupAssistantRoom();
+    const { aiService, alice, assistantTexts, messageService, userRepository } = await setupExisting();
     const failing = vi.spyOn(messageService, 'sendMessage').mockRejectedValueOnce(new Error('db down'));
     await expect(aiService.deliverNewsIfDue(createFakeServer(), alice.id, 'pt')).resolves.toBeUndefined();
     expect(await userRepository.getAssistantNewsVersion(alice.id)).toBeNull();
@@ -57,6 +63,12 @@ describe('AiService what is new message', () => {
     failing.mockRestore();
     await aiService.deliverNewsIfDue(createFakeServer(), alice.id, 'pt');
     expect(await assistantTexts()).toEqual([AI_NEWS_MESSAGES.pt]);
+  });
+
+  it('a freshly registered user connecting before the welcome gets no news', async () => {
+    const { aiService, alice, assistantTexts } = await setupAssistantRoom();
+    await aiService.deliverNewsIfDue(createFakeServer(), alice.id, 'pt');
+    expect(await assistantTexts()).toEqual([]);
   });
 
   it('sends nothing to a user without a SparkAI room', async () => {

@@ -1,6 +1,7 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { roomParticipants, rooms, users } from '../../database/schema.js';
+import { ASSISTANT_NEWS_VERSION } from '../ai/ai.model.js';
 import type { UserRecord } from './user.types.js';
 
 const MAX_IN_CLAUSE_IDS = 500;
@@ -96,6 +97,7 @@ export class UserRepository {
 
     await this.db.insert(users).values({
       id: user.id,
+      assistantNewsVersion: ASSISTANT_NEWS_VERSION,
       nickname: user.nickname,
       nicknameNormalized: user.nicknameNormalized,
       avatar: user.avatar,
