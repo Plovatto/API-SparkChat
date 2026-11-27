@@ -567,6 +567,18 @@ export class UserService {
     return user?.timeZone ?? DEFAULT_TIME_ZONE;
   }
 
+  getAssistantNewsVersion(userId: string): Promise<number | null> {
+    return this.repository.getAssistantNewsVersion(userId);
+  }
+
+  claimAssistantNews(userId: string, version: number): Promise<boolean> {
+    return this.repository.claimAssistantNews(userId, version);
+  }
+
+  releaseAssistantNews(userId: string, version: number, previous: number | null): Promise<void> {
+    return this.repository.releaseAssistantNews(userId, version, previous);
+  }
+
   updateStatusText(userId: string, statusText: string): Promise<UserRecord | null> {
     const trimmed = statusText.trim();
     return this.repository.setManualStatus(userId, trimmed.length > 0 ? trimmed : null);

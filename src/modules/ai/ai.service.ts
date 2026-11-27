@@ -11,7 +11,7 @@ import {
   type TypingService,
 } from '../messages/index.js';
 import type { RoomKeyRepository, RoomRecord, RoomService } from '../rooms/index.js';
-import type { UserService } from '../users/index.js';
+import { ASSISTANT_NEWS_VERSION, type UserService } from '../users/index.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import { loadDecryptedAttachment, resolveAudioMimeType } from './ai.attachments.js';
 import { getSodium, openField, openRoomKeyEnvelope, readFieldKeyId, sealField } from './ai.crypto.js';
@@ -35,6 +35,7 @@ import {
   AI_MAX_TEXT_CHARS,
   AI_MAX_TEXT_FILE_BYTES,
   AI_MAX_TEXT_FILE_CHARS,
+  AI_NEWS_MESSAGES,
   AI_WELCOME_MESSAGES,
 } from './ai.model.js';
 import { compressImageForModel } from './ai.media.js';
@@ -90,7 +91,7 @@ export class AiService implements AssistantHost {
     private readonly router: AiRouter,
     private readonly usageLimiter: AiUsageLimiter,
     private readonly objectStorage: ObjectStorage,
-    private readonly userService: Pick<UserService, 'getUsersByIds' | 'getTimeZone'>,
+    private readonly userService: Pick<UserService, 'getUsersByIds' | 'getTimeZone' | 'getAssistantNewsVersion' | 'claimAssistantNews' | 'releaseAssistantNews'>,
     private readonly toolbox: AssistantToolbox = new AssistantToolbox(),
     private readonly quickReplies: QuickReplyRegistry = new QuickReplyRegistry(),
     private readonly roomLookup: Pick<RoomService, 'findPrivateRoomBetween'> | null = null,
@@ -251,6 +252,38 @@ export class AiService implements AssistantHost {
     });
 
     io.to(room.id).emit('message:new', await this.messageService.toNewView(message));
+
+    const memberId = room.participants.find((id) => id !== this.identity.userId);
+    if (memberId) {
+      await this.userService.claimAssistantNews(memberId, ASSISTANT_NEWS_VERSION).catch((error: unknown) => {
+        logger.error({ err: error, userId: memberId }, 'Falha ao registrar a versão das novidades do SparkAI');
+      });
+    }
+  }
+
+  async deliverNewsIfDue(io: AppServer, userId: string, locale: Locale): Promise<void> {
+    try {
+      const seen = await this.userService.getAssistantNewsVersion(userId);
+      if (seen !== null && seen >= ASSISTANT_NEWS_VERSION) {
+        return;
+      }
+      const room = await this.assistantRoomOf(userId);
+      const roomKey = room ? await this.resolveRoomKey(room.id, [0]) : null;
+      if (!room || !roomKey) {
+        return;
+      }
+      if (!(await this.userService.claimAssistantNews(userId, ASSISTANT_NEWS_VERSION))) {
+        return;
+      }
+      try {
+        await this.sendReply(io, room, roomKey, { text: AI_NEWS_MESSAGES[locale], card: { v: 1, kind: 'capabilities' } });
+      } catch (error) {
+        await this.userService.releaseAssistantNews(userId, ASSISTANT_NEWS_VERSION, seen).catch(() => undefined);
+        throw error;
+      }
+    } catch (error) {
+      logger.error({ err: error, userId }, 'Falha ao enviar as novidades do SparkAI');
+    }
   }
 
   handleIncomingMessage(io: AppServer, room: RoomRecord, message: MessageRecord, locale: Locale): Promise<void> {
@@ -519,8 +552,8 @@ export class AiService implements AssistantHost {
     });
   }
 
-  private async resolveRoomKey(roomId: string): Promise<CurrentRoomKey | null> {
-    for (const delayMs of ROOM_KEY_RETRY_DELAYS_MS) {
+  private async resolveRoomKey(roomId: string, delays: readonly number[] = ROOM_KEY_RETRY_DELAYS_MS): Promise<CurrentRoomKey | null> {
+    for (const delayMs of delays) {
       if (delayMs > 0) {
         await delay(delayMs);
       }

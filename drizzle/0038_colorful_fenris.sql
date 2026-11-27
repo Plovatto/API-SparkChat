@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `assistant_news_version` integer;
