@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import type { QuickReply, Recurrence } from '../modules/assistant/assistant.card.js';
 import type { LinkPreviewCacheRecord } from '../modules/link-preview/link-preview.types.js';
@@ -39,7 +40,9 @@ export const users = sqliteTable('users', {
   timeZone: text('time_zone'),
   statusTextExpiresAt: integer('status_text_expires_at'),
   statusTextPrevious: text('status_text_previous'),
-});
+},
+(table) => [index('users_status_text_expires_idx').on(table.statusTextExpiresAt).where(sql`${table.statusTextExpiresAt} is not null`)],
+);
 
 export const sessions = sqliteTable(
   'sessions',

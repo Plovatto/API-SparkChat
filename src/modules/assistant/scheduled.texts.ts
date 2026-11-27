@@ -7,6 +7,7 @@ export const SCHEDULED_MAX_LEAD_MS = 366 * 86_400_000;
 export const SCHEDULED_SOCKET_MIN_LEAD_MS = 30_000;
 export const SCHEDULED_TEXT_MAX_LENGTH = 4000;
 export const SCHEDULED_DUE_BATCH = 50;
+export const SCHEDULED_STUCK_AFTER_MS = 120_000;
 
 export const SCHEDULED_FAILED_BUTTONS: Record<Locale, AssistantButton[]> = {
   pt: [{ choice: 'send-now', label: 'Enviar agora' }],
@@ -29,5 +30,9 @@ export const SCHEDULED_TEXTS = {
     locale === 'en'
       ? `I couldn't send your scheduled message to ${recipient}. Want to send it now?`
       : `Não consegui enviar sua mensagem agendada pra ${recipient}. Quer enviar agora?`,
+  failedUnknown: {
+    pt: 'Não consegui enviar uma mensagem agendada. Abra a conversa e envie de novo.',
+    en: "I couldn't send a scheduled message. Open the chat and send it again.",
+  } satisfies Record<Locale, string>,
   sentNow: { pt: 'Enviado! 📨', en: 'Sent! 📨' } satisfies Record<Locale, string>,
 };

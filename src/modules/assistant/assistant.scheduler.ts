@@ -15,7 +15,7 @@ export interface AssistantSchedulerDeps {
   host: AssistantHost;
   reminders: RemindersService;
   push: Pick<PushService, 'reminder'>;
-  scheduled?: Pick<ScheduledMessagesService, 'claimDue' | 'markFailed'>;
+  scheduled?: Pick<ScheduledMessagesService, 'claimDue' | 'markFailed' | 'markSent'>;
   delivery?: Pick<ScheduledDelivery, 'send'>;
   statuses?: { expireStatuses(now: number): Promise<string[]>; broadcastProfile(io: AppServer, userId: string): Promise<void> };
 }
@@ -65,6 +65,8 @@ export class AssistantScheduler {
         const outcome = await delivery.send(io, item);
         if (outcome.kind === 'failed') {
           await this.failScheduled(item, outcome.reason);
+        } else {
+          await scheduled.markSent(item.id);
         }
       } catch (error) {
         logger.error({ err: error, scheduledId: item.id }, 'Falha ao enviar mensagem agendada do SparkAI');
@@ -76,6 +78,10 @@ export class AssistantScheduler {
   private async failScheduled(item: ScheduledMessage, reason: string): Promise<void> {
     const { scheduled, host, io } = this.deps;
     await scheduled?.markFailed(item.id, reason);
+    if (item.text === '') {
+      await host.post(io, item.userId, { text: SCHEDULED_TEXTS.failedUnknown[item.locale], card: null });
+      return;
+    }
     await host.post(io, item.userId, {
       text: SCHEDULED_TEXTS.failed(item.recipient, item.locale),
       card: { v: 1, kind: 'scheduled-failed', roomId: item.roomId, text: item.text, buttons: SCHEDULED_FAILED_BUTTONS[item.locale] },

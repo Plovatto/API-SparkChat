@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "9acd9539-1d64-4ece-bf45-a57f0a4f6735",
+  "id": "99bfb9ea-3fa6-4835-a435-c0015c4d8eaf",
   "prevId": "9f884238-27e3-4d7e-b567-d05a7458619f",
   "tables": {
     "ai_daily_usage": {
@@ -2210,6 +2210,14 @@
             "nickname_normalized"
           ],
           "isUnique": true
+        },
+        "users_status_text_expires_idx": {
+          "name": "users_status_text_expires_idx",
+          "columns": [
+            "status_text_expires_at"
+          ],
+          "isUnique": false,
+          "where": "\"users\".\"status_text_expires_at\" is not null"
         }
       },
       "foreignKeys": {},

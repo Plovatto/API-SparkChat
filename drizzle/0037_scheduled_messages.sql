@@ -17,4 +17,5 @@ CREATE TABLE `scheduled_messages` (
 CREATE UNIQUE INDEX `scheduled_messages_message_id_unique` ON `scheduled_messages` (`message_id`);--> statement-breakpoint
 CREATE UNIQUE INDEX `scheduled_messages_card_id_unique` ON `scheduled_messages` (`card_id`);--> statement-breakpoint
 CREATE INDEX `scheduled_messages_status_send_idx` ON `scheduled_messages` (`status`,`send_at`);--> statement-breakpoint
-CREATE INDEX `scheduled_messages_user_idx` ON `scheduled_messages` (`user_id`);
+CREATE INDEX `scheduled_messages_user_idx` ON `scheduled_messages` (`user_id`);--> statement-breakpoint
+CREATE INDEX `users_status_text_expires_idx` ON `users` (`status_text_expires_at`) WHERE "users"."status_text_expires_at" is not null;

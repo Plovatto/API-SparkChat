@@ -9,7 +9,7 @@ import type { ScheduledMessage } from './scheduled.service.js';
 export type DeliveryOutcome = { kind: 'sent' } | { kind: 'failed'; reason: 'room_unavailable' | 'blocked' | 'stale_room_key' };
 
 export interface ScheduledDeliveryDeps extends Pick<BroadcastDeps, 'onMessageSent'> {
-  messageService: Pick<MessageService, 'sendMessage' | 'toNewView' | 'getRoomMessagesPage' | 'toViews'>;
+  messageService: Pick<MessageService, 'getMessage' | 'sendMessage' | 'toNewView' | 'getRoomMessagesPage' | 'toViews'>;
   roomService: Pick<
     RoomService,
     'getRoomById' | 'isParticipant' | 'isBlocked' | 'getNewlyVisibleParticipants' | 'makeVisibleForAll' | 'getVisibilityCutoff' | 'buildSummary'
@@ -22,6 +22,9 @@ export class ScheduledDelivery {
 
   async send(io: AppServer, scheduled: ScheduledMessage): Promise<DeliveryOutcome> {
     const { messageService, roomService, presenceService } = this.deps;
+    if (await messageService.getMessage(scheduled.messageId)) {
+      return { kind: 'sent' };
+    }
     const room = await roomService.getRoomById(scheduled.roomId);
     if (!room || !roomService.isParticipant(room, scheduled.userId)) {
       return { kind: 'failed', reason: 'room_unavailable' };

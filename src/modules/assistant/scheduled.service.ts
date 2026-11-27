@@ -11,6 +11,7 @@ import {
   SCHEDULED_MAX_LEAD_MS,
   SCHEDULED_MAX_PENDING,
   SCHEDULED_SOCKET_MIN_LEAD_MS,
+  SCHEDULED_STUCK_AFTER_MS,
   SCHEDULED_TEXTS,
 } from './scheduled.texts.js';
 
@@ -82,7 +83,7 @@ export class ScheduledMessagesService {
     if (!sealed) {
       return { ok: false, error: 'unavailable' };
     }
-    const inserted = await this.repository.insertIfBelow(
+    const outcome = await this.repository.insertIfBelow(
       {
         id,
         userId,
@@ -100,8 +101,8 @@ export class ScheduledMessagesService {
       },
       SCHEDULED_MAX_PENDING,
     );
-    if (!inserted) {
-      return { ok: false, error: 'limit' };
+    if (outcome !== 'inserted') {
+      return { ok: false, error: outcome === 'limit' ? 'limit' : 'not_allowed' };
     }
     if (!(await this.cards.claim(cardId, userId))) {
       await this.repository.remove(id);
@@ -122,7 +123,7 @@ export class ScheduledMessagesService {
 
   async find(userId: string, id: string): Promise<ScheduledMessage | null> {
     const row = await this.repository.find(userId, id);
-    return row ? this.open(row) : null;
+    return row?.status === 'pending' ? this.open(row) : null;
   }
 
   async countPending(userId: string): Promise<number> {
@@ -134,6 +135,7 @@ export class ScheduledMessagesService {
   }
 
   async claimDue(now: number, limit: number = SCHEDULED_DUE_BATCH): Promise<ScheduledMessage[]> {
+    await this.recoverStuck(now, limit);
     const due = await this.repository.listDue(now, limit);
     const claimed: ScheduledMessage[] = [];
     for (const row of due) {
@@ -147,6 +149,24 @@ export class ScheduledMessagesService {
       }
     }
     return claimed;
+  }
+
+  markSent(id: string): Promise<boolean> {
+    return this.repository.transition(id, 'sending', 'sent');
+  }
+
+  private async recoverStuck(now: number, limit: number): Promise<void> {
+    for (const row of await this.repository.listStuck(now - SCHEDULED_STUCK_AFTER_MS, limit)) {
+      try {
+        if (await this.messageExists(row.messageId)) {
+          await this.repository.transition(row.id, 'sending', 'sent');
+        } else {
+          await this.repository.transition(row.id, 'sending', 'pending');
+        }
+      } catch (error) {
+        logger.error({ err: error, scheduledId: row.id }, 'Falha ao recuperar mensagem agendada presa do SparkAI');
+      }
+    }
   }
 
   markFailed(id: string, reason: string): Promise<void> {

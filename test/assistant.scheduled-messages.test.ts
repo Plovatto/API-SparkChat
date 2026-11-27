@@ -313,3 +313,94 @@ describe('AssistantScheduler scheduled messages', () => {
     expect(rows.find((row) => row.messageId === inputTwo.messageId)).toMatchObject({ status: 'failed', failureReason: 'error' });
   });
 });
+
+describe('delivery safety', () => {
+  async function scheduleOne(t: Scheduling) {
+    const { cardId } = await proposeCard(t);
+    const input = request(t, cardId);
+    const result = (await t.scheduled.schedule(input)) as { id: string };
+    return { input, id: result.id };
+  }
+
+  it('requeues a row stuck in sending when the message was never stored and sends it', async () => {
+    const t = await setupScheduling();
+    const { input, id } = await scheduleOne(t);
+    await t.db.update(scheduledMessages).set({ status: 'sending' }).where(eq(scheduledMessages.id, id));
+
+    t.clock.now = SEND_AT + 3 * 60_000;
+    await schedulerFor(t).tick();
+
+    expect(await t.messageService.getMessage(input.messageId)).not.toBeNull();
+    expect((await t.db.select().from(scheduledMessages))[0]?.status).toBe('sent');
+    expect(t.onMessageSent).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not touch a row in sending that is still recent', async () => {
+    const t = await setupScheduling();
+    const { input, id } = await scheduleOne(t);
+    await t.db.update(scheduledMessages).set({ status: 'sending' }).where(eq(scheduledMessages.id, id));
+
+    t.clock.now = SEND_AT + 60_000;
+    await schedulerFor(t).tick();
+
+    expect(await t.messageService.getMessage(input.messageId)).toBeNull();
+    expect((await t.db.select().from(scheduledMessages))[0]?.status).toBe('sending');
+  });
+
+  it('marks a stuck row as sent without resending when the message already exists', async () => {
+    const t = await setupScheduling();
+    const { input, id } = await scheduleOne(t);
+    await t.messageService.sendMessage({ roomId: t.bobRoom.id, senderId: t.alice.id, content: input.content, messageId: input.messageId });
+    await t.db.update(scheduledMessages).set({ status: 'sending' }).where(eq(scheduledMessages.id, id));
+
+    t.clock.now = SEND_AT + 3 * 60_000;
+    await schedulerFor(t).tick();
+
+    expect((await t.db.select().from(scheduledMessages))[0]?.status).toBe('sent');
+    expect(t.onMessageSent).not.toHaveBeenCalled();
+    expect(t.emitted.filter((event) => event.event === 'message:new' && (event.payload as { id: string }).id === input.messageId)).toHaveLength(0);
+  });
+
+  it('delivery is idempotent: an existing message id returns sent without a failed card', async () => {
+    const t = await setupScheduling();
+    const { input } = await scheduleOne(t);
+    await t.messageService.sendMessage({ roomId: t.bobRoom.id, senderId: t.alice.id, content: input.content, messageId: input.messageId });
+    await t.db.update(rooms).set({ currentKeyId: newKeyId() }).where(eq(rooms.id, t.bobRoom.id));
+    const [item] = await t.scheduled.listPending(t.alice.id);
+
+    expect(await t.delivery.send(t.io, item as NonNullable<typeof item>)).toEqual({ kind: 'sent' });
+  });
+
+  it('rejects two concurrent requests for the same card with a single row and no raw error', async () => {
+    const t = await setupScheduling();
+    const { cardId } = await proposeCard(t);
+
+    const results = await Promise.all([t.scheduled.schedule(request(t, cardId)), t.scheduled.schedule(request(t, cardId))]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.find((result) => !result.ok)).toEqual({ ok: false, error: 'not_allowed' });
+    expect(await t.db.select().from(scheduledMessages)).toHaveLength(1);
+  });
+
+  it('posts the failure without a send-now button when the preview cannot be opened', async () => {
+    const t = await setupScheduling();
+    const { id } = await scheduleOne(t);
+    await t.db.update(scheduledMessages).set({ previewSealed: 'corrupt' }).where(eq(scheduledMessages.id, id));
+    await t.db.update(rooms).set({ currentKeyId: newKeyId() }).where(eq(rooms.id, t.bobRoom.id));
+
+    t.clock.now = SEND_AT + 1000;
+    await schedulerFor(t).tick();
+
+    const messages = (await t.messageService.getRoomMessagesPage(t.room.id, { limit: 50 })).messages.filter((item) => item.senderId === t.assistant.id);
+    expect(messages.at(-1)?.assistantCard).toBeUndefined();
+    expect((await t.assistantTexts()).at(-1)).toContain('Não consegui enviar');
+    expect((await t.db.select().from(scheduledMessages))[0]).toMatchObject({ status: 'failed' });
+  });
+
+  it('cancel_scheduled only finds pending items', async () => {
+    const t = await setupScheduling();
+    const { id } = await scheduleOne(t);
+    await t.scheduled.cancel(t.alice.id, id);
+    expect((await t.toolbox.run('cancel_scheduled', { id }, t.toolContext())).response).toEqual({ error: 'not_found' });
+  });
+});
