@@ -11,7 +11,7 @@ import {
   type TypingService,
 } from '../messages/index.js';
 import type { RoomKeyRepository, RoomRecord, RoomService } from '../rooms/index.js';
-import type { UserService } from '../users/index.js';
+import { ASSISTANT_NEWS_VERSION, type UserService } from '../users/index.js';
 import type { ObjectStorage } from '../../storage/object-storage.js';
 import { loadDecryptedAttachment, resolveAudioMimeType } from './ai.attachments.js';
 import { getSodium, openField, openRoomKeyEnvelope, readFieldKeyId, sealField } from './ai.crypto.js';
@@ -37,7 +37,6 @@ import {
   AI_MAX_TEXT_FILE_CHARS,
   AI_NEWS_MESSAGES,
   AI_WELCOME_MESSAGES,
-  ASSISTANT_NEWS_VERSION,
 } from './ai.model.js';
 import { compressImageForModel } from './ai.media.js';
 import type { AiConversationMessage, AiRouter } from './ai.provider.js';

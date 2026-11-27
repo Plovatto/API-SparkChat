@@ -10,8 +10,6 @@ export const AI_WELCOME_MESSAGES: Record<Locale, string> = {
   en: "Hi! I'm SparkAI 🤖✨ I chat and I also lend a real hand: I change your theme, take notes, remind you of things and more. Take a look at what I can do 👇",
 };
 
-export const ASSISTANT_NEWS_VERSION = 1;
-
 export const AI_NEWS_MESSAGES: Record<Locale, string> = {
   pt: 'Novidade! ✨ Agora eu também troco seu tema, anoto, te lembro das coisas, coloco status com prazo e agendo mensagens. Olha tudo que eu sei fazer 👇',
   en: "What's new! ✨ I can now change your theme, take notes, remind you of things, set timed statuses and schedule messages. Here's everything I can do 👇",

@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { roomParticipants, rooms, users } from '../../database/schema.js';
-import { ASSISTANT_NEWS_VERSION } from '../ai/ai.model.js';
+import { ASSISTANT_NEWS_VERSION } from './user.model.js';
 import type { UserRecord } from './user.types.js';
 
 const MAX_IN_CLAUSE_IDS = 500;

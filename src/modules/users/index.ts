@@ -1,7 +1,7 @@
 export { describeDevice } from './user.device.js';
 export type { UserClientToServerEvents, UserServerToClientEvents } from './user.events.js';
 export { LoginRateLimiter } from './user.login-rate-limiter.js';
-export { ASSISTANT_USER_ID, NICKNAME_MAX_LENGTH } from './user.model.js';
+export { ASSISTANT_NEWS_VERSION, ASSISTANT_USER_ID, NICKNAME_MAX_LENGTH } from './user.model.js';
 export type { AuthMethod, UserStatus } from './user.model.js';
 export { hashPassword, verifyPassword } from './user.password.js';
 export { UserRepository } from './user.repository.js';

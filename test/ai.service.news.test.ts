@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AI_NEWS_MESSAGES, AI_WELCOME_MESSAGES, ASSISTANT_NEWS_VERSION } from '@/modules/ai/ai.model.js';
+import { AI_NEWS_MESSAGES, AI_WELCOME_MESSAGES } from '@/modules/ai/ai.model.js';
+import { ASSISTANT_NEWS_VERSION } from '@/modules/users/index.js';
 import { TEST_V2_SIGNUP } from './support/test-constants.js';
 import { createFakeServer, setupAssistantRoom, type EmittedEvent } from './support/ai-fixture.js';
 

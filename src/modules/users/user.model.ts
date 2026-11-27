@@ -1,6 +1,8 @@
 import '../../docs/zod-extend.js';
 import { z } from 'zod';
 
+export const ASSISTANT_NEWS_VERSION = 1;
+
 export const ASSISTANT_USER_ID = 'spark-ai';
 
 export const NICKNAME_MIN_LENGTH = 2;
