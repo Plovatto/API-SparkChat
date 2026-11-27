@@ -1,4 +1,4 @@
-import { and, asc, eq, lt, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, lt, lte, sql } from 'drizzle-orm';
 import { scheduledMessages } from '../../database/schema.js';
 import type { Database } from '../../database/turso-client.js';
 
@@ -15,6 +15,7 @@ export interface ScheduledRow {
   sendAt: number;
   status: string;
   failureReason: string | null;
+  claimedAt: number | null;
   createdAt: number;
 }
 
@@ -46,9 +47,9 @@ export class ScheduledRepository {
 
   private async insert(row: ScheduledRow, limit: number): Promise<InsertOutcome> {
     const result = await this.db.run(sql`
-      INSERT INTO scheduled_messages (id, user_id, room_id, message_id, card_id, preview_sealed, payload, locale, time_zone, send_at, status, failure_reason, created_at)
+      INSERT INTO scheduled_messages (id, user_id, room_id, message_id, card_id, preview_sealed, payload, locale, time_zone, send_at, status, failure_reason, claimed_at, created_at)
       SELECT ${row.id}, ${row.userId}, ${row.roomId}, ${row.messageId}, ${row.cardId}, ${row.previewSealed}, ${JSON.stringify(row.payload)},
-        ${row.locale}, ${row.timeZone}, ${row.sendAt}, 'pending', NULL, ${row.createdAt}
+        ${row.locale}, ${row.timeZone}, ${row.sendAt}, 'pending', NULL, NULL, ${row.createdAt}
       WHERE (SELECT COUNT(*) FROM scheduled_messages WHERE user_id = ${row.userId} AND status = 'pending') < ${limit}
     `);
     return result.rowsAffected > 0 ? 'inserted' : 'limit';
@@ -96,24 +97,39 @@ export class ScheduledRepository {
     return this.db
       .select()
       .from(scheduledMessages)
-      .where(and(eq(scheduledMessages.status, 'sending'), lt(scheduledMessages.sendAt, before)))
-      .orderBy(asc(scheduledMessages.sendAt))
+      .where(and(eq(scheduledMessages.status, 'sending'), lt(scheduledMessages.claimedAt, before)))
+      .orderBy(asc(scheduledMessages.claimedAt))
       .limit(limit);
   }
 
-  async transition(id: string, from: string, to: string): Promise<boolean> {
+  async release(row: ScheduledRow, to: 'sent' | 'pending'): Promise<boolean> {
     const rows = await this.db
       .update(scheduledMessages)
-      .set({ status: to })
-      .where(and(eq(scheduledMessages.id, id), eq(scheduledMessages.status, from)))
+      .set({ status: to, ...(to === 'pending' ? { claimedAt: null } : {}) })
+      .where(
+        and(
+          eq(scheduledMessages.id, row.id),
+          eq(scheduledMessages.status, 'sending'),
+          row.claimedAt === null ? isNull(scheduledMessages.claimedAt) : eq(scheduledMessages.claimedAt, row.claimedAt),
+        ),
+      )
       .returning({ id: scheduledMessages.id });
     return rows.length > 0;
   }
 
-  async claim(id: string): Promise<boolean> {
+  async markSent(id: string): Promise<boolean> {
     const rows = await this.db
       .update(scheduledMessages)
-      .set({ status: 'sending' })
+      .set({ status: 'sent' })
+      .where(and(eq(scheduledMessages.id, id), eq(scheduledMessages.status, 'sending')))
+      .returning({ id: scheduledMessages.id });
+    return rows.length > 0;
+  }
+
+  async claim(id: string, now: number): Promise<boolean> {
+    const rows = await this.db
+      .update(scheduledMessages)
+      .set({ status: 'sending', claimedAt: now })
       .where(and(eq(scheduledMessages.id, id), eq(scheduledMessages.status, 'pending')))
       .returning({ id: scheduledMessages.id });
     return rows.length > 0;

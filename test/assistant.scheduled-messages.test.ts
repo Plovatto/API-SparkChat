@@ -325,7 +325,7 @@ describe('delivery safety', () => {
   it('requeues a row stuck in sending when the message was never stored and sends it', async () => {
     const t = await setupScheduling();
     const { input, id } = await scheduleOne(t);
-    await t.db.update(scheduledMessages).set({ status: 'sending' }).where(eq(scheduledMessages.id, id));
+    await t.db.update(scheduledMessages).set({ status: 'sending', claimedAt: SEND_AT }).where(eq(scheduledMessages.id, id));
 
     t.clock.now = SEND_AT + 3 * 60_000;
     await schedulerFor(t).tick();
@@ -335,10 +335,48 @@ describe('delivery safety', () => {
     expect(t.onMessageSent).toHaveBeenCalledTimes(1);
   });
 
+  it('does not recover a row that was already late when claimed, even long after its send time', async () => {
+    const t = await setupScheduling();
+    const { input } = await scheduleOne(t);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = t.delivery.send.bind(t.delivery);
+    const slow = vi.spyOn(t.delivery, 'send').mockImplementationOnce(async (io, item) => {
+      await gate;
+      return original(io, item);
+    });
+
+    t.clock.now = SEND_AT + 10 * 60_000;
+    const first = schedulerFor(t).tick();
+    await vi.waitFor(() => expect(slow).toHaveBeenCalledTimes(1));
+    await schedulerFor(t).tick();
+    expect(slow).toHaveBeenCalledTimes(1);
+
+    release();
+    await first;
+    expect(await t.messageService.getMessage(input.messageId)).not.toBeNull();
+    expect(t.onMessageSent).toHaveBeenCalledTimes(1);
+    expect((await t.db.select().from(scheduledMessages))[0]?.status).toBe('sent');
+  });
+
+  it('treats a duplicate message id error from the send as already sent', async () => {
+    const t = await setupScheduling();
+    const { input } = await scheduleOne(t);
+    const [item] = await t.scheduled.listPending(t.alice.id);
+    vi.spyOn(t.messageService, 'sendMessage').mockImplementationOnce(() => {
+      return Promise.reject(new Error('duplicate'));
+    });
+    vi.spyOn(t.messageService, 'getMessage').mockResolvedValueOnce(null).mockResolvedValue({ id: input.messageId } as never);
+
+    expect(await t.delivery.send(t.io, item as NonNullable<typeof item>)).toEqual({ kind: 'sent' });
+  });
+
   it('does not touch a row in sending that is still recent', async () => {
     const t = await setupScheduling();
     const { input, id } = await scheduleOne(t);
-    await t.db.update(scheduledMessages).set({ status: 'sending' }).where(eq(scheduledMessages.id, id));
+    await t.db.update(scheduledMessages).set({ status: 'sending', claimedAt: SEND_AT }).where(eq(scheduledMessages.id, id));
 
     t.clock.now = SEND_AT + 60_000;
     await schedulerFor(t).tick();
@@ -351,7 +389,7 @@ describe('delivery safety', () => {
     const t = await setupScheduling();
     const { input, id } = await scheduleOne(t);
     await t.messageService.sendMessage({ roomId: t.bobRoom.id, senderId: t.alice.id, content: input.content, messageId: input.messageId });
-    await t.db.update(scheduledMessages).set({ status: 'sending' }).where(eq(scheduledMessages.id, id));
+    await t.db.update(scheduledMessages).set({ status: 'sending', claimedAt: SEND_AT }).where(eq(scheduledMessages.id, id));
 
     t.clock.now = SEND_AT + 3 * 60_000;
     await schedulerFor(t).tick();

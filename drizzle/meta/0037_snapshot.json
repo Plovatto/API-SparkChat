@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "99bfb9ea-3fa6-4835-a435-c0015c4d8eaf",
+  "id": "f789b2d4-c6da-4d30-b40c-adee73fc9b55",
   "prevId": "9f884238-27e3-4d7e-b567-d05a7458619f",
   "tables": {
     "ai_daily_usage": {
@@ -1626,6 +1626,13 @@
         "failure_reason": {
           "name": "failure_reason",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "claimed_at": {
+          "name": "claimed_at",
+          "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

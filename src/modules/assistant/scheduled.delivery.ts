@@ -37,16 +37,26 @@ export class ScheduledDelivery {
     }
 
     const newlyVisibleUserIds = roomService.getNewlyVisibleParticipants(room, scheduled.userId);
-    const message = await messageService.sendMessage({
-      roomId: room.id,
-      senderId: scheduled.userId,
-      content: scheduled.payload.content,
-      type: scheduled.payload.type,
-      messageId: scheduled.messageId,
-      participantIds: room.participants,
-      viewingUserIds: presenceService.getViewers(room.id),
-      mentionedUserIds: [],
-    });
+    const message = await messageService
+      .sendMessage({
+        roomId: room.id,
+        senderId: scheduled.userId,
+        content: scheduled.payload.content,
+        type: scheduled.payload.type,
+        messageId: scheduled.messageId,
+        participantIds: room.participants,
+        viewingUserIds: presenceService.getViewers(room.id),
+        mentionedUserIds: [],
+      })
+      .catch(async (error: unknown) => {
+        if (await messageService.getMessage(scheduled.messageId)) {
+          return null;
+        }
+        throw error;
+      });
+    if (!message) {
+      return { kind: 'sent' };
+    }
     await broadcastSentMessage(io, this.deps, room, message, newlyVisibleUserIds, scheduled.locale).catch((error: unknown) =>
       logger.error({ err: error, scheduledId: scheduled.id }, 'Falha ao transmitir mensagem agendada já enviada'),
     );

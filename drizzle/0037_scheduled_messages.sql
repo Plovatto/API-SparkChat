@@ -11,6 +11,7 @@ CREATE TABLE `scheduled_messages` (
 	`send_at` integer NOT NULL,
 	`status` text DEFAULT 'pending' NOT NULL,
 	`failure_reason` text,
+	`claimed_at` integer,
 	`created_at` integer NOT NULL
 );
 --> statement-breakpoint

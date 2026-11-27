@@ -97,6 +97,7 @@ export class ScheduledMessagesService {
         sendAt,
         status: 'pending',
         failureReason: null,
+        claimedAt: null,
         createdAt: current,
       },
       SCHEDULED_MAX_PENDING,
@@ -140,7 +141,7 @@ export class ScheduledMessagesService {
     const claimed: ScheduledMessage[] = [];
     for (const row of due) {
       try {
-        if (!(await this.repository.claim(row.id))) {
+        if (!(await this.repository.claim(row.id, now))) {
           continue;
         }
         claimed.push((await this.open(row)) ?? this.unopened(row));
@@ -152,16 +153,16 @@ export class ScheduledMessagesService {
   }
 
   markSent(id: string): Promise<boolean> {
-    return this.repository.transition(id, 'sending', 'sent');
+    return this.repository.markSent(id);
   }
 
   private async recoverStuck(now: number, limit: number): Promise<void> {
     for (const row of await this.repository.listStuck(now - SCHEDULED_STUCK_AFTER_MS, limit)) {
       try {
         if (await this.messageExists(row.messageId)) {
-          await this.repository.transition(row.id, 'sending', 'sent');
+          await this.repository.release(row, 'sent');
         } else {
-          await this.repository.transition(row.id, 'sending', 'pending');
+          await this.repository.release(row, 'pending');
         }
       } catch (error) {
         logger.error({ err: error, scheduledId: row.id }, 'Falha ao recuperar mensagem agendada presa do SparkAI');

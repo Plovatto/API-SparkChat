@@ -408,6 +408,7 @@ export const scheduledMessages = sqliteTable(
     sendAt: integer('send_at').notNull(),
     status: text('status').notNull().default('pending'),
     failureReason: text('failure_reason'),
+    claimedAt: integer('claimed_at'),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [index('scheduled_messages_status_send_idx').on(table.status, table.sendAt), index('scheduled_messages_user_idx').on(table.userId)],
