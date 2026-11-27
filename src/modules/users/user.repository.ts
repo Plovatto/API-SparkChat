@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { roomParticipants, rooms, users } from '../../database/schema.js';
 import type { UserRecord } from './user.types.js';
@@ -174,6 +174,20 @@ export class UserRepository {
       })
       .where(eq(users.id, id));
     return result.rowsAffected > 0 ? this.findById(id) : null;
+  }
+
+  async getAssistantNewsVersion(id: string): Promise<number | null> {
+    const [row] = await this.db.select({ version: users.assistantNewsVersion }).from(users).where(eq(users.id, id)).limit(1);
+    return row?.version ?? null;
+  }
+
+  async claimAssistantNews(id: string, version: number): Promise<boolean> {
+    const claimed = await this.db
+      .update(users)
+      .set({ assistantNewsVersion: version })
+      .where(and(eq(users.id, id), or(isNull(users.assistantNewsVersion), lt(users.assistantNewsVersion, version))))
+      .returning({ id: users.id });
+    return claimed.length > 0;
   }
 
   async setManualStatus(id: string, statusText: string | null): Promise<UserRecord | null> {

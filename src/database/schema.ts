@@ -40,6 +40,7 @@ export const users = sqliteTable('users', {
   timeZone: text('time_zone'),
   statusTextExpiresAt: integer('status_text_expires_at'),
   statusTextPrevious: text('status_text_previous'),
+  assistantNewsVersion: integer('assistant_news_version'),
 },
 (table) => [index('users_status_text_expires_idx').on(table.statusTextExpiresAt).where(sql`${table.statusTextExpiresAt} is not null`)],
 );

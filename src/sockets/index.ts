@@ -33,7 +33,7 @@ import { createMessageSentHook } from './message-sent-hook.js';
 import { guardSessionRecovery, rejectRevokedRecovery } from './session-recovery.js';
 import { admitSocketConnection, DEFAULT_SOCKET_CONNECTION_LIMITS, enforceUserSocketCap, SocketConnectionTracker, type SocketConnectionLimits } from './connection-limits.js';
 import { applySocketRateLimit, DEFAULT_SOCKET_EVENT_BUDGETS, UserEventLimiters, type SocketEventBudgets } from './socket-rate-limit.js';
-import { handshakeAuthSchema, resolveHandshakeLocale, resolveHandshakeTimeZone } from './socket-locale.js';
+import { handshakeAuthSchema, resolveHandshakeLocale, resolveHandshakeTimeZone, socketLocale } from './socket-locale.js';
 
 registerClientEvents('connection', {
   'handshake.auth': handshakeAuthSchema,
@@ -124,6 +124,7 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
           .getConfig()
           .then((config) => authenticated.emit('call:config', config))
           .catch(logHookFailure('onAuthenticated'));
+        void aiService.deliverNewsIfDue(io, userId, socketLocale(authenticated));
         authenticated.emit('push:config', deps.pushService.getConfig());
         if (deps.transparencyService) {
           authenticated.emit('kt:config', deps.transparencyService.getConfig());
