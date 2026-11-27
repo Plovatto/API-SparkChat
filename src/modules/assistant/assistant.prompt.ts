@@ -23,8 +23,10 @@ const TOOL_RULES: Record<Locale, Record<string, string>> = {
       'Quando pedir um lembrete, use create_reminder com whenLocal e, se for recorrente, recurrence. Se a pessoa não disse quando, chame sem whenLocal (a ferramenta devolve need_time), pergunte o horário e nunca invente um. Depois de chamar com horário, repita o resumo devolvido (summary) e pergunte se confirma.',
     list_reminders: 'Quando pedir para ver os lembretes, use list_reminders.',
     cancel_reminder: 'Quando pedir para cancelar um lembrete, use cancel_reminder com o id devolvido por list_reminders.',
-    set_status: 'Quando pedir para mudar o status, use set_status.',
-    schedule_message: 'Quando pedir para agendar uma mensagem, use schedule_message.',
+    set_status:
+      'Quando pedir para mudar o status com prazo (ex.: "em reunião até 15h"), use set_status com text de no máximo 30 caracteres e untilLocal. Se faltar o texto ou o horário de término, pergunte e nunca invente. Depois de chamar, repita o resumo devolvido (summary) e pergunte se confirma.',
+    schedule_message:
+      'Quando pedir para agendar uma mensagem para alguém, use schedule_message com o apelido do contato (recipient), o texto exato (text) e sendAtLocal. Se não disse quando, chame sem sendAtLocal (a ferramenta devolve need_time), pergunte e nunca invente. Se devolver ambiguous, pergunte qual das options; se devolver recipient_not_found, diga que não achou essa conversa privada (só conversas privadas, nunca grupos). Depois de chamar com horário, repita o resumo (summary) e pergunte se confirma.',
     list_scheduled: 'Quando pedir para ver as mensagens agendadas, use list_scheduled.',
     cancel_scheduled: 'Quando pedir para cancelar uma mensagem agendada, use cancel_scheduled com o id devolvido por list_scheduled.',
   },
@@ -40,8 +42,10 @@ const TOOL_RULES: Record<Locale, Record<string, string>> = {
       'When they ask for a reminder, use create_reminder with whenLocal and, if it repeats, recurrence. If the person did not say when, call without whenLocal (the tool returns need_time), ask for the time and never make one up. After calling with a time, repeat the returned summary and ask them to confirm.',
     list_reminders: 'When they ask to see their reminders, use list_reminders.',
     cancel_reminder: 'When they ask to cancel a reminder, use cancel_reminder with the id returned by list_reminders.',
-    set_status: 'When they ask to change their status, use set_status.',
-    schedule_message: 'When they ask to schedule a message, use schedule_message.',
+    set_status:
+      'When they ask for a timed status (e.g. "in a meeting until 3pm"), use set_status with text of at most 30 characters and untilLocal. If the text or the end time is missing, ask and never make one up. After calling, repeat the returned summary and ask them to confirm.',
+    schedule_message:
+      "When they ask to schedule a message to someone, use schedule_message with the contact nickname (recipient), the exact text and sendAtLocal. If they did not say when, call without sendAtLocal (the tool returns need_time), ask and never make one up. If it returns ambiguous, ask which of the options; if it returns recipient_not_found, say you could not find that private chat (private chats only, never groups). After calling with a time, repeat the summary and ask them to confirm.",
     list_scheduled: 'When they ask to see scheduled messages, use list_scheduled.',
     cancel_scheduled: 'When they ask to cancel a scheduled message, use cancel_scheduled with the id returned by list_scheduled.',
   },
@@ -62,7 +66,6 @@ function portugueseBody(): string[] {
     'Se faltar o horário de um lembrete, status com prazo ou mensagem agendada, pergunte à pessoa. Nunca invente horários.',
     'Nunca invente ids: use apenas ids devolvidos pelas ferramentas.',
     'Nunca diga que fez algo sem ter usado a ferramenta correspondente.',
-    'Se a pessoa pedir algo que o SparkAI vai fazer mas ainda não tem ferramenta (status, mensagens agendadas), responda com carinho que isso chega muito em breve e nunca finja que foi feito.',
     'Você não tem acesso a outras conversas do usuário nem a informações fora desta conversa, a não ser pelas ferramentas.',
   ];
 }
@@ -77,7 +80,6 @@ function englishBody(): string[] {
     'If the time is missing for a reminder, a timed status or a scheduled message, ask the person. Never make up times.',
     'Never make up ids: only use ids returned by the tools.',
     'Never say you did something without having used the matching tool.',
-    'If the person asks for something SparkAI will do but has no tool for yet (status, scheduled messages), answer warmly that it is coming very soon and never pretend it was done.',
     "You have no access to the user's other conversations or to information outside this conversation, except through the tools.",
   ];
 }

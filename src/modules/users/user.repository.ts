@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import type { Database } from '../../database/turso-client.js';
 import { roomParticipants, rooms, users } from '../../database/schema.js';
 import type { UserRecord } from './user.types.js';
@@ -162,6 +162,41 @@ export class UserRepository {
     const updated = { ...current, ...patch };
     cacheProfile(updated);
     return updated;
+  }
+
+  async setTemporaryStatus(id: string, statusText: string, expiresAt: number): Promise<UserRecord | null> {
+    const result = await this.db
+      .update(users)
+      .set({
+        statusTextPrevious: sql`case when ${users.statusTextExpiresAt} is not null then ${users.statusTextPrevious} else ${users.statusText} end`,
+        statusText,
+        statusTextExpiresAt: expiresAt,
+      })
+      .where(eq(users.id, id));
+    return result.rowsAffected > 0 ? this.findById(id) : null;
+  }
+
+  async setManualStatus(id: string, statusText: string | null): Promise<UserRecord | null> {
+    const result = await this.db.update(users).set({ statusText, statusTextExpiresAt: null, statusTextPrevious: null }).where(eq(users.id, id));
+    return result.rowsAffected > 0 ? this.findById(id) : null;
+  }
+
+  async expireStatuses(now: number): Promise<string[]> {
+    const due = await this.db
+      .select({ id: users.id, expiresAt: users.statusTextExpiresAt, previous: users.statusTextPrevious })
+      .from(users)
+      .where(and(isNotNull(users.statusTextExpiresAt), lte(users.statusTextExpiresAt, now)));
+    const restored: string[] = [];
+    for (const row of due) {
+      const result = await this.db
+        .update(users)
+        .set({ statusText: row.previous, statusTextExpiresAt: null, statusTextPrevious: null })
+        .where(and(eq(users.id, row.id), eq(users.statusTextExpiresAt, row.expiresAt as number)));
+      if (result.rowsAffected > 0) {
+        restored.push(row.id);
+      }
+    }
+    return restored;
   }
 
   async setSigningKeyIfUnset(id: string, publicKey: string, signingPublicKey: string, keySignature: string): Promise<boolean> {

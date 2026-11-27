@@ -81,6 +81,10 @@ export async function resolveQuickReply(deps: QuickReplyDeps, input: QuickReplyI
     return IGNORED;
   }
 
+  if (quickReply.choice === 'yes' && card.kind === 'confirm' && card.action.type === 'scheduled-message') {
+    return IGNORED;
+  }
+
   if (deps.beforeClaim && !(await deps.beforeClaim(quickReply.choice))) {
     return IGNORED;
   }

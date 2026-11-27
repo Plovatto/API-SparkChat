@@ -569,7 +569,15 @@ export class UserService {
 
   updateStatusText(userId: string, statusText: string): Promise<UserRecord | null> {
     const trimmed = statusText.trim();
-    return this.repository.update(userId, { statusText: trimmed.length > 0 ? trimmed : null });
+    return this.repository.setManualStatus(userId, trimmed.length > 0 ? trimmed : null);
+  }
+
+  setTemporaryStatus(userId: string, statusText: string, expiresAt: number): Promise<UserRecord | null> {
+    return this.repository.setTemporaryStatus(userId, statusText.trim(), expiresAt);
+  }
+
+  expireStatuses(now: number): Promise<string[]> {
+    return this.repository.expireStatuses(now);
   }
 
   async listSessions(userId: string): Promise<SessionRecord[]> {

@@ -17,7 +17,7 @@ import { loadDecryptedAttachment, resolveAudioMimeType } from './ai.attachments.
 import { getSodium, openField, openRoomKeyEnvelope, readFieldKeyId, sealField } from './ai.crypto.js';
 import { runAssistantTurn } from '../assistant/assistant.agent.js';
 import type { AssistantReply } from '../assistant/assistant.agent.js';
-import type { AssistantCard, QuickReplyChoice } from '../assistant/assistant.card.js';
+import type { AssistantCard, ConfirmAction, QuickReplyChoice } from '../assistant/assistant.card.js';
 import { HELP_SHORTCUTS, HELP_SHORTCUT_REPLY } from '../assistant/assistant.help-catalog.js';
 import { anotherSuggestionInstruction, QUICK_REPLY_FAILED_TEXT } from '../assistant/assistant.prompt.js';
 import { QuickReplyRegistry, resolveQuickReply } from '../assistant/assistant.quick-reply.js';
@@ -140,6 +140,32 @@ export class AiService implements AssistantHost {
       throw new Error('Sala do SparkAI indisponível para entregar a mensagem.');
     }
     await this.sendReply(io, room, roomKey, reply);
+  }
+
+  async openPendingConfirm(userId: string, cardId: string): Promise<{ roomId: string; action: ConfirmAction } | null> {
+    const room = await this.assistantRoomOf(userId);
+    const cardMessage = room ? await this.messageService.getMessage(cardId) : null;
+    if (
+      !room ||
+      !cardMessage ||
+      cardMessage.roomId !== room.id ||
+      cardMessage.senderId !== this.identity.userId ||
+      cardMessage.deletedForEveryone ||
+      !cardMessage.assistantCard ||
+      (await this.messageService.isCardResolved(cardId))
+    ) {
+      return null;
+    }
+    const card = await this.openCard(room.id, cardMessage);
+    return card?.kind === 'confirm' ? { roomId: room.id, action: card.action } : null;
+  }
+
+  claimCard(cardId: string, userId: string, choice: QuickReplyChoice): Promise<boolean> {
+    return this.messageService.recordCardResolution(cardId, userId, choice);
+  }
+
+  announceCardResolved(io: AppServer, roomId: string, cardId: string, choice: QuickReplyChoice): void {
+    io.to(roomId).emit('message:card-resolved', { roomId, cardId, choice });
   }
 
   private async assistantRoomOf(userId: string): Promise<RoomRecord | null> {
@@ -327,7 +353,7 @@ export class AiService implements AssistantHost {
           recordResolution: (cardId, userId, choice) => this.messageService.recordCardResolution(cardId, userId, choice),
           releaseResolution: (cardId) => this.messageService.releaseCardResolution(cardId),
           beforeClaim: (choice) => this.consumeForAnotherSuggestion(io, room.id, message.senderId, choice),
-          onResolved: (cardId, choice) => io.to(room.id).emit('message:card-resolved', { roomId: room.id, cardId, choice }),
+          onResolved: (cardId, choice) => this.announceCardResolved(io, room.id, cardId, choice),
         },
         { io, userId: message.senderId, room, message, quickReply, locale },
       );
@@ -371,7 +397,7 @@ export class AiService implements AssistantHost {
       .catch((error: unknown) => logger.error({ err: error, roomId: room.id }, 'Falha ao concluir a outra sugestão do SparkAI'));
   }
 
-  private async openCard(roomId: string, cardMessage: MessageRecord): Promise<AssistantCard | null> {
+  async openCard(roomId: string, cardMessage: MessageRecord): Promise<AssistantCard | null> {
     if (!cardMessage.assistantCard) {
       return null;
     }

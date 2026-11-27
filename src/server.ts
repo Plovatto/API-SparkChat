@@ -21,11 +21,20 @@ import { ConfirmDispatcher } from './modules/assistant/assistant.confirm.js';
 import type { AssistantHost } from './modules/assistant/assistant.host.js';
 import { NotesRepository } from './modules/assistant/notes.repository.js';
 import { NotesService } from './modules/assistant/notes.service.js';
+import { registerStatusConfirm } from './modules/assistant/status.quick-reply.js';
+import { createSetStatusTool } from './modules/assistant/tools/status.tool.js';
 import { registerNoteConfirms, registerReminderConfirms, registerReminderFiredReplies } from './modules/assistant/reminder.quick-reply.js';
 import { RemindersRepository } from './modules/assistant/reminders.repository.js';
 import { RemindersService } from './modules/assistant/reminders.service.js';
 import { createDeleteNoteTool, createListNotesTool, createSaveNoteTool } from './modules/assistant/tools/note.tools.js';
 import { createCancelReminderTool, createCreateReminderTool, createListRemindersTool } from './modules/assistant/tools/reminder.tools.js';
+import { ScheduledDelivery } from './modules/assistant/scheduled.delivery.js';
+import { createScheduleTargetDirectory } from './modules/assistant/scheduled.directory.js';
+import { registerScheduledConfirms, registerScheduledFailedReplies } from './modules/assistant/scheduled.quick-reply.js';
+import { ScheduledRepository } from './modules/assistant/scheduled.repository.js';
+import { ScheduledMessagesService, type ScheduleCardsPort } from './modules/assistant/scheduled.service.js';
+import { createCancelScheduledTool, createListScheduledTool, createScheduleMessageTool } from './modules/assistant/tools/scheduled.tools.js';
+import { createMessageSentHook } from './sockets/message-sent-hook.js';
 import { LookService } from './modules/assistant/look.service.js';
 import { registerLookQuickReplies } from './modules/assistant/look.quick-reply.js';
 import { httpLinkPreviewFetcher, LinkPreviewRepository, LinkPreviewService } from './modules/link-preview/index.js';
@@ -40,7 +49,7 @@ import {
 import { setupTransparency } from './modules/transparency/index.js';
 import { createWebPushSender, PushRateLimiter, PushRepository, PushService } from './modules/push/index.js';
 import { notifyRoomRotations, RoomActionRateLimiter, RoomKeyRepository, RoomRepository, RoomService } from './modules/rooms/index.js';
-import { isSessionLive, LoginRateLimiter, SessionRevocationNotifier, SessionSignatureVerifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
+import { broadcastProfileUpdate, isSessionLive, LoginRateLimiter, SessionRevocationNotifier, SessionSignatureVerifier, UserRepository, UserService, UserSessionRepository } from './modules/users/index.js';
 import { registerSocketHandlers } from './sockets/index.js';
 import { startSessionExpirySweep } from './sockets/session-expiry.js';
 import { hasAttentiveUserSocket } from './sockets/user-sockets.js';
@@ -53,6 +62,7 @@ import { OrphanUploadSweeper } from './storage/orphan-upload-sweeper.js';
 import { UploadRegistry } from './storage/upload-registry.js';
 import type {
   ClientToServerEvents,
+  AppServer,
   InterServerEvents,
   ServerToClientEvents,
   SocketData,
@@ -131,9 +141,29 @@ const assistantHost: AssistantHost = {
 };
 const notesService = new NotesService(new NotesRepository(db), assistantHost);
 const remindersService = new RemindersService(new RemindersRepository(db), assistantHost);
+const scheduleCards: ScheduleCardsPort = {
+  openPendingConfirm: (userId, cardId) => aiService.openPendingConfirm(userId, cardId),
+  claim: (cardId, userId) => aiService.claimCard(cardId, userId, 'yes'),
+  announce: (ioServer, roomId, cardId, choice) => aiService.announceCardResolved(ioServer, roomId, cardId, choice),
+};
+const scheduledService = new ScheduledMessagesService(
+  new ScheduledRepository(db),
+  assistantHost,
+  scheduleCards,
+  async (messageId) => (await messageService.getMessage(messageId)) !== null,
+);
+const scheduleTargets = createScheduleTargetDirectory(roomService, userService, assistantIdentity.userId);
 const confirmDispatcher = new ConfirmDispatcher().attachTo(quickReplyRegistry);
+registerScheduledConfirms(confirmDispatcher, scheduledService);
+registerScheduledFailedReplies(quickReplyRegistry);
 registerNoteConfirms(confirmDispatcher, notesService);
 registerReminderConfirms(confirmDispatcher, remindersService);
+const statusBroadcast = {
+  setTemporaryStatus: (userId: string, text: string, expiresAt: number) => userService.setTemporaryStatus(userId, text, expiresAt),
+  expireStatuses: (now: number) => userService.expireStatuses(now),
+  broadcastProfile: (ioServer: AppServer, userId: string) => broadcastProfileUpdate(ioServer, { userService, roomService }, userId),
+};
+registerStatusConfirm(confirmDispatcher, statusBroadcast);
 registerReminderFiredReplies(quickReplyRegistry, remindersService, (userId) => userService.getTimeZone(userId));
 const aiService = new AiService(
   assistantIdentity,
@@ -155,7 +185,11 @@ const aiService = new AiService(
     .register(createDeleteNoteTool(notesService))
     .register(createCreateReminderTool())
     .register(createListRemindersTool(remindersService))
-    .register(createCancelReminderTool(remindersService)),
+    .register(createCancelReminderTool(remindersService))
+    .register(createSetStatusTool())
+    .register(createScheduleMessageTool(scheduledService, scheduleTargets))
+    .register(createListScheduledTool(scheduledService))
+    .register(createCancelScheduledTool(scheduledService)),
   quickReplyRegistry,
   roomService,
 );
@@ -228,7 +262,21 @@ const pushService = new PushService({
   isSessionLive: (session, now) => isSessionLive(session, now),
 });
 pushService.startMaintenance();
-new AssistantScheduler({ io, host: assistantHost, reminders: remindersService, push: pushService }).start();
+const scheduledDelivery = new ScheduledDelivery({
+  messageService,
+  roomService,
+  presenceService,
+  onMessageSent: createMessageSentHook({ aiService, pushService }),
+});
+new AssistantScheduler({
+  io,
+  host: assistantHost,
+  reminders: remindersService,
+  push: pushService,
+  statuses: statusBroadcast,
+  scheduled: scheduledService,
+  delivery: scheduledDelivery,
+}).start();
 logger.info(`Web Push: ${pushService.enabled ? 'enabled' : 'disabled (WEB_PUSH_* not set)'}`);
 
 const callService = new CallService(io, callRepository, roomService, messageService, new CallBudget(callRepository), new CallRateLimiter(), turnProvider, {
@@ -249,6 +297,7 @@ registerSocketHandlers(io, {
   roomRateLimiter,
   roomKeyRepository,
   aiService,
+  scheduledMessages: scheduledService,
   callService,
   pushService,
   avatarService,

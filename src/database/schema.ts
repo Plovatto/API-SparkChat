@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import type { QuickReply, Recurrence } from '../modules/assistant/assistant.card.js';
 import type { LinkPreviewCacheRecord } from '../modules/link-preview/link-preview.types.js';
@@ -39,7 +40,9 @@ export const users = sqliteTable('users', {
   timeZone: text('time_zone'),
   statusTextExpiresAt: integer('status_text_expires_at'),
   statusTextPrevious: text('status_text_previous'),
-});
+},
+(table) => [index('users_status_text_expires_idx').on(table.statusTextExpiresAt).where(sql`${table.statusTextExpiresAt} is not null`)],
+);
 
 export const sessions = sqliteTable(
   'sessions',
@@ -388,4 +391,25 @@ export const reminders = sqliteTable(
     createdAt: integer('created_at').notNull(),
   },
   (table) => [index('reminders_status_next_fire_idx').on(table.status, table.nextFireAt), index('reminders_user_idx').on(table.userId)],
+);
+
+export const scheduledMessages = sqliteTable(
+  'scheduled_messages',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    roomId: text('room_id').notNull(),
+    messageId: text('message_id').notNull().unique(),
+    cardId: text('card_id').notNull().unique(),
+    previewSealed: text('preview_sealed').notNull(),
+    payload: text('payload', { mode: 'json' }).notNull().$type<{ content: string; type: 'text'; keyId: string }>(),
+    locale: text('locale').notNull().default('pt'),
+    timeZone: text('time_zone').notNull(),
+    sendAt: integer('send_at').notNull(),
+    status: text('status').notNull().default('pending'),
+    failureReason: text('failure_reason'),
+    claimedAt: integer('claimed_at'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [index('scheduled_messages_status_send_idx').on(table.status, table.sendAt), index('scheduled_messages_user_idx').on(table.userId)],
 );

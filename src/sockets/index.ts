@@ -12,6 +12,7 @@ import {
   type RoomPresenceService,
   type TypingService,
 } from '../modules/messages/index.js';
+import type { ScheduleSocketDeps } from '../modules/messages/message.schedule.socket.js';
 import { registerPushSocketHandlers, type PushService } from '../modules/push/index.js';
 import { registerTransparencySocketHandlers, type TransparencyService } from '../modules/transparency/index.js';
 import {
@@ -21,7 +22,6 @@ import {
   type RoomService,
 } from '../modules/rooms/index.js';
 import {
-  ASSISTANT_USER_ID,
   disconnectRevokedSession,
   registerUserSocketHandlers,
   type LoginRateLimiter,
@@ -29,6 +29,7 @@ import {
   type UserService,
 } from '../modules/users/index.js';
 import type { AppServer, AppSocket } from './events.js';
+import { createMessageSentHook } from './message-sent-hook.js';
 import { guardSessionRecovery, rejectRevokedRecovery } from './session-recovery.js';
 import { admitSocketConnection, DEFAULT_SOCKET_CONNECTION_LIMITS, enforceUserSocketCap, SocketConnectionTracker, type SocketConnectionLimits } from './connection-limits.js';
 import { applySocketRateLimit, DEFAULT_SOCKET_EVENT_BUDGETS, UserEventLimiters, type SocketEventBudgets } from './socket-rate-limit.js';
@@ -50,6 +51,7 @@ export interface SocketDeps {
   messageRateLimiter: MessageRateLimiter;
   roomKeyRepository: RoomKeyRepository;
   aiService: AiService;
+  scheduledMessages?: ScheduleSocketDeps['scheduledMessages'];
   roomRateLimiter: RoomActionRateLimiter;
   callService: CallService;
   pushService: PushService;
@@ -158,19 +160,8 @@ export function registerSocketHandlers(io: AppServer, deps: SocketDeps): void {
       ...activityServices,
       messageRateLimiter: deps.messageRateLimiter,
       isAssistantRoom: (room) => aiService.isAssistantRoom(room),
-      onMessageSent: ({ io: server, room, message, locale }) => {
-        if (message.type !== 'system' && aiService.isAssistantRoom(room)) {
-          void aiService.handleIncomingMessage(server, room, message, locale);
-        }
-        if (message.type !== 'system') {
-          deps.pushService.newMessage({
-            roomId: room.id,
-            senderId: message.senderId,
-            recipientIds: room.participants.filter((id) => id !== ASSISTANT_USER_ID),
-            message: { id: message.id, type: message.type, content: message.content, fileMime: message.fileMeta?.mimeType ?? null },
-          });
-        }
-      },
+      scheduledMessages: deps.scheduledMessages,
+      onMessageSent: createMessageSentHook({ aiService, pushService: deps.pushService }),
     });
 
     registerCallSocketHandlers(socket, { callService: deps.callService });

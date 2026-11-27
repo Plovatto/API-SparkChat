@@ -39,7 +39,7 @@ export interface UserSocketDeps {
   onAuthenticated?: (context: { socket: AppSocket; userId: string }) => void;
 }
 
-async function contactRooms(deps: UserSocketDeps, userId: string): Promise<string[]> {
+async function contactRooms(deps: Pick<UserSocketDeps, 'roomService'>, userId: string): Promise<string[]> {
   const contactIds = await deps.roomService.getContactIds(userId);
   return contactIds.map(userRoom);
 }
@@ -484,15 +484,23 @@ async function handleUpdateStatusText(io: AppServer, socket: AppSocket, deps: Us
       return;
     }
 
-    io.to(await contactRooms(deps, updated.id)).emit('user:profile-updated', {
-      userId: updated.id,
-      nickname: updated.nickname,
-      avatar: updated.avatar,
-      statusText: updated.statusText,
-    });
+    await broadcastProfileUpdate(io, deps, updated.id);
   } catch (error) {
     socket.emit('error', extractErrorPayload(error));
   }
+}
+
+export async function broadcastProfileUpdate(io: AppServer, deps: Pick<UserSocketDeps, 'userService' | 'roomService'>, userId: string): Promise<void> {
+  const user = await deps.userService.getUser(userId);
+  if (!user) {
+    return;
+  }
+  io.to(await contactRooms(deps, userId)).emit('user:profile-updated', {
+    userId: user.id,
+    nickname: user.nickname,
+    avatar: user.avatar,
+    statusText: user.statusText,
+  });
 }
 
 async function handleUpdateTheme(socket: AppSocket, deps: UserSocketDeps, payload: unknown): Promise<void> {

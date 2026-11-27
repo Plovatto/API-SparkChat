@@ -35,6 +35,8 @@ export const DEFAULT_SOCKET_EVENT_BUDGETS: SocketEventBudgets = {
     'push:subscribe': accountAction,
     'push:unsubscribe': accountAction,
     'message:send': { capacity: 30, refillPerSecond: 5 },
+    'message:schedule': roomAction,
+    'message:unschedule': roomAction,
     'message:mark-read': frequent,
     'messages:get': frequent,
     'message:delete': { capacity: 30, refillPerSecond: 5 },
