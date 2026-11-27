@@ -231,6 +231,27 @@ describe('runAssistantTurn', () => {
       expect(second.text).toBe('Anotado!');
     });
 
+    it('does not trigger for a generic status question', async () => {
+      const { router, seen } = scripted([{ text: 'Tudo certo por aqui.', calls: [] }]);
+      const { toolbox } = noteToolbox();
+      await runAssistantTurn({ history: [{ role: 'user', text: 'como está seu status hoje?' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen).toHaveLength(1);
+    });
+
+    it('keeps apply_look out of the forced retry for a suggestion request', async () => {
+      const toolbox = new AssistantToolbox();
+      for (const name of ['suggest_look', 'apply_look']) {
+        toolbox.register(defineTool({ declaration: { name, description: name, parameters: { type: 'object' } }, schema: z.object({}), run: () => Promise.resolve({ response: {} }) }));
+      }
+      const { router, seen } = scripted([{ text: 'Aqui está um tema!', calls: [] }, { text: 'ok', calls: [] }]);
+      await runAssistantTurn({ history: [{ role: 'user', text: 'sugere um tema' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen[1]?.options.toolConfig?.allowedFunctionNames).toEqual(['suggest_look']);
+
+      const picked = scripted([{ text: 'Apliquei!', calls: [] }, { text: 'ok', calls: [] }]);
+      await runAssistantTurn({ history: [{ role: 'user', text: 'escolhe um tema pra mim' }], locale: 'pt', context: CONTEXT, toolbox, router: picked.router });
+      expect(picked.seen[1]?.options.toolConfig?.allowedFunctionNames).toEqual(['suggest_look', 'apply_look']);
+    });
+
     it('does not trigger when a tool was already called in the turn', async () => {
       const { router, seen } = scripted([
         { text: '', calls: [{ id: 's1', name: 'save_note', args: { text: 'x' } }] },

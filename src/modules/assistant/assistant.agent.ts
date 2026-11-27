@@ -7,7 +7,7 @@ import { mergeAppliedCards } from './look.merge.js';
 import type { AssistantContext, AssistantToolbox } from './assistant.toolbox.js';
 import { nowLocalString } from './zoned-time.js';
 import { logger } from '../../config/logger.js';
-import { actionIntentReason } from './assistant.claim-guard.js';
+import { actionIntentReason, forcedToolNames } from './assistant.claim-guard.js';
 
 export const ASSISTANT_MAX_TOOL_ROUNDS = 3;
 export const ASSISTANT_MAX_TOOL_CALLS = 5;
@@ -83,10 +83,12 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
   };
 
   const toolNames = options.tools.map((tool) => tool.name);
+  const userText = latestUserText(input.history);
+  const forcedNames = forcedToolNames(toolNames, userText);
   const forcedOptions = {
     ...options,
     systemInstruction: `${options.systemInstruction} ${NUDGE[input.locale]}`,
-    toolConfig: { mode: 'ANY' as const, allowedFunctionNames: toolNames },
+    toolConfig: { mode: 'ANY' as const, allowedFunctionNames: forcedNames },
   };
 
   const messages = [...input.history];
@@ -101,7 +103,7 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
     turn = await router.generate(messages, forceNext ? forcedOptions : options);
     forceNext = false;
     if (turn.calls.length === 0) {
-      const reason = guarded || executedCalls > 0 || toolNames.length === 0 ? null : actionIntentReason(latestUserText(input.history), turn.text);
+      const reason = guarded || executedCalls > 0 || forcedNames.length === 0 ? null : actionIntentReason(userText, turn.text);
       if (!reason) {
         return withFallbackText(turn.text, card, input.locale);
       }

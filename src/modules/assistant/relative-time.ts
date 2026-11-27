@@ -18,7 +18,9 @@ export function resolveLocalTime(local: string | undefined, minutes: number | un
     return { error: 'invalid_time' };
   }
   if (minutes !== undefined) {
-    const target = Math.ceil((ctx.now + minutes * MINUTE_MS) / MINUTE_MS) * MINUTE_MS;
+    const exact = ctx.now + minutes * MINUTE_MS;
+    const floored = Math.floor(exact / MINUTE_MS) * MINUTE_MS;
+    const target = floored < ctx.now + MINUTE_MS ? Math.ceil(exact / MINUTE_MS) * MINUTE_MS : floored;
     return { local: nowLocalString(target, ctx.timeZone) };
   }
   if (!local) {

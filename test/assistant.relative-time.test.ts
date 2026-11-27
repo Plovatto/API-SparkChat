@@ -17,8 +17,9 @@ function toolbox() {
 }
 
 describe('relative times computed by the server', () => {
-  it('turns minutes into the local wall time, rounding up to the next minute', () => {
-    expect(resolveLocalTime(undefined, 2, CTX)).toEqual({ local: '2026-11-25T22:37' });
+  it('floors minutes to the local wall time unless that is under a minute ahead', () => {
+    expect(resolveLocalTime(undefined, 2, CTX)).toEqual({ local: '2026-11-25T22:36' });
+    expect(resolveLocalTime(undefined, 1, { ...CTX, now: Date.UTC(2026, 10, 26, 1, 34, 50) })).toEqual({ local: '2026-11-25T22:36' });
     expect(resolveLocalTime(undefined, 2, { ...CTX, now: Date.UTC(2026, 10, 26, 1, 34, 0) })).toEqual({ local: '2026-11-25T22:36' });
   });
 
@@ -37,10 +38,10 @@ describe('relative times computed by the server', () => {
 
   it('set_status with untilInMinutes and schedule_message with inMinutes use the computed time', async () => {
     const status = await toolbox().run('set_status', { text: 'Em reunião', untilInMinutes: 90 }, CTX);
-    expect(JSON.stringify(status.card)).toContain('2026-11-26T00:05');
+    expect(JSON.stringify(status.card)).toContain('2026-11-26T00:04');
     const scheduled = await toolbox().run('schedule_message', { recipient: 'Bia', text: 'oi', inMinutes: 120 }, CTX);
-    expect(JSON.stringify(scheduled.card)).toContain('2026-11-26T00:35');
-    expect(JSON.stringify(scheduled.card)).toContain(String(Math.ceil((NOW + 120 * 60_000) / 60_000) * 60_000));
+    expect(JSON.stringify(scheduled.card)).toContain('2026-11-26T00:34');
+    expect(JSON.stringify(scheduled.card)).toContain(String(Math.floor((NOW + 120 * 60_000) / 60_000) * 60_000));
   });
 
   it('rejects out-of-range values and mixed parameters in every tool', async () => {
