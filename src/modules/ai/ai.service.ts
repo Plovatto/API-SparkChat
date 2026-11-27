@@ -425,8 +425,13 @@ export class AiService implements AssistantHost {
     settle: (succeeded: boolean) => Promise<void>,
   ): void {
     this.broadcastTyping(io, room.id, true);
-    void this.respondToBatch(io, room, { messageIds: [message.id], locale }, instruction)
-      .then(settle)
+    void this.respondToBatch(io, room, { messageIds: [message.id], locale }, instruction, 'suggest_look')
+      .then(async (succeeded) => {
+        await settle(succeeded);
+        if (!succeeded) {
+          await this.usageLimiter.refund(message.senderId);
+        }
+      })
       .catch((error: unknown) => logger.error({ err: error, roomId: room.id }, 'Falha ao concluir a outra sugestão do SparkAI'));
   }
 
@@ -487,6 +492,7 @@ export class AiService implements AssistantHost {
     room: RoomRecord,
     batch: Pick<PendingBatch, 'messageIds' | 'locale'>,
     extraInstruction?: string,
+    requiredLookTool?: string,
   ): Promise<boolean> {
     try {
       const roomKey = await this.resolveRoomKey(room.id);
@@ -514,8 +520,13 @@ export class AiService implements AssistantHost {
         toolbox: this.toolbox,
         router: this.router,
         ...(extraInstruction ? { extraInstruction } : {}),
+        ...(requiredLookTool ? { forceTool: requiredLookTool } : {}),
       });
 
+      if (requiredLookTool && reply.card?.kind !== 'look-suggestion') {
+        await this.sendErrorMessage(io, room.id, 'ai.replyFailed');
+        return false;
+      }
       await this.sendReply(io, room, roomKey, reply);
       return true;
     } catch (error) {

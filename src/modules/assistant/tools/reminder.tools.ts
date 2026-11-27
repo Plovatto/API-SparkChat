@@ -4,7 +4,8 @@ import { confirmCard } from '../assistant.confirm.js';
 import { defineTool, type AssistantContext, type ToolResult } from '../assistant.toolbox.js';
 import { ASSISTANT_TEXTS, confirmSummary, formatWhen, truncate } from '../reminder.texts.js';
 import { REMINDER_MAX_LEAD_MS, REMINDER_MIN_LEAD_MS, REMINDER_TEXT_MAX_LENGTH, type RemindersService } from '../reminders.service.js';
-import { localToUtc, parseLocalDateTime, snapToRecurrence } from '../zoned-time.js';
+import { relativeMinutesParameter, relativeMinutesSchema, resolveLocalTime } from '../relative-time.js';
+import { localToUtc, snapToRecurrence } from '../zoned-time.js';
 
 const PREVIEW_LENGTH = 80;
 
@@ -14,7 +15,7 @@ export const recurrenceSchema = z.object({
   interval: z.number().int().min(1).max(12).optional(),
 });
 
-type CreateArgs = { text: string; whenLocal?: string | undefined; recurrence?: z.infer<typeof recurrenceSchema> | undefined };
+type CreateArgs = { text: string; whenLocal?: string | undefined; inMinutes?: number | undefined; recurrence?: z.infer<typeof recurrenceSchema> | undefined };
 
 function toRecurrence(parsed: z.infer<typeof recurrenceSchema> | undefined): Recurrence | null {
   if (!parsed) {
@@ -34,7 +35,7 @@ export const RECURRENCE_PARAMETERS = {
   required: ['freq'],
 };
 
-function evaluate({ text, whenLocal, recurrence: rawRecurrence }: CreateArgs, ctx: AssistantContext): ToolResult {
+function evaluate({ text, whenLocal, inMinutes, recurrence: rawRecurrence }: CreateArgs, ctx: AssistantContext): ToolResult {
   const recurrence = toRecurrence(rawRecurrence);
   const clean = text.trim();
   if (clean.length === 0) {
@@ -43,13 +44,11 @@ function evaluate({ text, whenLocal, recurrence: rawRecurrence }: CreateArgs, ct
   if (Array.from(clean).length > REMINDER_TEXT_MAX_LENGTH) {
     return { response: { error: 'too_long' } };
   }
-  if (!whenLocal) {
-    return { response: { error: 'need_time' } };
+  const resolved = resolveLocalTime(whenLocal, inMinutes, ctx);
+  if ('error' in resolved) {
+    return { response: { error: resolved.error } };
   }
-  if (!parseLocalDateTime(whenLocal)) {
-    return { response: { error: 'invalid_time' } };
-  }
-  const firstLocal = snapToRecurrence(whenLocal, recurrence);
+  const firstLocal = snapToRecurrence(resolved.local, recurrence);
   const fireAt = localToUtc(firstLocal, ctx.timeZone);
   if (fireAt < ctx.now + REMINDER_MIN_LEAD_MS) {
     return { response: { error: 'too_soon' } };
@@ -69,18 +68,19 @@ export function createCreateReminderTool() {
     declaration: {
       name: 'create_reminder',
       description:
-        'Asks the person to confirm a reminder. whenLocal is local time without offset, like 2026-11-27T09:00. If the person did not say when, call without whenLocal (it returns need_time) and then ask them for the time. Never make up a time. For weekly reminders pass weekdays; the first fire snaps to the first matching weekday.',
+        'Asks the person to confirm a reminder. whenLocal is local time without offset, like 2026-11-27T09:00. For relative times (in X minutes or hours) pass inMinutes instead and never whenLocal; the server computes the time. If the person did not say when, call without whenLocal (it returns need_time) and then ask them for the time. Never make up a time. For weekly reminders pass weekdays; the first fire snaps to the first matching weekday.',
       parameters: {
         type: 'object',
         properties: {
           text: { type: 'string', description: 'What to remind the person about.' },
           whenLocal: { type: 'string', description: 'Local date and time, like 2026-11-27T09:00.' },
+          inMinutes: relativeMinutesParameter('Minutes from now, for relative requests like in 2 hours (120). Use instead of whenLocal.'),
           recurrence: RECURRENCE_PARAMETERS,
         },
         required: ['text'],
       },
     },
-    schema: z.object({ text: z.string(), whenLocal: z.string().optional(), recurrence: recurrenceSchema.optional() }),
+    schema: z.object({ text: z.string(), whenLocal: z.string().optional(), inMinutes: relativeMinutesSchema, recurrence: recurrenceSchema.optional() }),
     run: (args, ctx) => Promise.resolve(evaluate(args, ctx)),
   });
 }

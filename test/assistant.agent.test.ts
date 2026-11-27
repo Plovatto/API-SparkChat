@@ -174,6 +174,134 @@ describe('runAssistantTurn', () => {
     await expect(runAssistantTurn({ history: [], locale, context: CONTEXT, toolbox, router: exhausted.router })).resolves.toEqual({ text: gaveUp, card: null });
   });
 
+  describe('claim guard', () => {
+    function noteToolbox() {
+      const toolbox = new AssistantToolbox();
+      const saved: unknown[] = [];
+      toolbox.register(
+        defineTool({
+          declaration: { name: 'save_note', description: 'n', parameters: { type: 'object' } },
+          schema: z.object({ text: z.string() }),
+          run: (args) => {
+            saved.push(args);
+            return Promise.resolve({ response: { saved: true } });
+          },
+        }),
+      );
+      return { toolbox, saved };
+    }
+
+    it('retries once with forced function calling when the model claims an action without calling a tool', async () => {
+      const { router, seen } = scripted([
+        { text: 'Anotado!', calls: [] },
+        { text: '', calls: [{ id: 's1', name: 'save_note', args: { text: 'leite' } }] },
+        { text: 'Guardei sua nota.', calls: [] },
+      ]);
+      const { toolbox, saved } = noteToolbox();
+      const reply = await runAssistantTurn({ history: [{ role: 'user', text: 'anota comprar leite' }], locale: 'pt', context: CONTEXT, toolbox, router });
+
+      expect(saved).toEqual([{ text: 'leite' }]);
+      expect(reply.text).toBe('Guardei sua nota.');
+      expect(seen[0]?.options.toolConfig).toBeUndefined();
+      expect(seen[1]?.options.toolConfig).toEqual({ mode: 'ANY', allowedFunctionNames: ['save_note'] });
+      expect(seen[2]?.options.toolConfig).toBeUndefined();
+    });
+
+    it('triggers on a claim in the reply even when the request looks like small talk', async () => {
+      const toolbox = new AssistantToolbox();
+      const ran: string[] = [];
+      toolbox.register(
+        defineTool({
+          declaration: { name: 'suggest_look', description: 's', parameters: { type: 'object' } },
+          schema: z.object({}),
+          run: () => {
+            ran.push('suggest_look');
+            return Promise.resolve({ response: {} });
+          },
+        }),
+      );
+      const { router } = scripted([
+        { text: 'Apliquei o tema!', calls: [] },
+        { text: '', calls: [{ id: 's1', name: 'suggest_look', args: {} }] },
+        { text: 'ok', calls: [] },
+      ]);
+      await runAssistantTurn({ history: [{ role: 'user', text: 'oi, tudo bem?' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(ran).toEqual(['suggest_look']);
+    });
+
+    it.each([
+      'você lembra o nome daquele filme?',
+      'qual o tema da festa?',
+      'that reminds me of a song',
+      "let's set a time to talk",
+      'mudamos de assunto',
+      'como está seu status hoje?',
+    ])('does not trigger for small talk: %s', async (text) => {
+      const { router, seen } = scripted([{ text: 'Claro, conversa vai.', calls: [] }]);
+      const { toolbox } = noteToolbox();
+      await runAssistantTurn({ history: [{ role: 'user', text }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen).toHaveLength(1);
+    });
+
+    it('does not push an empty model turn before the forced retry', async () => {
+      const { router, seen } = scripted([
+        { text: '', calls: [] },
+        { text: '', calls: [{ id: 's1', name: 'save_note', args: { text: 'x' } }] },
+        { text: 'ok', calls: [] },
+      ]);
+      const { toolbox } = noteToolbox();
+      await runAssistantTurn({ history: [{ role: 'user', text: 'anota x' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen[1]?.messages.some((message) => message.role === 'model' && !message.text && !message.functionCall)).toBe(false);
+      expect(seen[1]?.messages).toHaveLength(1);
+    });
+
+    it('keeps save_note out of the forced retry without note intent', async () => {
+      const { router, seen } = scripted([{ text: 'Anotei!', calls: [] }, { text: 'ok', calls: [] }]);
+      const { toolbox } = noteToolbox();
+      await runAssistantTurn({ history: [{ role: 'user', text: 'oi' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen).toHaveLength(1);
+    });
+
+    it('sends the nudge only in the system instruction', async () => {
+      const { router, seen } = scripted([{ text: 'Anotado!', calls: [] }, { text: 'ok', calls: [] }]);
+      const { toolbox } = noteToolbox();
+      await runAssistantTurn({ history: [{ role: 'user', text: 'anota x' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen[1]?.options.systemInstruction).toContain('Atenção');
+      expect(seen[1]?.messages.filter((message) => message.text?.includes('Atenção'))).toHaveLength(0);
+    });
+
+    it('does not trigger for a generic status question', async () => {
+      const { router, seen } = scripted([{ text: 'Tudo certo por aqui.', calls: [] }]);
+      const { toolbox } = noteToolbox();
+      await runAssistantTurn({ history: [{ role: 'user', text: 'como está seu status hoje?' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen).toHaveLength(1);
+    });
+
+    it('keeps apply_look out of the forced retry for a suggestion request', async () => {
+      const toolbox = new AssistantToolbox();
+      for (const name of ['suggest_look', 'apply_look']) {
+        toolbox.register(defineTool({ declaration: { name, description: name, parameters: { type: 'object' } }, schema: z.object({}), run: () => Promise.resolve({ response: {} }) }));
+      }
+      const { router, seen } = scripted([{ text: 'Aqui está um tema!', calls: [] }, { text: 'ok', calls: [] }]);
+      await runAssistantTurn({ history: [{ role: 'user', text: 'sugere um tema' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen[1]?.options.toolConfig?.allowedFunctionNames).toEqual(['suggest_look']);
+
+      const picked = scripted([{ text: 'Apliquei!', calls: [] }, { text: 'ok', calls: [] }]);
+      await runAssistantTurn({ history: [{ role: 'user', text: 'escolhe um tema pra mim' }], locale: 'pt', context: CONTEXT, toolbox, router: picked.router });
+      expect(picked.seen[1]?.options.toolConfig?.allowedFunctionNames).toEqual(['suggest_look', 'apply_look']);
+    });
+
+    it('does not trigger when a tool was already called in the turn', async () => {
+      const { router, seen } = scripted([
+        { text: '', calls: [{ id: 's1', name: 'save_note', args: { text: 'x' } }] },
+        { text: 'Anotado!', calls: [] },
+      ]);
+      const { toolbox } = noteToolbox();
+      await runAssistantTurn({ history: [{ role: 'user', text: 'anota x' }], locale: 'pt', context: CONTEXT, toolbox, router });
+      expect(seen).toHaveLength(2);
+    });
+  });
+
   it('reports an unknown tool to the model', async () => {
     const toolbox = new AssistantToolbox();
     await expect(toolbox.run('nope', {}, CONTEXT)).resolves.toEqual({ response: { error: 'unknown_tool' } });

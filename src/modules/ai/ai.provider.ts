@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   ApiError,
   FinishReason,
+  FunctionCallingConfigMode,
   GoogleGenAI,
   type GenerateContentParameters,
   type GenerateContentResponse,
@@ -42,10 +43,16 @@ export interface AiToolDeclaration {
   parameters?: Record<string, unknown>;
 }
 
+export interface AiToolConfig {
+  mode: 'AUTO' | 'ANY' | 'NONE';
+  allowedFunctionNames?: string[];
+}
+
 export interface AiGenerateOptions {
   locale: Locale;
   systemInstruction: string;
   tools: AiToolDeclaration[];
+  toolConfig?: AiToolConfig;
 }
 
 export interface AiTurn {
@@ -162,7 +169,7 @@ export class GeminiModelProvider implements AiProvider {
       );
     }
 
-    const plain = await this.request(stripToolParts(messages), { ...options, tools: [] });
+    const plain = await this.request(stripToolParts(messages), { locale: options.locale, systemInstruction: options.systemInstruction, tools: [] });
     return { text: plain.text, calls: [] };
   }
 
@@ -184,6 +191,16 @@ export class GeminiModelProvider implements AiProvider {
                   })),
                 },
               ],
+              ...(options.toolConfig
+                ? {
+                    toolConfig: {
+                      functionCallingConfig: {
+                        mode: FunctionCallingConfigMode[options.toolConfig.mode],
+                        ...(options.toolConfig.allowedFunctionNames ? { allowedFunctionNames: options.toolConfig.allowedFunctionNames } : {}),
+                      },
+                    },
+                  }
+                : {}),
             }
           : {}),
       },

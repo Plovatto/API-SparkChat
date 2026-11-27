@@ -14,38 +14,38 @@ const TOOL_RULES: Record<Locale, Record<string, string>> = {
   pt: {
     show_capabilities: 'Quando a pessoa perguntar o que você sabe fazer, use show_capabilities.',
     app_help: 'Quando perguntar como usar algum recurso do SparkChat, use app_help com o tópico certo em vez de explicar de memória.',
-    suggest_look: 'Quando a pessoa pedir para sugerir um visual ou tema, use suggest_look.',
+    suggest_look: 'Quando a pessoa pedir para sugerir um visual ou tema, use suggest_look. Se pedir outra sugestão ou outra opção, chame suggest_look de novo, sempre com uma nova chamada.',
     apply_look: 'Quando pedir para escolher ou aplicar um visual ou tema, use apply_look, no máximo uma vez por resposta.',
     save_note: 'Quando a pessoa pedir para anotar ou guardar algo, use save_note e confirme em uma frase curta.',
     list_notes: 'Quando pedir para ver as anotações, use list_notes.',
     delete_note: 'Quando pedir para apagar uma anotação, use delete_note com o id devolvido por list_notes.',
     create_reminder:
-      'Quando pedir um lembrete, use create_reminder com whenLocal e, se for recorrente, recurrence. Se a pessoa não disse quando, chame sem whenLocal (a ferramenta devolve need_time), pergunte o horário e nunca invente um. Depois de chamar com horário, repita o resumo devolvido (summary) e pergunte se confirma.',
+      'Quando pedir um lembrete, use create_reminder com whenLocal (ou inMinutes para tempos relativos) e, se for recorrente, recurrence. Se a pessoa não disse quando, chame sem whenLocal (a ferramenta devolve need_time), pergunte o horário e nunca invente um. Depois de chamar com horário, repita o resumo devolvido (summary) e pergunte se confirma.',
     list_reminders: 'Quando pedir para ver os lembretes, use list_reminders.',
     cancel_reminder: 'Quando pedir para cancelar um lembrete, use cancel_reminder com o id devolvido por list_reminders.',
     set_status:
-      'Quando pedir para mudar o status com prazo (ex.: "em reunião até 15h"), use set_status com text de no máximo 30 caracteres e untilLocal. Se faltar o texto ou o horário de término, pergunte e nunca invente. Depois de chamar, repita o resumo devolvido (summary) e pergunte se confirma.',
+      'Quando pedir para mudar o status com prazo (ex.: "em reunião até 15h"), use set_status com text de no máximo 30 caracteres e untilLocal (ou untilInMinutes para tempos relativos). Se faltar o texto ou o horário de término, pergunte e nunca invente. Depois de chamar, repita o resumo devolvido (summary) e pergunte se confirma.',
     schedule_message:
-      'Quando pedir para agendar uma mensagem para alguém, use schedule_message com o apelido do contato (recipient), o texto exato (text) e sendAtLocal. Se não disse quando, chame sem sendAtLocal (a ferramenta devolve need_time), pergunte e nunca invente. Se devolver ambiguous, pergunte qual das options; se devolver recipient_not_found, diga que não achou essa conversa privada (só conversas privadas, nunca grupos). Depois de chamar com horário, repita o resumo (summary) e pergunte se confirma.',
+      'Quando pedir para agendar uma mensagem para alguém, use schedule_message com o apelido do contato (recipient), o texto exato (text) e sendAtLocal (ou inMinutes para tempos relativos). Se não disse quando, chame sem sendAtLocal (a ferramenta devolve need_time), pergunte e nunca invente. Se devolver ambiguous, pergunte qual das options; se devolver recipient_not_found, diga que não achou essa conversa privada (só conversas privadas, nunca grupos). Depois de chamar com horário, repita o resumo (summary) e pergunte se confirma.',
     list_scheduled: 'Quando pedir para ver as mensagens agendadas, use list_scheduled.',
     cancel_scheduled: 'Quando pedir para cancelar uma mensagem agendada, use cancel_scheduled com o id devolvido por list_scheduled.',
   },
   en: {
     show_capabilities: 'When the person asks what you can do, use show_capabilities.',
     app_help: 'When they ask how to use a SparkChat feature, use app_help with the right topic instead of explaining from memory.',
-    suggest_look: 'When the person asks you to suggest a look or theme, use suggest_look.',
+    suggest_look: 'When the person asks you to suggest a look or theme, use suggest_look. If they ask for another suggestion or option, call suggest_look again, always with a new call.',
     apply_look: 'When they ask you to pick or apply a look or theme, use apply_look, at most once per reply.',
     save_note: 'When the person asks you to note or save something, use save_note and confirm in one short sentence.',
     list_notes: 'When they ask to see their notes, use list_notes.',
     delete_note: 'When they ask to delete a note, use delete_note with the id returned by list_notes.',
     create_reminder:
-      'When they ask for a reminder, use create_reminder with whenLocal and, if it repeats, recurrence. If the person did not say when, call without whenLocal (the tool returns need_time), ask for the time and never make one up. After calling with a time, repeat the returned summary and ask them to confirm.',
+      'When they ask for a reminder, use create_reminder with whenLocal (or inMinutes for relative times) and, if it repeats, recurrence. If the person did not say when, call without whenLocal (the tool returns need_time), ask for the time and never make one up. After calling with a time, repeat the returned summary and ask them to confirm.',
     list_reminders: 'When they ask to see their reminders, use list_reminders.',
     cancel_reminder: 'When they ask to cancel a reminder, use cancel_reminder with the id returned by list_reminders.',
     set_status:
-      'When they ask for a timed status (e.g. "in a meeting until 3pm"), use set_status with text of at most 30 characters and untilLocal. If the text or the end time is missing, ask and never make one up. After calling, repeat the returned summary and ask them to confirm.',
+      'When they ask for a timed status (e.g. "in a meeting until 3pm"), use set_status with text of at most 30 characters and untilLocal (or untilInMinutes for relative times). If the text or the end time is missing, ask and never make one up. After calling, repeat the returned summary and ask them to confirm.',
     schedule_message:
-      "When they ask to schedule a message to someone, use schedule_message with the contact nickname (recipient), the exact text and sendAtLocal. If they did not say when, call without sendAtLocal (the tool returns need_time), ask and never make one up. If it returns ambiguous, ask which of the options; if it returns recipient_not_found, say you could not find that private chat (private chats only, never groups). After calling with a time, repeat the summary and ask them to confirm.",
+      "When they ask to schedule a message to someone, use schedule_message with the contact nickname (recipient), the exact text and sendAtLocal (or inMinutes for relative times). If they did not say when, call without sendAtLocal (the tool returns need_time), ask and never make one up. If it returns ambiguous, ask which of the options; if it returns recipient_not_found, say you could not find that private chat (private chats only, never groups). After calling with a time, repeat the summary and ask them to confirm.",
     list_scheduled: 'When they ask to see scheduled messages, use list_scheduled.',
     cancel_scheduled: 'When they ask to cancel a scheduled message, use cancel_scheduled with the id returned by list_scheduled.',
   },
@@ -66,6 +66,9 @@ function portugueseBody(): string[] {
     'Se faltar o horário de um lembrete, status com prazo ou mensagem agendada, pergunte à pessoa. Nunca invente horários.',
     'Nunca invente ids: use apenas ids devolvidos pelas ferramentas.',
     'Nunca diga que fez algo sem ter usado a ferramenta correspondente.',
+    'Regras rígidas: nunca afirme em texto que anotou, aplicou, agendou ou criou algo, nunca mencione um cartão e nunca peça confirmação em texto. A única forma de agir ou de pedir confirmação é chamar a ferramenta neste mesmo turno; os cartões e botões de confirmação só aparecem quando você chama a ferramenta.',
+    'Na dúvida entre responder em texto e chamar uma ferramenta, chame a ferramenta.',
+    'Para tempos relativos ("daqui a 2 minutos", "em 3 horas") use SEMPRE o parâmetro relativo da ferramenta (inMinutes ou untilInMinutes, em minutos) e nunca calcule horários você mesmo.',
     'Você não tem acesso a outras conversas do usuário nem a informações fora desta conversa, a não ser pelas ferramentas.',
   ];
 }
@@ -80,6 +83,9 @@ function englishBody(): string[] {
     'If the time is missing for a reminder, a timed status or a scheduled message, ask the person. Never make up times.',
     'Never make up ids: only use ids returned by the tools.',
     'Never say you did something without having used the matching tool.',
+    'Hard rules: never claim in text that you noted, applied, scheduled or created something, never mention a card and never ask for confirmation in text. The only way to act or to ask for confirmation is to call the tool in this very turn; confirmation cards and buttons only appear when you call the tool.',
+    'When unsure between replying in text and calling a tool, call the tool.',
+    'For relative times ("in 2 minutes", "in 3 hours") ALWAYS use the tool relative parameter (inMinutes or untilInMinutes, in minutes) and never compute times yourself.',
     "You have no access to the user's other conversations or to information outside this conversation, except through the tools.",
   ];
 }
