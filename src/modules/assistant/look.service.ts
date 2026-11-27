@@ -66,9 +66,14 @@ export class LookService {
     const settings: UserChatSettings = { ...emptyChatSettings(), ...(current ?? {}) };
     if (look.wallpaper !== undefined) {
       settings.globalWallpaper = look.wallpaper === DEFAULT_WALLPAPER_ID ? null : look.wallpaper;
+      settings.roomWallpapers = {};
     }
-    if (look.appearance) {
-      settings.globalAppearance = { ...DEFAULT_CHAT_APPEARANCE, ...(settings.globalAppearance ?? {}), ...look.appearance };
+    const patch = look.appearance;
+    if (patch) {
+      settings.globalAppearance = { ...DEFAULT_CHAT_APPEARANCE, ...(settings.globalAppearance ?? {}), ...patch };
+      settings.roomAppearance = Object.fromEntries(
+        Object.entries(settings.roomAppearance ?? {}).map(([roomId, appearance]) => [roomId, { ...appearance, ...patch }]),
+      );
     }
     return settings;
   }
