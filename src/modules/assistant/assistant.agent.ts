@@ -57,6 +57,7 @@ export interface AssistantTurnInput {
   router: AiRouter;
   catalogSummary?: string;
   extraInstruction?: string;
+  forceTool?: string;
 }
 
 function formatLocalNow(now: number, timeZone: string, locale: Locale): { nowLocal: string; weekday: string } {
@@ -90,17 +91,19 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
     systemInstruction: `${options.systemInstruction} ${NUDGE[input.locale]}`,
     toolConfig: { mode: 'ANY' as const, allowedFunctionNames: forcedNames },
   };
+  const firstForcedOptions = input.forceTool ? { ...forcedOptions, toolConfig: { mode: 'ANY' as const, allowedFunctionNames: [input.forceTool] } } : forcedOptions;
 
   const messages = [...input.history];
   let card: AssistantCard | null = null;
   let turn: AiTurn = { text: '', calls: [] };
   let executedCalls = 0;
 
-  let guarded = false;
-  let forceNext = false;
+  const forceFirst = input.forceTool !== undefined && toolbox.has(input.forceTool);
+  let guarded = forceFirst;
+  let forceNext = forceFirst;
 
   for (let round = 0; round < ASSISTANT_MAX_TOOL_ROUNDS; round += 1) {
-    turn = await router.generate(messages, forceNext ? forcedOptions : options);
+    turn = await router.generate(messages, forceNext ? (round === 0 && forceFirst ? firstForcedOptions : forcedOptions) : options);
     forceNext = false;
     if (turn.calls.length === 0) {
       const reason = guarded || executedCalls > 0 || forcedNames.length === 0 ? null : actionIntentReason(userText, turn.text);

@@ -231,6 +231,21 @@ describe('runAssistantTurn', () => {
       expect(second.text).toBe('Anotado!');
     });
 
+    it('forces the first call to the required tool and uses normal options afterwards', async () => {
+      const toolbox = new AssistantToolbox();
+      for (const name of ['suggest_look', 'apply_look']) {
+        toolbox.register(defineTool({ declaration: { name, description: name, parameters: { type: 'object' } }, schema: z.object({}), run: () => Promise.resolve({ response: {}, card: CARD }) }));
+      }
+      const { router, seen } = scripted([
+        { text: '', calls: [{ id: 's1', name: 'suggest_look', args: {} }] },
+        { text: 'Que tal este?', calls: [] },
+      ]);
+      const reply = await runAssistantTurn({ history: [{ role: 'user', text: 'Outra sugestão' }], locale: 'pt', context: CONTEXT, toolbox, router, forceTool: 'suggest_look' });
+      expect(seen[0]?.options.toolConfig).toEqual({ mode: 'ANY', allowedFunctionNames: ['suggest_look'] });
+      expect(seen[1]?.options.toolConfig).toBeUndefined();
+      expect(reply.card).toEqual(CARD);
+    });
+
     it('does not trigger for a generic status question', async () => {
       const { router, seen } = scripted([{ text: 'Tudo certo por aqui.', calls: [] }]);
       const { toolbox } = noteToolbox();
